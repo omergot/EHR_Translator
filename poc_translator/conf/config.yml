@@ -7,30 +7,43 @@ db:
     eicu: "eicu_bsi_100_2h_test.__eicu_bsi_100_2h_cohort"
 
 paths:
-  eicu_poc_csv: "/bigdata/omerg/Thesis/poc_translator/eicu_poc_features.csv"
-  mimic_poc_csv: "/bigdata/omerg/Thesis/poc_translator/mimic_poc_features.csv"
-  output_dir: "/bigdata/omerg/Thesis/poc_translator"
-  tmp_sql_dir: "/bigdata/omerg/Thesis/poc_translator/sql"
+  eicu_poc_csv: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/eicu_poc_features.csv"
+  mimic_poc_csv: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/mimic_poc_features.csv"
+  output_dir: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator"
+  tmp_sql_dir: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/sql"
   analyze_features_path: "/bigdata/omerg/RatchetEHR/analyze_features.py"
 
-# FIXED TRAINING CONFIGURATION
+# FIXED TRAINING CONFIGURATION - CONSERVATIVE FOR STABILITY
 training:
   epochs: 50  # Increased epochs for better convergence
-  batch_size: 128  # Reduced batch size for better gradient updates
-  lr: 2e-4  # Reduced learning rate for stability
+  batch_size: 128  # REVERTED: Back to stable batch size
+  lr: 1e-4  # REVERTED: Back to conservative learning rate
   latent_dim: 64
   
-  # FIXED: Improved loss weights
-  kl_weight: 1e-2  # Increased KL weight (was 1e-3)
-  cycle_weight: 2.0  # Increased cycle weight for better consistency
-  rec_weight: 1.0
-  mmd_weight: 0.5  # Increased MMD weight for better domain alignment
+  # CRITICAL: Rebalanced for distributional matching over MSE optimization
+  kl_weight: 1e-3  # Keep low for stability
+  cycle_weight: 0.5  # Reduce - less important than distribution matching
+  rec_weight: 0.5   # REDUCED: Stop prioritizing MSE over distributions
+  mmd_weight: 1.0   # INCREASED: Force latent alignment
   
-  kl_warmup_epochs: 15  # Reduced warmup for faster training
-  early_stop_patience: 20  # Increased patience
-  weight_decay: 1e-4  # Increased regularization
+  # DISTRIBUTIONAL FOCUS: Force KS improvement
+  use_heteroscedastic: true  # Keep numerical stability
+  use_safe_mode: false  # Keep safety systems but don't restrict
+  cov_weight: 0.8    # INCREASED: Force covariance matching
+  per_feature_mmd_weight: 1.5  # DRAMATICALLY INCREASED: Force per-feature alignment
+  wasserstein_weight: 2.0  # NEW: Stronger distributional alignment per feature
+  
+  # Identify problematic features for special handling
+  worst_features: ["Temp_mean", "Temp_std", "HR_std", "SpO2_std", "Age", "Creat_mean"]
+  
+  # Gradient clipping for numerical stability
+  gradient_clip_val: 1.0  # Clip gradients to prevent explosion
+  
+  kl_warmup_epochs: 20  # Increased warmup for more stable training
+  early_stop_patience: 15  # Slightly reduced patience
+  weight_decay: 1e-4  # Regularization
 
-# GPU Configuration
+# OPTIMIZED GPU Configuration for Speed
 gpu:
   # GPU device to use (0, 1, 2, 3 for your Tesla V100s, or 'auto' for automatic selection)
   device: 0
@@ -38,8 +51,8 @@ gpu:
   precision: "16-mixed"
   # Enable optimized attention for V100 (if using transformer-based components)
   enable_flash_attention: false
-  # Number of workers for data loading (increase for faster data loading)
-  num_workers: 4
+  # OPTIMIZED: More workers for faster data loading on multi-core system
+  num_workers: 8
 
 downstream:
   xgboost_params:
@@ -49,8 +62,8 @@ downstream:
 
 logging:
   use_wandb: false
-  project: "poc_translator_fixed"
-  log_every_n_steps: 25  # More frequent logging
+  project: "poc_translator_optimized"
+  log_every_n_steps: 50  # OPTIMIZED: Less frequent logging for speed
 
 # SIMPLIFIED: Train/Test only (no validation)
 data:

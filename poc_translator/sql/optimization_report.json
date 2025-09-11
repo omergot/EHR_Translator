@@ -1,0 +1,27 @@
+{
+  "optimization_summary": {
+    "mimic_improvements": [
+      "Consolidated subqueries to single data scan",
+      "Window functions for efficient last value calculation",
+      "Extended itemid mappings for better coverage",
+      "Extended time windows (6h before to 48h after ICU admission)",
+      "Multiple data sources (lab events, chart events)"
+    ],
+    "eicu_improvements": [
+      "Multiple data sources (vitalperiodic, lab, nursecharting, respiratorycharting)",
+      "Comprehensive lab value extraction",
+      "Extended time windows for better coverage",
+      "Better feature mapping to actual measurement names",
+      "Glasgow Coma Scale and nursing measurements",
+      "Respiratory parameters from respiratory charting"
+    ]
+  },
+  "expected_performance_gains": {
+    "mimic": "10-50x faster due to eliminated subqueries",
+    "eicu": "5-10x more data coverage from multiple tables"
+  },
+  "file_paths": {
+    "mimic": "/bigdata/omerg/Thesis/poc_translator/sql/mimic_query.sql",
+    "eicu": "/bigdata/omerg/Thesis/poc_translator/sql/eicu_query.sql"
+  }
+}

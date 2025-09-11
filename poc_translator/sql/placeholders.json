@@ -1,0 +1,327 @@
+{
+  "mimic_itemids": {
+    "Alanine Aminotransferase (ALT)": {
+      "itemid": "ITEMID_0",
+      "description": "ItemID for Alanine Aminotransferase (ALT) in MIMIC chartevents table"
+    },
+    "Albumin": {
+      "itemid": "ITEMID_1",
+      "description": "ItemID for Albumin in MIMIC chartevents table"
+    },
+    "Alkaline Phosphatase": {
+      "itemid": "ITEMID_2",
+      "description": "ItemID for Alkaline Phosphatase in MIMIC chartevents table"
+    },
+    "Asparate Aminotransferase (AST)": {
+      "itemid": "ITEMID_3",
+      "description": "ItemID for Asparate Aminotransferase (AST) in MIMIC chartevents table"
+    },
+    "Bilirubin": {
+      "itemid": "ITEMID_4",
+      "description": "ItemID for Bilirubin in MIMIC chartevents table"
+    },
+    "C-Reactive Protein": {
+      "itemid": "ITEMID_5",
+      "description": "ItemID for C-Reactive Protein in MIMIC chartevents table"
+    },
+    "Creatinine": {
+      "itemid": "ITEMID_6",
+      "description": "ItemID for Creatinine in MIMIC chartevents table"
+    },
+    "GCS - Eye Opening": {
+      "itemid": "ITEMID_7",
+      "description": "ItemID for GCS - Eye Opening in MIMIC chartevents table"
+    },
+    "GCS - Motor Response": {
+      "itemid": "ITEMID_8",
+      "description": "ItemID for GCS - Motor Response in MIMIC chartevents table"
+    },
+    "GCS - Verbal Response": {
+      "itemid": "ITEMID_9",
+      "description": "ItemID for GCS - Verbal Response in MIMIC chartevents table"
+    },
+    "Head of Bed": {
+      "itemid": "ITEMID_10",
+      "description": "ItemID for Head of Bed in MIMIC chartevents table"
+    },
+    "Heart Rate": {
+      "itemid": "ITEMID_11",
+      "description": "ItemID for Heart Rate in MIMIC chartevents table"
+    },
+    "Hematocrit": {
+      "itemid": "ITEMID_12",
+      "description": "ItemID for Hematocrit in MIMIC chartevents table"
+    },
+    "Hemoglobin": {
+      "itemid": "ITEMID_13",
+      "description": "ItemID for Hemoglobin in MIMIC chartevents table"
+    },
+    "INR(PT)": {
+      "itemid": "ITEMID_14",
+      "description": "ItemID for INR(PT) in MIMIC chartevents table"
+    },
+    "Inspired O2 Fraction": {
+      "itemid": "ITEMID_15",
+      "description": "ItemID for Inspired O2 Fraction in MIMIC chartevents table"
+    },
+    "Lactate": {
+      "itemid": "ITEMID_16",
+      "description": "ItemID for Lactate in MIMIC chartevents table"
+    },
+    "Lymphocytes": {
+      "itemid": "ITEMID_17",
+      "description": "ItemID for Lymphocytes in MIMIC chartevents table"
+    },
+    "MCHC": {
+      "itemid": "ITEMID_18",
+      "description": "ItemID for MCHC in MIMIC chartevents table"
+    },
+    "MCV": {
+      "itemid": "ITEMID_19",
+      "description": "ItemID for MCV in MIMIC chartevents table"
+    },
+    "Magnesium": {
+      "itemid": "ITEMID_20",
+      "description": "ItemID for Magnesium in MIMIC chartevents table"
+    },
+    "Mean Airway Pressure": {
+      "itemid": "ITEMID_21",
+      "description": "ItemID for Mean Airway Pressure in MIMIC chartevents table"
+    },
+    "Non Invasive Blood Pressure diastolic": {
+      "itemid": "ITEMID_22",
+      "description": "ItemID for Non Invasive Blood Pressure diastolic in MIMIC chartevents table"
+    },
+    "Non Invasive Blood Pressure mean": {
+      "itemid": "ITEMID_23",
+      "description": "ItemID for Non Invasive Blood Pressure mean in MIMIC chartevents table"
+    },
+    "Non Invasive Blood Pressure systolic": {
+      "itemid": "ITEMID_24",
+      "description": "ItemID for Non Invasive Blood Pressure systolic in MIMIC chartevents table"
+    },
+    "O2 saturation pulseoxymetry": {
+      "itemid": "ITEMID_25",
+      "description": "ItemID for O2 saturation pulseoxymetry in MIMIC chartevents table"
+    },
+    "PT": {
+      "itemid": "ITEMID_26",
+      "description": "ItemID for PT in MIMIC chartevents table"
+    },
+    "Potassium": {
+      "itemid": "ITEMID_27",
+      "description": "ItemID for Potassium in MIMIC chartevents table"
+    },
+    "RBC": {
+      "itemid": "ITEMID_28",
+      "description": "ItemID for RBC in MIMIC chartevents table"
+    },
+    "RDW": {
+      "itemid": "ITEMID_29",
+      "description": "ItemID for RDW in MIMIC chartevents table"
+    },
+    "Respiratory Rate": {
+      "itemid": "ITEMID_30",
+      "description": "ItemID for Respiratory Rate in MIMIC chartevents table"
+    },
+    "Sodium": {
+      "itemid": "ITEMID_31",
+      "description": "ItemID for Sodium in MIMIC chartevents table"
+    },
+    "Temperature Fahrenheit": {
+      "itemid": "ITEMID_32",
+      "description": "ItemID for Temperature Fahrenheit in MIMIC chartevents table"
+    },
+    "Temperature": {
+      "itemid": "ITEMID_33",
+      "description": "ItemID for Temperature in MIMIC chartevents table"
+    },
+    "Tidal Volume (observed)": {
+      "itemid": "ITEMID_34",
+      "description": "ItemID for Tidal Volume (observed) in MIMIC chartevents table"
+    },
+    "Urea Nitrogen": {
+      "itemid": "ITEMID_35",
+      "description": "ItemID for Urea Nitrogen in MIMIC chartevents table"
+    },
+    "WBC": {
+      "itemid": "ITEMID_36",
+      "description": "ItemID for WBC in MIMIC chartevents table"
+    },
+    "pH": {
+      "itemid": "ITEMID_37",
+      "description": "ItemID for pH in MIMIC chartevents table"
+    },
+    "pO2": {
+      "itemid": "ITEMID_38",
+      "description": "ItemID for pO2 in MIMIC chartevents table"
+    },
+    "Lactate Dehydrogenase (LD)": {
+      "itemid": "ITEMID_39",
+      "description": "ItemID for Lactate Dehydrogenase (LD) in MIMIC chartevents table"
+    }
+  },
+  "eicu_columns": {
+    "Alanine Aminotransferase (ALT)": {
+      "column": "COLUMN_0",
+      "description": "Column name for Alanine Aminotransferase (ALT) in eICU vitalperiodic table"
+    },
+    "Albumin": {
+      "column": "COLUMN_1",
+      "description": "Column name for Albumin in eICU vitalperiodic table"
+    },
+    "Alkaline Phosphatase": {
+      "column": "COLUMN_2",
+      "description": "Column name for Alkaline Phosphatase in eICU vitalperiodic table"
+    },
+    "Asparate Aminotransferase (AST)": {
+      "column": "COLUMN_3",
+      "description": "Column name for Asparate Aminotransferase (AST) in eICU vitalperiodic table"
+    },
+    "Bilirubin": {
+      "column": "COLUMN_4",
+      "description": "Column name for Bilirubin in eICU vitalperiodic table"
+    },
+    "C-Reactive Protein": {
+      "column": "COLUMN_5",
+      "description": "Column name for C-Reactive Protein in eICU vitalperiodic table"
+    },
+    "Creatinine": {
+      "column": "COLUMN_6",
+      "description": "Column name for Creatinine in eICU vitalperiodic table"
+    },
+    "GCS - Eye Opening": {
+      "column": "COLUMN_7",
+      "description": "Column name for GCS - Eye Opening in eICU vitalperiodic table"
+    },
+    "GCS - Motor Response": {
+      "column": "COLUMN_8",
+      "description": "Column name for GCS - Motor Response in eICU vitalperiodic table"
+    },
+    "GCS - Verbal Response": {
+      "column": "COLUMN_9",
+      "description": "Column name for GCS - Verbal Response in eICU vitalperiodic table"
+    },
+    "Head of Bed": {
+      "column": "COLUMN_10",
+      "description": "Column name for Head of Bed in eICU vitalperiodic table"
+    },
+    "Heart Rate": {
+      "column": "COLUMN_11",
+      "description": "Column name for Heart Rate in eICU vitalperiodic table"
+    },
+    "Hematocrit": {
+      "column": "COLUMN_12",
+      "description": "Column name for Hematocrit in eICU vitalperiodic table"
+    },
+    "Hemoglobin": {
+      "column": "COLUMN_13",
+      "description": "Column name for Hemoglobin in eICU vitalperiodic table"
+    },
+    "INR(PT)": {
+      "column": "COLUMN_14",
+      "description": "Column name for INR(PT) in eICU vitalperiodic table"
+    },
+    "Inspired O2 Fraction": {
+      "column": "COLUMN_15",
+      "description": "Column name for Inspired O2 Fraction in eICU vitalperiodic table"
+    },
+    "Lactate": {
+      "column": "COLUMN_16",
+      "description": "Column name for Lactate in eICU vitalperiodic table"
+    },
+    "Lymphocytes": {
+      "column": "COLUMN_17",
+      "description": "Column name for Lymphocytes in eICU vitalperiodic table"
+    },
+    "MCHC": {
+      "column": "COLUMN_18",
+      "description": "Column name for MCHC in eICU vitalperiodic table"
+    },
+    "MCV": {
+      "column": "COLUMN_19",
+      "description": "Column name for MCV in eICU vitalperiodic table"
+    },
+    "Magnesium": {
+      "column": "COLUMN_20",
+      "description": "Column name for Magnesium in eICU vitalperiodic table"
+    },
+    "Mean Airway Pressure": {
+      "column": "COLUMN_21",
+      "description": "Column name for Mean Airway Pressure in eICU vitalperiodic table"
+    },
+    "Non Invasive Blood Pressure diastolic": {
+      "column": "COLUMN_22",
+      "description": "Column name for Non Invasive Blood Pressure diastolic in eICU vitalperiodic table"
+    },
+    "Non Invasive Blood Pressure mean": {
+      "column": "COLUMN_23",
+      "description": "Column name for Non Invasive Blood Pressure mean in eICU vitalperiodic table"
+    },
+    "Non Invasive Blood Pressure systolic": {
+      "column": "COLUMN_24",
+      "description": "Column name for Non Invasive Blood Pressure systolic in eICU vitalperiodic table"
+    },
+    "O2 saturation pulseoxymetry": {
+      "column": "COLUMN_25",
+      "description": "Column name for O2 saturation pulseoxymetry in eICU vitalperiodic table"
+    },
+    "PT": {
+      "column": "COLUMN_26",
+      "description": "Column name for PT in eICU vitalperiodic table"
+    },
+    "Potassium": {
+      "column": "COLUMN_27",
+      "description": "Column name for Potassium in eICU vitalperiodic table"
+    },
+    "RBC": {
+      "column": "COLUMN_28",
+      "description": "Column name for RBC in eICU vitalperiodic table"
+    },
+    "RDW": {
+      "column": "COLUMN_29",
+      "description": "Column name for RDW in eICU vitalperiodic table"
+    },
+    "Respiratory Rate": {
+      "column": "COLUMN_30",
+      "description": "Column name for Respiratory Rate in eICU vitalperiodic table"
+    },
+    "Sodium": {
+      "column": "COLUMN_31",
+      "description": "Column name for Sodium in eICU vitalperiodic table"
+    },
+    "Temperature Fahrenheit": {
+      "column": "COLUMN_32",
+      "description": "Column name for Temperature Fahrenheit in eICU vitalperiodic table"
+    },
+    "Temperature": {
+      "column": "COLUMN_33",
+      "description": "Column name for Temperature in eICU vitalperiodic table"
+    },
+    "Tidal Volume (observed)": {
+      "column": "COLUMN_34",
+      "description": "Column name for Tidal Volume (observed) in eICU vitalperiodic table"
+    },
+    "Urea Nitrogen": {
+      "column": "COLUMN_35",
+      "description": "Column name for Urea Nitrogen in eICU vitalperiodic table"
+    },
+    "WBC": {
+      "column": "COLUMN_36",
+      "description": "Column name for WBC in eICU vitalperiodic table"
+    },
+    "pH": {
+      "column": "COLUMN_37",
+      "description": "Column name for pH in eICU vitalperiodic table"
+    },
+    "pO2": {
+      "column": "COLUMN_38",
+      "description": "Column name for pO2 in eICU vitalperiodic table"
+    },
+    "Lactate Dehydrogenase (LD)": {
+      "column": "COLUMN_39",
+      "description": "Column name for Lactate Dehydrogenase (LD) in eICU vitalperiodic table"
+    }
+  },
+  "notes": "Fill in the appropriate itemids/columns for your database schema"
+}

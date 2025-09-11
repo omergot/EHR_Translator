@@ -1,0 +1,22 @@
+{
+  "mimic_test": {
+    "auc": 0.5197268977027601,
+    "average_precision": 0.20631990543641882,
+    "brier_score": 0.156033291130441
+  },
+  "eicu_test_raw": {
+    "auc": 0.5213991769547325,
+    "average_precision": 0.3016074583285884,
+    "brier_score": 0.1808918377825777
+  },
+  "eicu_test_translated": {
+    "auc": 0.5341563786008231,
+    "average_precision": 0.24696628794816566,
+    "brier_score": 0.17884773932641715
+  },
+  "improvement": {
+    "auc_improvement": 0.012757201646090621,
+    "ap_improvement": -0.05464117038042271,
+    "brier_improvement": 0.002044098456160548
+  }
+}

@@ -1,0 +1,59 @@
+db:
+  mimic_conn: "postgresql://postgres:postgres@localhost:5432/mimic"
+  eicu_conn: "postgresql://postgres:postgres@localhost:5432/mimic"
+  omop_schema: "omop"
+  cohort_tables:
+    mimic: "mimiciv_bsi_100_2h_test.__mimiciv_bsi_100_2h_cohort"
+    eicu: "eicu_bsi_100_2h_test.__eicu_bsi_100_2h_cohort"
+
+paths:
+  eicu_poc_csv: "/bigdata/omerg/Thesis/poc_translator/eicu_poc_features.csv"
+  mimic_poc_csv: "/bigdata/omerg/Thesis/poc_translator/mimic_poc_features.csv"
+  output_dir: "/bigdata/omerg/Thesis/poc_translator"
+  tmp_sql_dir: "/bigdata/omerg/Thesis/poc_translator/sql"
+  analyze_features_path: "/bigdata/omerg/RatchetEHR/analyze_features.py"
+
+# FIXED TRAINING CONFIGURATION
+training:
+  epochs: 50  # Increased epochs for better convergence
+  batch_size: 128  # Reduced batch size for better gradient updates
+  lr: 2e-4  # Reduced learning rate for stability
+  latent_dim: 64
+  
+  # FIXED: Improved loss weights
+  kl_weight: 1e-2  # Increased KL weight (was 1e-3)
+  cycle_weight: 2.0  # Increased cycle weight for better consistency
+  rec_weight: 1.0
+  mmd_weight: 0.5  # Increased MMD weight for better domain alignment
+  
+  kl_warmup_epochs: 15  # Reduced warmup for faster training
+  early_stop_patience: 20  # Increased patience
+  weight_decay: 1e-4  # Increased regularization
+
+# GPU Configuration
+gpu:
+  # GPU device to use (0, 1, 2, 3 for your Tesla V100s, or 'auto' for automatic selection)
+  device: 0
+  # Enable mixed precision training for faster training and lower memory usage
+  precision: "16-mixed"
+  # Enable optimized attention for V100 (if using transformer-based components)
+  enable_flash_attention: false
+  # Number of workers for data loading (increase for faster data loading)
+  num_workers: 4
+
+downstream:
+  xgboost_params:
+    n_estimators: 200
+    max_depth: 6
+    learning_rate: 0.05
+
+logging:
+  use_wandb: false
+  project: "poc_translator_fixed"
+  log_every_n_steps: 25  # More frequent logging
+
+# SIMPLIFIED: Train/Test only (no validation)
+data:
+  train_split: 0.8
+  test_split: 0.2
+  random_seed: 42

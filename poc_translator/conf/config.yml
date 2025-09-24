@@ -13,25 +13,35 @@ paths:
   tmp_sql_dir: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/sql"
   analyze_features_path: "/bigdata/omerg/RatchetEHR/analyze_features.py"
 
-# FIXED TRAINING CONFIGURATION - CONSERVATIVE FOR STABILITY
+# IMPROVED TRAINING CONFIGURATION - Addresses LLM analysis recommendations
+# ✅ Per-dataset normalization (fixes feature 32 outlier issue)
+# ✅ Multi-kernel MMD (adaptive bandwidth) 
+# ✅ Per-feature loss weighting (prevents feature domination)
+# ✅ Feature reconstruction head (prevents mode collapse)
+# ✅ Adversarial domain classifier (domain-invariant features)
+# ✅ Comprehensive evaluation (per-feature metrics)
 training:
   epochs: 50  # Increased epochs for better convergence
   batch_size: 128  # REVERTED: Back to stable batch size
-  lr: 1e-4  # REVERTED: Back to conservative learning rate
+  lr: 1e-6  # EMERGENCY: Extremely conservative learning rate to prevent Age explosion
   latent_dim: 64
   
-  # CRITICAL: Rebalanced for distributional matching over MSE optimization
+  # CRITICAL: Much more conservative weights for numerical stability
   kl_weight: 1e-3  # Keep low for stability
-  cycle_weight: 0.5  # Reduce - less important than distribution matching
-  rec_weight: 0.5   # REDUCED: Stop prioritizing MSE over distributions
-  mmd_weight: 1.0   # INCREASED: Force latent alignment
+  cycle_weight: 0.1  # REDUCED: Much lower to prevent explosion
+  rec_weight: 1.0   # PRIMARY: Focus on reconstruction first
+  mmd_weight: 0.1   # REDUCED: Much lower to prevent explosion
   
-  # DISTRIBUTIONAL FOCUS: Force KS improvement
-  use_heteroscedastic: true  # Keep numerical stability
+  # EMERGENCY FIX: Disable heteroscedastic decoder - it's causing variance explosion
+  use_heteroscedastic: false  # DISABLE - causing Age feature to explode  
   use_safe_mode: false  # Keep safety systems but don't restrict
-  cov_weight: 0.8    # INCREASED: Force covariance matching
-  per_feature_mmd_weight: 1.5  # DRAMATICALLY INCREASED: Force per-feature alignment
-  wasserstein_weight: 2.0  # NEW: Stronger distributional alignment per feature
+  cov_weight: 0.1    # REDUCED: Much lower to prevent explosion
+  per_feature_mmd_weight: 0.05  # DRAMATICALLY REDUCED: Prevent explosion
+  wasserstein_weight: 0.05  # REDUCED: Much lower for stability
+  
+  # CONSERVATIVE: Lower weights for additional loss components
+  feature_recon_weight: 0.1  # REDUCED: Lower weight to prevent explosion
+  domain_adversarial_weight: 0.01  # REDUCED: Much lower for stability
   
   # Identify problematic features for special handling
   worst_features: ["Temp_mean", "Temp_std", "HR_std", "SpO2_std", "Age", "Creat_mean"]

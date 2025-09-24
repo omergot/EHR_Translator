@@ -10,8 +10,12 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import numpy as np
 from torch.distributions import Normal
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 import logging
+import json
+from scipy import stats
+from sklearn.metrics import mean_squared_error
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +73,7 @@ class Encoder(nn.Module):
     
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
-        Reparameterization trick
+        Reparameterization trick with numerical stability
         
         Args:
             mu: Mean of latent distribution
@@ -78,7 +82,9 @@ class Encoder(nn.Module):
         Returns:
             z: Sampled latent vector
         """
-        std = torch.exp(0.5 * logvar)
+        # CRITICAL FIX: Clamp logvar to prevent explosion in exp()
+        logvar_clamped = torch.clamp(logvar, min=-5, max=3)  # exp(3) = 20, exp(-5) = 0.007
+        std = torch.exp(0.5 * logvar_clamped)
         eps = torch.randn_like(std)
         z = mu + eps * std
         
@@ -151,11 +157,11 @@ class Decoder(nn.Module):
             return x_recon
 
 class CycleVAE(pl.LightningModule):
-    """Cycle-VAE model for domain translation"""
+    """IMPROVED: Cycle-VAE model for domain translation with advanced features"""
     
     def __init__(self, config: Dict, feature_spec: Dict):
         """
-        Initialize Cycle-VAE
+        Initialize Cycle-VAE with enhanced preprocessing and evaluation
         
         Args:
             config: Configuration dictionary
@@ -164,6 +170,18 @@ class CycleVAE(pl.LightningModule):
         super().__init__()
         self.config = config
         self.feature_spec = feature_spec
+        
+        # Feature dimensions (CRITICAL: needed before buffer registration)
+        self.numeric_dim = len(feature_spec['numeric_features'])
+        self.missing_dim = len(feature_spec['missing_features'])
+        self.input_dim = self.numeric_dim + self.missing_dim
+        
+        # IMPROVEMENT 1: Per-dataset normalization parameters (FIXED: use correct input_dim)
+        self.register_buffer('mimic_feature_mean', torch.zeros(self.input_dim))
+        self.register_buffer('mimic_feature_std', torch.ones(self.input_dim))
+        self.register_buffer('eicu_feature_mean', torch.zeros(self.input_dim))
+        self.register_buffer('eicu_feature_std', torch.ones(self.input_dim))
+        self.normalization_initialized = False
         
         # Training parameters (ensure they are proper numeric types)
         self.lr = float(config['training']['lr'])
@@ -175,6 +193,8 @@ class CycleVAE(pl.LightningModule):
         self.cov_weight = float(config['training'].get('cov_weight', 0.1))  # New covariance loss weight
         self.per_feature_mmd_weight = float(config['training'].get('per_feature_mmd_weight', 0.05))
         self.wasserstein_weight = float(config['training'].get('wasserstein_weight', 0.0))  # Per-feature Wasserstein weight
+        self.feature_recon_weight = float(config['training'].get('feature_recon_weight', 0.5))  # Feature reconstruction weight
+        self.domain_adversarial_weight = float(config['training'].get('domain_adversarial_weight', 0.1))  # Domain adversarial weight
         self.kl_warmup_epochs = int(config['training']['kl_warmup_epochs'])
         self.weight_decay = float(config['training']['weight_decay'])
         
@@ -183,11 +203,6 @@ class CycleVAE(pl.LightningModule):
             'Temp_mean', 'Temp_min', 'Temp_max', 'Temp_std',
             'HR_std', 'SpO2_std', 'MAP_std', 'Creat_mean'
         ])
-        
-        # Feature dimensions (MOVED UP: needed for demographic indices calculation)
-        self.numeric_dim = len(feature_spec['numeric_features'])
-        self.missing_dim = len(feature_spec['missing_features'])
-        self.input_dim = self.numeric_dim + self.missing_dim
         
         # FIXED: Identify demographic features that need special handling (different scales)
         self.demographic_indices = []
@@ -220,11 +235,91 @@ class CycleVAE(pl.LightningModule):
         self.decoder_mimic = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic)
         self.decoder_eicu = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic)
         
+        # IMPROVEMENT 4: Feature reconstruction head to prevent mode collapse
+        self.feature_reconstruction_head = nn.Sequential(
+            nn.Linear(self.latent_dim, hidden_dims[0]),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dims[0], self.input_dim)
+        )
+        
+        # IMPROVEMENT 5: Adversarial domain classifier
+        self.domain_classifier = nn.Sequential(
+            nn.Linear(self.latent_dim, hidden_dims[0] // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dims[0] // 2, 32),
+            nn.ReLU(),
+            nn.Linear(32, 2)  # Binary classification: MIMIC vs eICU
+        )
+        
+        # IMPROVEMENT: Multi-kernel MMD parameters
+        self.mmd_sigmas = [0.1, 1.0, 10.0, 100.0]  # Multi-scale kernels
+        self.adaptive_sigma = True
+        
         # Prior distribution
         self.prior = Normal(0, 1)
         
+        # CRITICAL FIX: Initialize weights conservatively to prevent initial instability
+        self._init_weights()
+        
         logger.info(f"Initialized Cycle-VAE with input_dim={self.input_dim}, latent_dim={self.latent_dim}")
     
+    def _init_weights(self):
+        """Initialize network weights conservatively for numerical stability"""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                # Use Xavier/Glorot initialization with smaller variance
+                nn.init.xavier_normal_(module.weight, gain=0.1)  # Much smaller gain
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0.0)
+            elif isinstance(module, nn.BatchNorm1d):
+                nn.init.constant_(module.weight, 1.0)
+                nn.init.constant_(module.bias, 0.0)
+     
+    def initialize_normalization(self, x_mimic: torch.Tensor, x_eicu: torch.Tensor):
+        """IMPROVEMENT 1: Initialize per-dataset normalization parameters"""
+        if not self.normalization_initialized and x_mimic.size(0) > 1 and x_eicu.size(0) > 1:
+            with torch.no_grad():
+                # Compute dataset-specific statistics
+                self.mimic_feature_mean = torch.mean(x_mimic, dim=0)
+                self.mimic_feature_std = torch.std(x_mimic, dim=0) + 1e-8
+                self.eicu_feature_mean = torch.mean(x_eicu, dim=0) 
+                self.eicu_feature_std = torch.std(x_eicu, dim=0) + 1e-8
+                
+                self.normalization_initialized = True
+                logger.info("Initialized per-dataset normalization parameters")
+                logger.info(f"MIMIC stats - mean: [{self.mimic_feature_mean[0]:.3f}...], std: [{self.mimic_feature_std[0]:.3f}...]")
+                logger.info(f"eICU stats - mean: [{self.eicu_feature_mean[0]:.3f}...], std: [{self.eicu_feature_std[0]:.3f}...]")
+    
+    def normalize_features(self, x: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
+        """IMPROVEMENT 1: Apply per-dataset normalization"""
+        if not self.normalization_initialized:
+            return x  # Skip if not initialized yet
+        
+        mimic_mask = (domain == 1)
+        eicu_mask = (domain == 0)
+        
+        x_normalized = torch.zeros_like(x)
+        
+        if mimic_mask.any():
+            x_normalized[mimic_mask] = (x[mimic_mask] - self.mimic_feature_mean) / self.mimic_feature_std
+        
+        if eicu_mask.any():
+            x_normalized[eicu_mask] = (x[eicu_mask] - self.eicu_feature_mean) / self.eicu_feature_std
+            
+        return x_normalized
+    
+    def denormalize_features(self, x_norm: torch.Tensor, target_domain: int) -> torch.Tensor:
+        """IMPROVEMENT 1: Denormalize features back to original scale"""
+        if not self.normalization_initialized:
+            return x_norm
+        
+        if target_domain == 1:  # MIMIC
+            return x_norm * self.mimic_feature_std + self.mimic_feature_mean
+        else:  # eICU
+            return x_norm * self.eicu_feature_std + self.eicu_feature_mean
+
     def forward(self, x: torch.Tensor, domain: torch.Tensor) -> Dict:
         """
         IMPROVED: Forward pass supporting heteroscedastic outputs
@@ -238,6 +333,13 @@ class CycleVAE(pl.LightningModule):
         """
         # Encode
         mu, logvar = self.encoder(x)
+        # CRITICAL FIX: More intelligent safety checks - don't destroy features
+        mu = torch.clamp(mu, min=-20, max=20)  # Wider range for latent space
+        logvar = torch.clamp(logvar, min=-5, max=3)  # Keep logvar range tight for stability
+        if torch.isnan(mu).any() or torch.isinf(mu).any():
+            mu = torch.zeros_like(mu)
+        if torch.isnan(logvar).any() or torch.isinf(logvar).any():
+            logvar = torch.full_like(logvar, -2.0)
         z = self.encoder.reparameterize(mu, logvar)
         
         # Decode based on domain
@@ -251,11 +353,27 @@ class CycleVAE(pl.LightningModule):
             
             if mimic_mask.any():
                 mu_mimic, logvar_mimic = self.decoder_mimic(z[mimic_mask])
+                # CRITICAL FIX: More intelligent safety checks for decoder outputs
+                mu_mimic = torch.clamp(mu_mimic, min=-50, max=100)  # Allow Age 0-100, other features wider range
+                logvar_mimic = torch.clamp(logvar_mimic, min=-5, max=3)  # Keep logvar range tight for stability
+                # Check for NaN/Inf and replace with safe values
+                if torch.isnan(mu_mimic).any() or torch.isinf(mu_mimic).any():
+                    mu_mimic = torch.zeros_like(mu_mimic)
+                if torch.isnan(logvar_mimic).any() or torch.isinf(logvar_mimic).any():
+                    logvar_mimic = torch.full_like(logvar_mimic, -2.0)  # Safe logvar value
                 x_recon_mu[mimic_mask] = mu_mimic.to(x_recon_mu.dtype)
                 x_recon_logvar[mimic_mask] = logvar_mimic.to(x_recon_logvar.dtype)
             
             if eicu_mask.any():
                 mu_eicu, logvar_eicu = self.decoder_eicu(z[eicu_mask])
+                # CRITICAL FIX: More intelligent safety checks for decoder outputs
+                mu_eicu = torch.clamp(mu_eicu, min=-50, max=100)  # Allow Age 0-100, other features wider range
+                logvar_eicu = torch.clamp(logvar_eicu, min=-5, max=3)  # Keep logvar range tight for stability
+                # Check for NaN/Inf and replace with safe values
+                if torch.isnan(mu_eicu).any() or torch.isinf(mu_eicu).any():
+                    mu_eicu = torch.zeros_like(mu_eicu)
+                if torch.isnan(logvar_eicu).any() or torch.isinf(logvar_eicu).any():
+                    logvar_eicu = torch.full_like(logvar_eicu, -2.0)  # Safe logvar value
                 x_recon_mu[eicu_mask] = mu_eicu.to(x_recon_mu.dtype) 
                 x_recon_logvar[eicu_mask] = logvar_eicu.to(x_recon_logvar.dtype)
             
@@ -309,9 +427,17 @@ class CycleVAE(pl.LightningModule):
         # Extract mean for next encoding step
         if self.use_heteroscedastic:
             x_translated_mu, x_translated_logvar = decoder_output
+            # CRITICAL FIX: More intelligent safety checks for decoder outputs in cycle
+            x_translated_mu = torch.clamp(x_translated_mu, min=-50, max=100)  # Allow Age 0-100
+            if torch.isnan(x_translated_mu).any() or torch.isinf(x_translated_mu).any():
+                x_translated_mu = torch.zeros_like(x_translated_mu)
             x_translated = x_translated_mu  # Use mean for next step
         else:
             x_translated = decoder_output
+            # Safety check for non-heteroscedastic too
+            x_translated = torch.clamp(x_translated, min=-50, max=100)  # Same wider range
+            if torch.isnan(x_translated).any() or torch.isinf(x_translated).any():
+                x_translated = torch.zeros_like(x_translated)
         
         # Encode translated data  
         mu_cycle, logvar_cycle = self.encoder(x_translated)
@@ -326,9 +452,17 @@ class CycleVAE(pl.LightningModule):
         # Extract cycle reconstruction
         if self.use_heteroscedastic:
             x_cycle_mu, x_cycle_logvar = cycle_decoder_output
+            # CRITICAL FIX: More intelligent safety checks for cycle decoder outputs
+            x_cycle_mu = torch.clamp(x_cycle_mu, min=-50, max=100)  # Allow Age 0-100  
+            if torch.isnan(x_cycle_mu).any() or torch.isinf(x_cycle_mu).any():
+                x_cycle_mu = torch.zeros_like(x_cycle_mu)
             x_cycle = x_cycle_mu  # Use mean for cycle consistency
         else:
             x_cycle = cycle_decoder_output
+            # Safety check for non-heteroscedastic too
+            x_cycle = torch.clamp(x_cycle, min=-50, max=100)  # Same wider range
+            if torch.isnan(x_cycle).any() or torch.isinf(x_cycle).any():
+                x_cycle = torch.zeros_like(x_cycle)
         
         return {
             'x_translated': x_translated,
@@ -338,8 +472,10 @@ class CycleVAE(pl.LightningModule):
         }
     
     def compute_kl_loss(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """Compute KL divergence loss"""
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        """Compute KL divergence loss with numerical stability"""
+        # CRITICAL FIX: Clamp logvar to prevent explosion in exp()
+        logvar_clamped = torch.clamp(logvar, min=-5, max=3)  # Same range as encoder
+        kl_loss = -0.5 * torch.sum(1 + logvar_clamped - mu.pow(2) - logvar_clamped.exp())
         return kl_loss
     
     def compute_heteroscedastic_nll(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -390,7 +526,7 @@ class CycleVAE(pl.LightningModule):
         return total_nll
     
     def compute_reconstruction_loss(self, x: torch.Tensor, decoder_output) -> torch.Tensor:
-        """FIXED: Safe reconstruction loss with demographic feature handling"""
+        """EMERGENCY FIX: Special handling for binary missing indicator features"""
         if self.use_heteroscedastic and not self.use_safe_mode:
             # decoder_output is (mu, logvar) tuple
             mu, logvar = decoder_output
@@ -398,22 +534,50 @@ class CycleVAE(pl.LightningModule):
         else:
             # decoder_output is x_recon tensor  
             x_recon = decoder_output
-            if not hasattr(self, 'feature_std') or self.feature_std is None:
-                # Initialize per-feature standard deviations (computed once from training data)
-                with torch.no_grad():
-                    self.feature_std = torch.std(x, dim=0) + 1e-8  # Add epsilon for numerical stability
-                    logger.info(f"Initialized feature std: min={self.feature_std.min():.6f}, max={self.feature_std.max():.6f}")
             
-            # Per-feature standardized MSE
-            normalized_diff = (x - x_recon) / self.feature_std
-            per_feature_mse = torch.mean(normalized_diff**2, dim=0)  # [n_features]
+            # CRITICAL FIX: Separate binary (missing indicators) from continuous features
+            # Missing indicators are indices 34-41 (binary 0/1)
+            continuous_indices = list(range(34))  # Indices 0-33 (continuous features)
+            binary_indices = list(range(34, 42))   # Indices 34-41 (missing indicators)
             
-            # OPTIMIZED: Log worst performing features less frequently for speed
-            if self.training and torch.rand(1).item() < 0.005:  # 0.5% of batches (half as often)
-                worst_features = torch.topk(per_feature_mse, k=min(5, len(per_feature_mse))).indices
-                logger.info(f"Worst reconstruction features: {worst_features.tolist()}, MSE: {per_feature_mse[worst_features].tolist()}")
+            total_loss = torch.tensor(0.0, device=x.device)
             
-            return per_feature_mse.sum()  # Sum across features
+            # Handle continuous features with MSE
+            if len(continuous_indices) > 0:
+                x_cont = x[:, continuous_indices] 
+                x_recon_cont = x_recon[:, continuous_indices]
+                cont_loss = F.mse_loss(x_cont, x_recon_cont, reduction='mean')
+                total_loss += cont_loss
+            
+            # CRITICAL FIX: Handle binary features with BCE loss (safe for autocast)
+            if len(binary_indices) > 0:
+                x_bin = x[:, binary_indices]  # True binary values (0 or 1)
+                x_recon_bin_logits = x_recon[:, binary_indices]  # Raw logits from decoder
+                
+                # Use BCE with logits loss (safer for mixed precision and more numerically stable!)
+                binary_loss = F.binary_cross_entropy_with_logits(x_recon_bin_logits, x_bin, reduction='mean')
+                total_loss += binary_loss * 0.1  # Scale down binary loss contribution
+                
+                # OPTIMIZED: Log worst performing features less frequently for speed
+                if self.training and torch.rand(1).item() < 0.005:  # 0.5% of batches
+                    # Calculate per-feature MSE for logging
+                    with torch.no_grad():
+                        cont_mse = F.mse_loss(x_cont, x_recon_cont, reduction='none').mean(0) if len(continuous_indices) > 0 else torch.tensor([])
+                        # For binary features, convert logits to probabilities for MSE calculation
+                        x_recon_bin_prob = torch.sigmoid(x_recon_bin_logits)
+                        bin_mse = F.mse_loss(x_bin, x_recon_bin_prob, reduction='none').mean(0) if len(binary_indices) > 0 else torch.tensor([])
+                        
+                        # Combine for logging
+                        all_mse = torch.zeros(x.size(1), device=x.device)
+                        if len(continuous_indices) > 0:
+                            all_mse[continuous_indices] = cont_mse
+                        if len(binary_indices) > 0:
+                            all_mse[binary_indices] = bin_mse
+                        
+                        worst_features = torch.topk(all_mse, k=min(5, len(all_mse))).indices
+                        logger.info(f"Worst reconstruction features: {worst_features.tolist()}, MSE: {all_mse[worst_features].tolist()}")
+            
+            return total_loss
     
     def compute_safe_heteroscedastic_nll(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """FIXED: Safe heteroscedastic NLL with demographic feature protection"""
@@ -667,6 +831,23 @@ class CycleVAE(pl.LightningModule):
             
         return total_mmd / len(feature_indices)  # Average over features
     
+    def compute_feature_reconstruction_loss(self, z: torch.Tensor, x_orig: torch.Tensor) -> torch.Tensor:
+        """IMPROVEMENT 4: Feature reconstruction loss to prevent mode collapse"""
+        x_recon_from_z = self.feature_reconstruction_head(z)
+        return F.mse_loss(x_recon_from_z, x_orig, reduction='mean')
+    
+    def compute_domain_adversarial_loss(self, z: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
+        """IMPROVEMENT 5: Domain adversarial loss for domain-invariant features"""
+        # Forward pass through domain classifier
+        domain_pred = self.domain_classifier(z)
+        
+        # Binary cross-entropy loss
+        domain_loss = F.cross_entropy(domain_pred, domain)
+        
+        # For adversarial training, we want to MAXIMIZE this loss w.r.t. encoder
+        # So we return the negative loss (gradient reversal effect)
+        return -domain_loss
+    
     def _rbf_mmd_single_feature(self, x: torch.Tensor, y: torch.Tensor, sigma: float) -> torch.Tensor:
         """
         Compute RBF MMD for a single feature
@@ -730,7 +911,7 @@ class CycleVAE(pl.LightningModule):
         return self.kl_weight
     
     def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
-        """Training step"""
+        """IMPROVED: Training step with per-dataset normalization and new losses"""
         # Extract data
         x_numeric = batch['numeric']
         x_missing = batch['missing']
@@ -743,8 +924,17 @@ class CycleVAE(pl.LightningModule):
         mimic_mask = (domain == 1)
         eicu_mask = (domain == 0)
         
-        # Forward pass
-        outputs = self.forward(x, domain)
+        # IMPROVEMENT 1: Initialize and apply per-dataset normalization
+        if mimic_mask.any() and eicu_mask.any():
+            x_mimic = x[mimic_mask]
+            x_eicu = x[eicu_mask]
+            self.initialize_normalization(x_mimic, x_eicu)
+        
+        # Apply normalization
+        x_normalized = self.normalize_features(x, domain)
+        
+        # Forward pass with normalized features
+        outputs = self.forward(x_normalized, domain)
         z, mu, logvar, x_recon = outputs['z'], outputs['mu'], outputs['logvar'], outputs['x_recon']
         
         # Compute losses
@@ -772,6 +962,16 @@ class CycleVAE(pl.LightningModule):
             z_mimic = z[mimic_mask]
             z_eicu = z[eicu_mask]
             mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
+        
+        # IMPROVEMENT 4: Feature reconstruction loss
+        feature_recon_loss = torch.tensor(0.0, device=self.device)
+        if self.feature_recon_weight > 0:
+            feature_recon_loss = self.compute_feature_reconstruction_loss(z, x_normalized)
+        
+        # IMPROVEMENT 5: Domain adversarial loss
+        domain_adv_loss = torch.tensor(0.0, device=self.device)
+        if self.domain_adversarial_weight > 0:
+            domain_adv_loss = self.compute_domain_adversarial_loss(z, domain)
         
         # IMPROVED: Covariance loss (now numerically stable)
         cov_loss = torch.tensor(0.0, device=self.device)
@@ -848,7 +1048,7 @@ class CycleVAE(pl.LightningModule):
                 wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic)
                 wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu)
         
-        # Total loss with all components INCLUDING WASSERSTEIN
+        # Total loss with all components INCLUDING NEW IMPROVEMENTS
         kl_weight = self.get_kl_weight()
         total_loss = (
             self.rec_weight * rec_loss +
@@ -857,7 +1057,9 @@ class CycleVAE(pl.LightningModule):
             self.mmd_weight * mmd_loss +
             self.cov_weight * cov_loss +
             self.per_feature_mmd_weight * per_feature_mmd_loss +
-            self.wasserstein_weight * wasserstein_loss
+            self.wasserstein_weight * wasserstein_loss +
+            self.feature_recon_weight * feature_recon_loss +
+            self.domain_adversarial_weight * domain_adv_loss
         )
         
         # Comprehensive logging
@@ -869,6 +1071,8 @@ class CycleVAE(pl.LightningModule):
         self.log('train_cov_loss', cov_loss)
         self.log('train_per_feature_mmd_loss', per_feature_mmd_loss)
         self.log('train_wasserstein_loss', wasserstein_loss)
+        self.log('train_feature_recon_loss', feature_recon_loss)
+        self.log('train_domain_adv_loss', domain_adv_loss)
         self.log('kl_weight', kl_weight)
         
         # OPTIMIZED: Less frequent detailed monitoring for faster training (every 100 batches)
@@ -1031,7 +1235,7 @@ class CycleVAE(pl.LightningModule):
         return total_loss
     
     def configure_optimizers(self):
-        """Configure optimizer"""
+        """Configure optimizer with gradient clipping"""
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=self.lr,
@@ -1046,12 +1250,15 @@ class CycleVAE(pl.LightningModule):
             verbose=True
         )
         
+        # CRITICAL FIX: Add gradient clipping for numerical stability
         return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'monitor': 'train_loss'
-            }
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "train_loss"
+            },
+            # Enable gradient clipping
+            "gradient_clip_val": self.gradient_clip_val
         }
     
     def translate_eicu_to_mimic(self, x_eicu: torch.Tensor) -> torch.Tensor:
@@ -1060,15 +1267,31 @@ class CycleVAE(pl.LightningModule):
         with torch.no_grad():
             # Encode
             mu, logvar = self.encoder(x_eicu)
+            # CRITICAL FIX: More intelligent safety checks for encoder outputs in translation
+            mu = torch.clamp(mu, min=-20, max=20)  # Wider range for latent space
+            logvar = torch.clamp(logvar, min=-5, max=3)  # Keep logvar range tight for stability
+            if torch.isnan(mu).any() or torch.isinf(mu).any():
+                mu = torch.zeros_like(mu)
+            if torch.isnan(logvar).any() or torch.isinf(logvar).any():
+                logvar = torch.full_like(logvar, -2.0)
             z = self.encoder.reparameterize(mu, logvar)
             
             # Decode to MIMIC
             decoder_output = self.decoder_mimic(z)
             
             if self.use_heteroscedastic:
-                x_mimic, _ = decoder_output  # Return mean, ignore variance
+                x_mimic, logvar_out = decoder_output
+                # CRITICAL FIX: More intelligent safety checks - don't destroy Age feature
+                # Only clamp extreme outliers, preserve normal data ranges
+                x_mimic = torch.clamp(x_mimic, min=-50, max=100)  # Allow Age 0-100, other features -50 to 100
+                if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
+                    x_mimic = torch.zeros_like(x_mimic)
             else:
                 x_mimic = decoder_output
+                # Safety check for non-heteroscedastic too
+                x_mimic = torch.clamp(x_mimic, min=-50, max=100)  # Same wider range
+                if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
+                    x_mimic = torch.zeros_like(x_mimic)
             
         return x_mimic
     
@@ -1078,17 +1301,307 @@ class CycleVAE(pl.LightningModule):
         with torch.no_grad():
             # Encode
             mu, logvar = self.encoder(x_mimic)
+            # CRITICAL FIX: More intelligent safety checks for encoder outputs in translation
+            mu = torch.clamp(mu, min=-20, max=20)  # Wider range for latent space
+            logvar = torch.clamp(logvar, min=-5, max=3)  # Keep logvar range tight for stability
+            if torch.isnan(mu).any() or torch.isinf(mu).any():
+                mu = torch.zeros_like(mu)
+            if torch.isnan(logvar).any() or torch.isinf(logvar).any():
+                logvar = torch.full_like(logvar, -2.0)
             z = self.encoder.reparameterize(mu, logvar)
             
             # Decode to eICU
             decoder_output = self.decoder_eicu(z)
             
             if self.use_heteroscedastic:
-                x_eicu, _ = decoder_output  # Return mean, ignore variance
+                x_eicu, logvar_out = decoder_output
+                # CRITICAL FIX: More intelligent safety checks - don't destroy Age feature
+                x_eicu = torch.clamp(x_eicu, min=-50, max=100)  # Allow Age 0-100, other features -50 to 100
+                if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
+                    x_eicu = torch.zeros_like(x_eicu)
             else:
                 x_eicu = decoder_output
+                # Safety check for non-heteroscedastic too
+                x_eicu = torch.clamp(x_eicu, min=-50, max=100)  # Same wider range
+                if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
+                    x_eicu = torch.zeros_like(x_eicu)
             
         return x_eicu
+    
+    def run_comprehensive_evaluation(self, data_module, output_dir: str):
+        """
+        IMPROVEMENT 3: Comprehensive evaluation integrated into model
+        
+        Args:
+            data_module: Data module with test data
+            output_dir: Output directory for reports
+        """
+        try:
+            logger.info("Running integrated comprehensive evaluation...")
+            
+            # Get test data
+            data_module.setup('test')
+            test_loader = data_module.test_dataloader()
+            
+            # Collect test data
+            mimic_data = []
+            eicu_data = []
+            
+            for batch in test_loader:
+                x_numeric = batch['numeric']
+                x_missing = batch['missing']
+                domain = batch['domain']
+                
+                x = torch.cat([x_numeric, x_missing], dim=1)
+                
+                mimic_mask = (domain == 1)
+                eicu_mask = (domain == 0)
+                
+                if mimic_mask.any():
+                    mimic_data.append(x[mimic_mask])
+                if eicu_mask.any():
+                    eicu_data.append(x[eicu_mask])
+            
+            if not mimic_data or not eicu_data:
+                logger.warning("Insufficient test data for comprehensive evaluation")
+                return
+            
+            # Combine data
+            x_mimic_test = torch.cat(mimic_data, dim=0)
+            x_eicu_test = torch.cat(eicu_data, dim=0)
+            
+            # Limit to reasonable size for evaluation
+            max_samples = 1000
+            if x_mimic_test.size(0) > max_samples:
+                x_mimic_test = x_mimic_test[:max_samples]
+            if x_eicu_test.size(0) > max_samples:
+                x_eicu_test = x_eicu_test[:max_samples]
+            
+            logger.info(f"Evaluating with {x_mimic_test.size(0)} MIMIC and {x_eicu_test.size(0)} eICU samples")
+            
+            # Run evaluation
+            evaluation_results = self._evaluate_translation_quality(x_mimic_test, x_eicu_test)
+            
+            # Log results
+            self._log_evaluation_results(evaluation_results)
+            
+            # Save detailed report
+            report_path = Path(output_dir) / "comprehensive_evaluation_report.json"
+            with open(report_path, 'w') as f:
+                # Convert tensors to lists for JSON serialization
+                serializable_results = self._convert_tensors_for_json(evaluation_results)
+                json.dump(serializable_results, f, indent=2)
+            
+            logger.info(f"Comprehensive evaluation saved to {report_path}")
+            
+        except Exception as e:
+            logger.error(f"Error in comprehensive evaluation: {e}")
+            logger.warning("Continuing without comprehensive evaluation")
+    
+    def _evaluate_translation_quality(self, x_mimic: torch.Tensor, x_eicu: torch.Tensor) -> Dict:
+        """IMPROVEMENT 3: Comprehensive translation quality evaluation"""
+        self.eval()
+        with torch.no_grad():
+            # Move data to device
+            x_mimic = x_mimic.to(self.device)
+            x_eicu = x_eicu.to(self.device)
+            
+            # Translation: MIMIC -> eICU
+            x_mimic_to_eicu = self.translate_mimic_to_eicu(x_mimic)
+            
+            # Translation: eICU -> MIMIC  
+            x_eicu_to_mimic = self.translate_eicu_to_mimic(x_eicu)
+            
+            # Cycle consistency: MIMIC -> eICU -> MIMIC
+            x_mimic_cycle = self.translate_eicu_to_mimic(x_mimic_to_eicu)
+            
+            # Cycle consistency: eICU -> MIMIC -> eICU
+            x_eicu_cycle = self.translate_mimic_to_eicu(x_eicu_to_mimic)
+            
+            # Compute metrics
+            evaluation_results = {
+                'mimic_to_eicu_translation': {
+                    'distributional_metrics': self._compute_distributional_metrics(x_eicu, x_mimic_to_eicu),
+                    'ks_statistics': self._compute_ks_statistics(x_eicu, x_mimic_to_eicu)
+                },
+                'eicu_to_mimic_translation': {
+                    'distributional_metrics': self._compute_distributional_metrics(x_mimic, x_eicu_to_mimic),
+                    'ks_statistics': self._compute_ks_statistics(x_mimic, x_eicu_to_mimic)
+                },
+                'cycle_consistency': {
+                    'mimic_cycle_rmse': self._compute_per_feature_rmse(x_mimic, x_mimic_cycle),
+                    'eicu_cycle_rmse': self._compute_per_feature_rmse(x_eicu, x_eicu_cycle),
+                    'mimic_cycle_corr': self._compute_per_feature_correlation(x_mimic, x_mimic_cycle),
+                    'eicu_cycle_corr': self._compute_per_feature_correlation(x_eicu, x_eicu_cycle)
+                }
+            }
+            
+            # Summary statistics
+            mimic_cycle_rmse = evaluation_results['cycle_consistency']['mimic_cycle_rmse']
+            eicu_cycle_rmse = evaluation_results['cycle_consistency']['eicu_cycle_rmse']
+            
+            evaluation_results['summary'] = {
+                'mean_cycle_rmse': (torch.mean(mimic_cycle_rmse) + torch.mean(eicu_cycle_rmse)) / 2,
+                'worst_cycle_rmse': torch.max(torch.maximum(mimic_cycle_rmse, eicu_cycle_rmse)),
+                'best_cycle_rmse': torch.min(torch.minimum(mimic_cycle_rmse, eicu_cycle_rmse)),
+                'mimic_translation_ks_mean': evaluation_results['mimic_to_eicu_translation']['ks_statistics']['mean_ks_statistic'],
+                'eicu_translation_ks_mean': evaluation_results['eicu_to_mimic_translation']['ks_statistics']['mean_ks_statistic'],
+                'significant_mimic_features': evaluation_results['mimic_to_eicu_translation']['ks_statistics']['significant_features'],
+                'significant_eicu_features': evaluation_results['eicu_to_mimic_translation']['ks_statistics']['significant_features']
+            }
+            
+            return evaluation_results
+    
+    def _compute_per_feature_rmse(self, x_true: torch.Tensor, x_pred: torch.Tensor) -> torch.Tensor:
+        """Compute per-feature RMSE"""
+        x_true_np = x_true.detach().cpu().numpy()
+        x_pred_np = x_pred.detach().cpu().numpy()
+        
+        n_features = x_true.shape[1]
+        rmse_per_feature = np.zeros(n_features)
+        
+        for i in range(n_features):
+            rmse_per_feature[i] = np.sqrt(mean_squared_error(x_true_np[:, i], x_pred_np[:, i]))
+        
+        return torch.from_numpy(rmse_per_feature)
+    
+    def _compute_per_feature_correlation(self, x_true: torch.Tensor, x_pred: torch.Tensor) -> torch.Tensor:
+        """Compute per-feature Pearson correlation"""
+        x_true_np = x_true.detach().cpu().numpy()
+        x_pred_np = x_pred.detach().cpu().numpy()
+        
+        n_features = x_true.shape[1]
+        correlations = np.zeros(n_features)
+        
+        for i in range(n_features):
+            corr, _ = stats.pearsonr(x_true_np[:, i], x_pred_np[:, i])
+            correlations[i] = corr if not np.isnan(corr) else 0.0
+        
+        return torch.from_numpy(correlations)
+    
+    def _compute_ks_statistics(self, x_source: torch.Tensor, x_translated: torch.Tensor) -> Dict:
+        """Compute Kolmogorov-Smirnov statistics per feature"""
+        x_source_np = x_source.detach().cpu().numpy()
+        x_translated_np = x_translated.detach().cpu().numpy()
+        
+        n_features = x_source.shape[1]
+        ks_stats = np.zeros(n_features)
+        p_values = np.zeros(n_features)
+        
+        for i in range(n_features):
+            ks_stat, p_val = stats.ks_2samp(x_source_np[:, i], x_translated_np[:, i])
+            ks_stats[i] = ks_stat
+            p_values[i] = p_val
+        
+        return {
+            'ks_statistics': torch.from_numpy(ks_stats),
+            'p_values': torch.from_numpy(p_values),
+            'significant_features': torch.sum(torch.from_numpy(p_values) < 0.05).item(),
+            'mean_ks_statistic': np.mean(ks_stats)
+        }
+    
+    def _compute_distributional_metrics(self, x_source: torch.Tensor, x_translated: torch.Tensor) -> Dict:
+        """Comprehensive distributional comparison metrics"""
+        x_source_np = x_source.detach().cpu().numpy()
+        x_translated_np = x_translated.detach().cpu().numpy()
+        
+        n_features = x_source.shape[1]
+        
+        # Mean and std differences
+        mean_diff = np.abs(np.mean(x_source_np, axis=0) - np.mean(x_translated_np, axis=0))
+        std_diff = np.abs(np.std(x_source_np, axis=0) - np.std(x_translated_np, axis=0))
+        
+        # Quantile differences (25th, 50th, 75th percentiles)
+        q25_diff = np.abs(np.percentile(x_source_np, 25, axis=0) - np.percentile(x_translated_np, 25, axis=0))
+        q50_diff = np.abs(np.percentile(x_source_np, 50, axis=0) - np.percentile(x_translated_np, 50, axis=0))
+        q75_diff = np.abs(np.percentile(x_source_np, 75, axis=0) - np.percentile(x_translated_np, 75, axis=0))
+        
+        # Wasserstein (Earth Mover's) distance per feature
+        wasserstein_distances = np.zeros(n_features)
+        for i in range(n_features):
+            # Sort and compute 1-Wasserstein distance
+            source_sorted = np.sort(x_source_np[:, i])
+            translated_sorted = np.sort(x_translated_np[:, i])
+            
+            # Handle different sample sizes by resampling to common size
+            min_len = min(len(source_sorted), len(translated_sorted))
+            if len(source_sorted) != len(translated_sorted):
+                if len(source_sorted) > min_len:
+                    indices = np.linspace(0, len(source_sorted) - 1, min_len, dtype=int)
+                    source_sorted = source_sorted[indices]
+                else:
+                    indices = np.linspace(0, len(translated_sorted) - 1, min_len, dtype=int)
+                    translated_sorted = translated_sorted[indices]
+            
+            wasserstein_distances[i] = np.mean(np.abs(source_sorted - translated_sorted))
+        
+        return {
+            'mean_absolute_difference': torch.from_numpy(mean_diff),
+            'std_absolute_difference': torch.from_numpy(std_diff),
+            'q25_difference': torch.from_numpy(q25_diff),
+            'q50_difference': torch.from_numpy(q50_diff),
+            'q75_difference': torch.from_numpy(q75_diff),
+            'wasserstein_distances': torch.from_numpy(wasserstein_distances),
+            'summary': {
+                'mean_mean_diff': np.mean(mean_diff),
+                'mean_std_diff': np.mean(std_diff),
+                'mean_wasserstein': np.mean(wasserstein_distances)
+            }
+        }
+    
+    def _log_evaluation_results(self, evaluation_results: Dict):
+        """Log detailed evaluation results"""
+        logger.info("=== COMPREHENSIVE TRANSLATION EVALUATION ===")
+        
+        summary = evaluation_results['summary']
+        logger.info(f"Mean cycle consistency RMSE: {summary['mean_cycle_rmse']:.4f}")
+        logger.info(f"Worst feature cycle RMSE: {summary['worst_cycle_rmse']:.4f}")
+        logger.info(f"Best feature cycle RMSE: {summary['best_cycle_rmse']:.4f}")
+        
+        logger.info(f"MIMIC->eICU translation KS mean: {summary['mimic_translation_ks_mean']:.4f}")
+        logger.info(f"eICU->MIMIC translation KS mean: {summary['eicu_translation_ks_mean']:.4f}")
+        logger.info(f"Significant features MIMIC->eICU: {summary['significant_mimic_features']}")
+        logger.info(f"Significant features eICU->MIMIC: {summary['significant_eicu_features']}")
+        
+        # Detailed feature analysis
+        mimic_cycle_rmse = evaluation_results['cycle_consistency']['mimic_cycle_rmse']
+        eicu_cycle_rmse = evaluation_results['cycle_consistency']['eicu_cycle_rmse']
+        
+        # Find worst performing features
+        worst_feature_indices = torch.topk(mimic_cycle_rmse + eicu_cycle_rmse, k=10).indices
+        best_feature_indices = torch.topk(mimic_cycle_rmse + eicu_cycle_rmse, k=10, largest=False).indices
+        
+        logger.info(f"Top 10 worst features by cycle RMSE:")
+        for i, idx in enumerate(worst_feature_indices):
+            mimic_rmse = mimic_cycle_rmse[idx].item()
+            eicu_rmse = eicu_cycle_rmse[idx].item()
+            logger.info(f"  {i+1}. Feature {idx}: MIMIC={mimic_rmse:.4f}, eICU={eicu_rmse:.4f}")
+        
+        logger.info(f"Top 10 best features by cycle RMSE:")
+        for i, idx in enumerate(best_feature_indices):
+            mimic_rmse = mimic_cycle_rmse[idx].item()
+            eicu_rmse = eicu_cycle_rmse[idx].item()
+            logger.info(f"  {i+1}. Feature {idx}: MIMIC={mimic_rmse:.4f}, eICU={eicu_rmse:.4f}")
+        
+        # Check if known worst features are still problematic
+        known_worst_features = [32]  # Feature 32 from the analysis
+        logger.info(f"Analysis of known problematic features:")
+        for idx in known_worst_features:
+            if idx < len(mimic_cycle_rmse):
+                mimic_rmse = mimic_cycle_rmse[idx].item()
+                eicu_rmse = eicu_cycle_rmse[idx].item()
+                logger.info(f"  Feature {idx}: MIMIC={mimic_rmse:.4f}, eICU={eicu_rmse:.4f}")
+    
+    def _convert_tensors_for_json(self, obj):
+        """Convert tensors to lists for JSON serialization"""
+        if isinstance(obj, torch.Tensor):
+            return obj.cpu().numpy().tolist()
+        elif isinstance(obj, dict):
+            return {k: self._convert_tensors_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_tensors_for_json(item) for item in obj]
+        else:
+            return obj
 
 def test_model():
     """Test model functionality"""

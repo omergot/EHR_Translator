@@ -21,6 +21,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.model import CycleVAE
 from src.dataset import CombinedDataModule
 from src.preprocess import Preprocessor
+from src.utils import audit_preprocessing
 from data.raw_extractors import create_sample_data
 
 # Set up logging
@@ -207,6 +208,11 @@ def train_model(config: dict, feature_spec: dict, dry_run: bool = False):
     logger.info("Running final evaluation...")
     trainer.test(model, data_module)
     
+    # IMPROVEMENT 3: Run comprehensive evaluation built into model
+    logger.info("Running comprehensive evaluation...")
+    if hasattr(model, 'run_comprehensive_evaluation'):
+        model.run_comprehensive_evaluation(data_module, str(output_dir))
+    
     # Save final model
     final_model_path = output_dir / "checkpoints" / "final_model.ckpt"
     trainer.save_checkpoint(final_model_path)
@@ -219,6 +225,7 @@ def train_model(config: dict, feature_spec: dict, dry_run: bool = False):
     logger.info(f"Training config saved to {config_used_path}")
     
     return model, trainer
+
 
 def main():
     """Main training function"""
@@ -236,6 +243,8 @@ def main():
     parser.add_argument('--balance', type=str, default='oversample_minority',
                        choices=['oversample_minority', 'undersample_majority', 'max'],
                        help='Data balancing strategy')
+    parser.add_argument('--audit', action='store_true',
+                       help='Run preprocessing audit to identify problematic features')
     
     args = parser.parse_args()
     
@@ -265,6 +274,13 @@ def main():
         feature_spec = load_feature_spec(config)
         total_features = len(feature_spec['all_features'])
         logger.info(f"Loaded feature specification with {total_features} features ({feature_spec['n_clinical_features']} clinical + {feature_spec['n_demographic_features']} demographic)")
+        
+        # IMPROVEMENT 6: Run preprocessing audit if requested
+        if args.audit:
+            logger.info("Running preprocessing audit...")
+            audit_results = audit_preprocessing(config['paths']['output_dir'], feature_spec)
+            if audit_results:
+                logger.info("Preprocessing audit completed - check preprocessing_audit_results.json for details")
         
         # Train model
         model, trainer = train_model(config, feature_spec, dry_run=args.dry_run)

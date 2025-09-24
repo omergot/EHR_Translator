@@ -34,22 +34,22 @@ paths:
 training:
   batch_size: 128
   cov_weight: 0.1
-  cycle_weight: 0.1
-  domain_adversarial_weight: 0.01
+  cycle_weight: 0.3
+  domain_adversarial_weight: 0.05
   early_stop_patience: 15
-  epochs: 50
-  feature_recon_weight: 0.1
+  epochs: 20
+  feature_recon_weight: 0.2
   gradient_clip_val: 1.0
   kl_warmup_epochs: 20
   kl_weight: 1e-3
   latent_dim: 64
   lr: 1e-6
-  mmd_weight: 0.1
-  per_feature_mmd_weight: 0.05
+  mmd_weight: 0.5
+  per_feature_mmd_weight: 0.2
   rec_weight: 1.0
   use_heteroscedastic: false
   use_safe_mode: false
-  wasserstein_weight: 0.05
+  wasserstein_weight: 0.1
   weight_decay: 1e-4
   worst_features:
   - Temp_mean

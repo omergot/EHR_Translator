@@ -1,6 +1,6 @@
 {
-  "mmd_eicu_to_mimic": 0.7085175514221191,
-  "mmd_mimic_to_eicu": 0.6914194822311401,
-  "mean_ks_statistic": 0.6393968308398,
+  "mmd_eicu_to_mimic": 0.7079157829284668,
+  "mmd_mimic_to_eicu": 0.6914637088775635,
+  "mean_ks_statistic": 0.6099747126493905,
   "significant_features_pct": 100.0
 }

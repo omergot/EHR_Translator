@@ -267,10 +267,15 @@ class CycleVAE(pl.LightningModule):
     
     def _init_weights(self):
         """Initialize network weights conservatively for numerical stability"""
-        for module in self.modules():
+        for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
-                # Use Xavier/Glorot initialization with smaller variance
-                nn.init.xavier_normal_(module.weight, gain=0.1)  # Much smaller gain
+                # Different initialization for different components
+                if 'feature_reconstruction_head' in name or 'domain_classifier' in name:
+                    # Even more conservative for auxiliary heads
+                    nn.init.xavier_normal_(module.weight, gain=0.01)
+                else:
+                    # Standard conservative initialization for main networks
+                    nn.init.xavier_normal_(module.weight, gain=0.1)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
             elif isinstance(module, nn.BatchNorm1d):
@@ -293,7 +298,7 @@ class CycleVAE(pl.LightningModule):
                 logger.info(f"eICU stats - mean: [{self.eicu_feature_mean[0]:.3f}...], std: [{self.eicu_feature_std[0]:.3f}...]")
     
     def normalize_features(self, x: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
-        """IMPROVEMENT 1: Apply per-dataset normalization"""
+        """IMPROVEMENT 1: Apply per-dataset normalization with safety constraints"""
         if not self.normalization_initialized:
             return x  # Skip if not initialized yet
         
@@ -307,6 +312,14 @@ class CycleVAE(pl.LightningModule):
         
         if eicu_mask.any():
             x_normalized[eicu_mask] = (x[eicu_mask] - self.eicu_feature_mean) / self.eicu_feature_std
+        
+        # CRITICAL FIX: Constrain normalized values to prevent extreme values
+        x_normalized = torch.clamp(x_normalized, min=-10, max=10)
+        
+        # Additional safety check
+        if torch.isnan(x_normalized).any() or torch.isinf(x_normalized).any():
+            logger.warning("NaN/Inf detected in normalized features - using zeros")
+            x_normalized = torch.zeros_like(x)
             
         return x_normalized
     
@@ -333,8 +346,8 @@ class CycleVAE(pl.LightningModule):
         """
         # Encode
         mu, logvar = self.encoder(x)
-        # CRITICAL FIX: More intelligent safety checks - don't destroy features
-        mu = torch.clamp(mu, min=-20, max=20)  # Wider range for latent space
+        # CRITICAL FIX: Tighter constraints for numerical stability
+        mu = torch.clamp(mu, min=-5, max=5)  # TIGHTENED: More conservative range for latent space
         logvar = torch.clamp(logvar, min=-5, max=3)  # Keep logvar range tight for stability
         if torch.isnan(mu).any() or torch.isinf(mu).any():
             mu = torch.zeros_like(mu)
@@ -353,8 +366,8 @@ class CycleVAE(pl.LightningModule):
             
             if mimic_mask.any():
                 mu_mimic, logvar_mimic = self.decoder_mimic(z[mimic_mask])
-                # CRITICAL FIX: More intelligent safety checks for decoder outputs
-                mu_mimic = torch.clamp(mu_mimic, min=-50, max=100)  # Allow Age 0-100, other features wider range
+                # CRITICAL FIX: Tighter constraints for decoder outputs
+                mu_mimic = torch.clamp(mu_mimic, min=-10, max=10)  # TIGHTENED: Conservative range for normalized features
                 logvar_mimic = torch.clamp(logvar_mimic, min=-5, max=3)  # Keep logvar range tight for stability
                 # Check for NaN/Inf and replace with safe values
                 if torch.isnan(mu_mimic).any() or torch.isinf(mu_mimic).any():
@@ -366,8 +379,8 @@ class CycleVAE(pl.LightningModule):
             
             if eicu_mask.any():
                 mu_eicu, logvar_eicu = self.decoder_eicu(z[eicu_mask])
-                # CRITICAL FIX: More intelligent safety checks for decoder outputs
-                mu_eicu = torch.clamp(mu_eicu, min=-50, max=100)  # Allow Age 0-100, other features wider range
+                # CRITICAL FIX: Tighter constraints for decoder outputs
+                mu_eicu = torch.clamp(mu_eicu, min=-10, max=10)  # TIGHTENED: Conservative range for normalized features
                 logvar_eicu = torch.clamp(logvar_eicu, min=-5, max=3)  # Keep logvar range tight for stability
                 # Check for NaN/Inf and replace with safe values
                 if torch.isnan(mu_eicu).any() or torch.isinf(mu_eicu).any():
@@ -427,15 +440,15 @@ class CycleVAE(pl.LightningModule):
         # Extract mean for next encoding step
         if self.use_heteroscedastic:
             x_translated_mu, x_translated_logvar = decoder_output
-            # CRITICAL FIX: More intelligent safety checks for decoder outputs in cycle
-            x_translated_mu = torch.clamp(x_translated_mu, min=-50, max=100)  # Allow Age 0-100
+            # CRITICAL FIX: Tight constraints for NORMALIZED features in cycle
+            x_translated_mu = torch.clamp(x_translated_mu, min=-10, max=10)  # NORMALIZED range!
             if torch.isnan(x_translated_mu).any() or torch.isinf(x_translated_mu).any():
                 x_translated_mu = torch.zeros_like(x_translated_mu)
             x_translated = x_translated_mu  # Use mean for next step
         else:
             x_translated = decoder_output
-            # Safety check for non-heteroscedastic too
-            x_translated = torch.clamp(x_translated, min=-50, max=100)  # Same wider range
+            # Safety check for non-heteroscedastic too - NORMALIZED features!
+            x_translated = torch.clamp(x_translated, min=-10, max=10)  # NORMALIZED range!
             if torch.isnan(x_translated).any() or torch.isinf(x_translated).any():
                 x_translated = torch.zeros_like(x_translated)
         
@@ -452,15 +465,15 @@ class CycleVAE(pl.LightningModule):
         # Extract cycle reconstruction
         if self.use_heteroscedastic:
             x_cycle_mu, x_cycle_logvar = cycle_decoder_output
-            # CRITICAL FIX: More intelligent safety checks for cycle decoder outputs
-            x_cycle_mu = torch.clamp(x_cycle_mu, min=-50, max=100)  # Allow Age 0-100  
+            # CRITICAL FIX: Tight constraints for NORMALIZED features in cycle  
+            x_cycle_mu = torch.clamp(x_cycle_mu, min=-10, max=10)  # NORMALIZED range!  
             if torch.isnan(x_cycle_mu).any() or torch.isinf(x_cycle_mu).any():
                 x_cycle_mu = torch.zeros_like(x_cycle_mu)
             x_cycle = x_cycle_mu  # Use mean for cycle consistency
         else:
             x_cycle = cycle_decoder_output
-            # Safety check for non-heteroscedastic too
-            x_cycle = torch.clamp(x_cycle, min=-50, max=100)  # Same wider range
+            # Safety check for non-heteroscedastic too  
+            x_cycle = torch.clamp(x_cycle, min=-10, max=10)  # NORMALIZED range!
             if torch.isnan(x_cycle).any() or torch.isinf(x_cycle).any():
                 x_cycle = torch.zeros_like(x_cycle)
         
@@ -475,7 +488,8 @@ class CycleVAE(pl.LightningModule):
         """Compute KL divergence loss with numerical stability"""
         # CRITICAL FIX: Clamp logvar to prevent explosion in exp()
         logvar_clamped = torch.clamp(logvar, min=-5, max=3)  # Same range as encoder
-        kl_loss = -0.5 * torch.sum(1 + logvar_clamped - mu.pow(2) - logvar_clamped.exp())
+        # MAJOR FIX: Use mean instead of sum to normalize by batch size!
+        kl_loss = -0.5 * torch.mean(1 + logvar_clamped - mu.pow(2) - logvar_clamped.exp())
         return kl_loss
     
     def compute_heteroscedastic_nll(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
@@ -513,8 +527,8 @@ class CycleVAE(pl.LightningModule):
         
         nll = 0.5 * (logvar_clamped + mse_term)
         
-        # Stronger regularization to prevent variance collapse/explosion
-        logvar_penalty = 0.1 * torch.mean(logvar_clamped ** 2)
+        # STRENGTHENED: Stronger regularization to prevent variance collapse/explosion  
+        logvar_penalty = 0.5 * torch.mean(logvar_clamped ** 2)  # Increased from 0.1 to 0.5
         
         total_nll = torch.mean(nll) + logvar_penalty
         
@@ -536,9 +550,10 @@ class CycleVAE(pl.LightningModule):
             x_recon = decoder_output
             
             # CRITICAL FIX: Separate binary (missing indicators) from continuous features
+            # FIXED: Handle missing indicators properly - they cause extreme ratios
             # Missing indicators are indices 34-41 (binary 0/1)
-            continuous_indices = list(range(34))  # Indices 0-33 (continuous features)
-            binary_indices = list(range(34, 42))   # Indices 34-41 (missing indicators)
+            continuous_indices = list(range(34))  # Indices 0-33 (continuous features)  
+            binary_indices = list(range(34, min(42, x.shape[1])))   # Indices 34+ (missing indicators)
             
             total_loss = torch.tensor(0.0, device=x.device)
             
@@ -614,20 +629,13 @@ class CycleVAE(pl.LightningModule):
         """IMPROVED: Per-feature standardized cycle consistency loss (works with heteroscedastic)"""
         # Note: x_cycle is already the mean (mu) from cycle_forward when using heteroscedastic
         if not self.use_heteroscedastic:
-            # Standard case - use feature standardization
-            if not hasattr(self, 'feature_std') or self.feature_std is None:
-                # Initialize if not already done
-                with torch.no_grad():
-                    self.feature_std = torch.std(x, dim=0) + 1e-8
-            
-            # Per-feature standardized cycle loss
-            normalized_diff = (x - x_cycle) / self.feature_std
-            per_feature_cycle_mse = torch.mean(normalized_diff**2, dim=0)
-            
-            return per_feature_cycle_mse.sum()
+            # MAJOR FIX: Just use simple MSE - feature standardization was causing explosion!
+            # The original approach of dividing by feature_std was unstable when std is tiny
+            return F.mse_loss(x_cycle, x, reduction='mean')
         else:
             # Heteroscedastic case - use MSE directly since we're comparing against original data
-            return F.mse_loss(x_cycle, x, reduction='mean') * x.shape[1]  # Scale by n_features for consistency
+            # MAJOR FIX: Don't multiply by n_features - just use standard MSE 
+            return F.mse_loss(x_cycle, x, reduction='mean')
     
     def compute_covariance_loss(self, x_translated: torch.Tensor, x_target: torch.Tensor) -> torch.Tensor:
         """FIXED: Numerically stable covariance matching loss"""
@@ -834,19 +842,35 @@ class CycleVAE(pl.LightningModule):
     def compute_feature_reconstruction_loss(self, z: torch.Tensor, x_orig: torch.Tensor) -> torch.Tensor:
         """IMPROVEMENT 4: Feature reconstruction loss to prevent mode collapse"""
         x_recon_from_z = self.feature_reconstruction_head(z)
+        
+        # CRITICAL FIX: Constrain feature reconstruction head output to prevent explosion
+        x_recon_from_z = torch.clamp(x_recon_from_z, min=-10, max=10)  # Reasonable range for normalized features
+        
+        # Additional safety check for NaN/Inf
+        if torch.isnan(x_recon_from_z).any() or torch.isinf(x_recon_from_z).any():
+            logger.warning("NaN/Inf detected in feature reconstruction - using zeros")
+            x_recon_from_z = torch.zeros_like(x_orig)
+        
         return F.mse_loss(x_recon_from_z, x_orig, reduction='mean')
     
     def compute_domain_adversarial_loss(self, z: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
         """IMPROVEMENT 5: Domain adversarial loss for domain-invariant features"""
+        # CRITICAL FIX: Constrain latent input to domain classifier
+        z_constrained = torch.clamp(z, min=-5, max=5)  # Tighter constraint for classifier input
+        
         # Forward pass through domain classifier
-        domain_pred = self.domain_classifier(z)
+        domain_pred = self.domain_classifier(z_constrained)
+        
+        # Additional safety check for domain classifier output
+        if torch.isnan(domain_pred).any() or torch.isinf(domain_pred).any():
+            logger.warning("NaN/Inf detected in domain classifier - using fallback loss")
+            return torch.tensor(0.0, device=z.device, requires_grad=True)
         
         # Binary cross-entropy loss
         domain_loss = F.cross_entropy(domain_pred, domain)
         
-        # For adversarial training, we want to MAXIMIZE this loss w.r.t. encoder
-        # So we return the negative loss (gradient reversal effect)
-        return -domain_loss
+        # FIXED: Return positive loss - adversarial training handled by gradient reversal in optimizer
+        return domain_loss
     
     def _rbf_mmd_single_feature(self, x: torch.Tensor, y: torch.Tensor, sigma: float) -> torch.Tensor:
         """
@@ -937,24 +961,25 @@ class CycleVAE(pl.LightningModule):
         outputs = self.forward(x_normalized, domain)
         z, mu, logvar, x_recon = outputs['z'], outputs['mu'], outputs['logvar'], outputs['x_recon']
         
-        # Compute losses
-        rec_loss = self.compute_reconstruction_loss(x, x_recon)
+        # CRITICAL FIX: Compare normalized inputs with normalized reconstructions!
+        rec_loss = self.compute_reconstruction_loss(x_normalized, x_recon)
         kl_loss = self.compute_kl_loss(mu, logvar)
         
         # Cycle consistency loss
         cycle_loss = torch.tensor(0.0, device=self.device)
         if mimic_mask.any() and eicu_mask.any():
+            # CRITICAL FIX: Use normalized features for cycle consistency too!
             # eICU -> MIMIC -> eICU
             if eicu_mask.any():
-                x_eicu = x[eicu_mask]
-                cycle_out_eicu = self.cycle_forward(x_eicu, 0, 1)
-                cycle_loss += self.compute_cycle_loss(x_eicu, cycle_out_eicu['x_cycle'])
+                x_eicu_norm = x_normalized[eicu_mask]
+                cycle_out_eicu = self.cycle_forward(x_eicu_norm, 0, 1)
+                cycle_loss += self.compute_cycle_loss(x_eicu_norm, cycle_out_eicu['x_cycle'])
             
             # MIMIC -> eICU -> MIMIC
             if mimic_mask.any():
-                x_mimic = x[mimic_mask]
-                cycle_out_mimic = self.cycle_forward(x_mimic, 1, 0)
-                cycle_loss += self.compute_cycle_loss(x_mimic, cycle_out_mimic['x_cycle'])
+                x_mimic_norm = x_normalized[mimic_mask]
+                cycle_out_mimic = self.cycle_forward(x_mimic_norm, 1, 0)
+                cycle_loss += self.compute_cycle_loss(x_mimic_norm, cycle_out_mimic['x_cycle'])
         
         # MMD loss
         mmd_loss = torch.tensor(0.0, device=self.device)
@@ -963,7 +988,7 @@ class CycleVAE(pl.LightningModule):
             z_eicu = z[eicu_mask]
             mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
         
-        # IMPROVEMENT 4: Feature reconstruction loss
+        # IMPROVEMENT 4: Feature reconstruction loss (already using normalized features - correct!)
         feature_recon_loss = torch.tensor(0.0, device=self.device)
         if self.feature_recon_weight > 0:
             feature_recon_loss = self.compute_feature_reconstruction_loss(z, x_normalized)
@@ -973,14 +998,14 @@ class CycleVAE(pl.LightningModule):
         if self.domain_adversarial_weight > 0:
             domain_adv_loss = self.compute_domain_adversarial_loss(z, domain)
         
-        # IMPROVED: Covariance loss (now numerically stable)
+        # IMPROVED: Covariance loss (now numerically stable) - FIXED: Use normalized data!
         cov_loss = torch.tensor(0.0, device=self.device)
         if mimic_mask.any() and eicu_mask.any():
-            # Translate eICU to MIMIC style and compare covariance with real MIMIC
-            x_eicu = x[eicu_mask]
+            # Translate eICU to MIMIC style and compare covariance with real MIMIC (NORMALIZED!)
+            x_eicu_norm = x_normalized[eicu_mask]
             z_eicu_only = z[eicu_mask]
             decoder_output_mimic = self.decoder_mimic(z_eicu_only)
-            x_mimic_real = x[mimic_mask]
+            x_mimic_real_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
             
             # Extract mean if using heteroscedastic
             if self.use_heteroscedastic:
@@ -988,10 +1013,10 @@ class CycleVAE(pl.LightningModule):
             else:
                 x_eicu_to_mimic = decoder_output_mimic
             
-            cov_loss += self.compute_covariance_loss(x_eicu_to_mimic, x_mimic_real)
+            cov_loss += self.compute_covariance_loss(x_eicu_to_mimic, x_mimic_real_norm)  # FIXED!
             
-            # Translate MIMIC to eICU style and compare covariance with real eICU
-            x_mimic = x[mimic_mask]
+            # Translate MIMIC to eICU style and compare covariance with real eICU (NORMALIZED!)
+            x_mimic_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
             z_mimic_only = z[mimic_mask]
             decoder_output_eicu = self.decoder_eicu(z_mimic_only)
             
@@ -1001,7 +1026,8 @@ class CycleVAE(pl.LightningModule):
             else:
                 x_mimic_to_eicu = decoder_output_eicu
             
-            cov_loss += self.compute_covariance_loss(x_mimic_to_eicu, x_eicu)
+            x_eicu_real_norm = x_normalized[eicu_mask]  # CRITICAL FIX: Use normalized!
+            cov_loss += self.compute_covariance_loss(x_mimic_to_eicu, x_eicu_real_norm)  # FIXED!
             
             # Covariance loss is now numerically stable, but keep one safety check
             if torch.isnan(cov_loss) or torch.isinf(cov_loss):
@@ -1014,13 +1040,13 @@ class CycleVAE(pl.LightningModule):
                 # Target specific problematic feature indices (Temperature, HR_std, etc.)
                 worst_feature_indices = list(range(min(20, x.shape[1])))  # First 20 features as proxy
                 
-                # Compare translated eICU→MIMIC with real MIMIC
+                # Compare translated eICU→MIMIC with real MIMIC (FIXED: Use normalized!)
                 per_feature_mmd_loss += self.compute_per_feature_mmd(
-                    x_eicu_to_mimic, x_mimic_real, worst_feature_indices)
+                    x_eicu_to_mimic, x_mimic_real_norm, worst_feature_indices)  # FIXED!
                 
-                # Compare translated MIMIC→eICU with real eICU 
+                # Compare translated MIMIC→eICU with real eICU (FIXED: Use normalized!)
                 per_feature_mmd_loss += self.compute_per_feature_mmd(
-                    x_mimic_to_eicu, x_eicu, worst_feature_indices)
+                    x_mimic_to_eicu, x_eicu_real_norm, worst_feature_indices)  # FIXED!
         else:
             per_feature_mmd_loss = torch.tensor(0.0, device=self.device)
         
@@ -1030,12 +1056,12 @@ class CycleVAE(pl.LightningModule):
             # Only compute if we have translations (reuse from above)
             if hasattr(self, '_cached_translations'):
                 x_eicu_to_mimic, x_mimic_to_eicu, x_mimic_real, x_eicu_real = self._cached_translations
-                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic_real)
-                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu_real)
+                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic_real_norm)  # FIXED!
+                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu_real_norm)  # FIXED!
             else:
-                # Recompute translations for Wasserstein (fallback)
-                x_eicu = x[eicu_mask]
-                x_mimic = x[mimic_mask]
+                # Recompute translations for Wasserstein (fallback) - FIXED: Use normalized data!
+                x_eicu_norm = x_normalized[eicu_mask]  # CRITICAL FIX: Use normalized!
+                x_mimic_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
                 z_eicu_only = z[eicu_mask]
                 z_mimic_only = z[mimic_mask]
                 
@@ -1045,8 +1071,8 @@ class CycleVAE(pl.LightningModule):
                 decoder_output_eicu = self.decoder_eicu(z_mimic_only)
                 x_mimic_to_eicu = decoder_output_eicu[0] if self.use_heteroscedastic else decoder_output_eicu
                 
-                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic)
-                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu)
+                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic_norm)  # FIXED!
+                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu_norm)  # FIXED!
         
         # Total loss with all components INCLUDING NEW IMPROVEMENTS
         kl_weight = self.get_kl_weight()
@@ -1078,6 +1104,20 @@ class CycleVAE(pl.LightningModule):
         # OPTIMIZED: Less frequent detailed monitoring for faster training (every 100 batches)
         if batch_idx % 100 == 0 and mimic_mask.any() and eicu_mask.any():
             self._log_detailed_feature_metrics(x, outputs, domain, mimic_mask, eicu_mask)
+        
+        # CRITICAL: DETAILED LOGGING to find explosion source
+        if batch_idx == 0 or total_loss > 1e10:  # Log first batch and any huge losses
+            logger.info(f"DETAILED LOSS BREAKDOWN (batch {batch_idx}):")
+            logger.info(f"  rec_loss: {rec_loss.item():.6f} (weight: {self.rec_weight})")
+            logger.info(f"  kl_loss: {kl_loss.item():.6f} (weight: {kl_weight:.6f})")
+            logger.info(f"  cycle_loss: {cycle_loss.item():.6f} (weight: {self.cycle_weight})")
+            logger.info(f"  mmd_loss: {mmd_loss.item():.6f} (weight: {self.mmd_weight})")
+            logger.info(f"  cov_loss: {cov_loss.item():.6f} (weight: {self.cov_weight})")
+            logger.info(f"  per_feature_mmd_loss: {per_feature_mmd_loss.item():.6f} (weight: {self.per_feature_mmd_weight})")
+            logger.info(f"  wasserstein_loss: {wasserstein_loss.item():.6f} (weight: {self.wasserstein_weight})")
+            logger.info(f"  feature_recon_loss: {feature_recon_loss.item():.6f} (weight: {self.feature_recon_weight})")
+            logger.info(f"  domain_adv_loss: {domain_adv_loss.item():.6f} (weight: {self.domain_adversarial_weight})")
+            logger.info(f"  TOTAL: {total_loss.item():.6f}")
         
         # CRITICAL: Final safety check to prevent training crashes
         if torch.isnan(total_loss) or torch.isinf(total_loss):

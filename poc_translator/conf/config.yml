@@ -21,7 +21,7 @@ paths:
 # ✅ Adversarial domain classifier (domain-invariant features)
 # ✅ Comprehensive evaluation (per-feature metrics)
 training:
-  epochs: 20   # VALIDATION: Short test run to verify fixes
+  epochs: 10   # VALIDATION: Short test run to verify fixes
   batch_size: 128  # REVERTED: Back to stable batch size
   lr: 1e-6  # EMERGENCY: Back to ultra-conservative LR for stability
   latent_dim: 64
@@ -35,13 +35,13 @@ training:
   # EMERGENCY: Disable heteroscedastic again - still causing instability
   use_heteroscedastic: false  # DISABLE - persistent explosion even with fixes  
   use_safe_mode: false  # Keep safety systems but don't restrict
-  cov_weight: 0.1    # KEPT: Reasonable level for covariance matching
+  cov_weight: 0.01   # REDUCED: Prevent covariance loss from dominating (was causing 50-60% of total loss)
   per_feature_mmd_weight: 0.2  # REBALANCED: Increased for per-feature distribution matching
   wasserstein_weight: 0.1  # REBALANCED: Increased for stronger distributional alignment
   
   # REBALANCED: Moderate weights for additional loss components
   feature_recon_weight: 0.2  # REBALANCED: Increased to prevent mode collapse
-  domain_adversarial_weight: 0.05  # REBALANCED: Increased for better domain invariance
+  domain_adversarial_weight: 0.2   # INCREASED: Give domain classifier more influence to break ln(2) stagnation
   
   # Identify problematic features for special handling
   worst_features: ["Temp_mean", "Temp_std", "HR_std", "SpO2_std", "Age", "Creat_mean"]

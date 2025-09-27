@@ -10,13 +10,13 @@
     "brier_score": 0.1808918377825777
   },
   "eicu_test_translated": {
-    "auc": 0.5275720164609053,
-    "average_precision": 0.27955409204815274,
-    "brier_score": 0.17743141966961715
+    "auc": 0.4037037037037038,
+    "average_precision": 0.19469840329950266,
+    "brier_score": 0.18266279428307297
   },
   "improvement": {
-    "auc_improvement": 0.006172839506172867,
-    "ap_improvement": -0.022053366280435638,
-    "brier_improvement": 0.0034604181129605505
+    "auc_improvement": -0.11769547325102869,
+    "ap_improvement": -0.10690905502908571,
+    "brier_improvement": -0.0017709565004952743
   }
 }

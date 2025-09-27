@@ -33,11 +33,11 @@ paths:
   tmp_sql_dir: /bigdata/omerg/Thesis/EHR_Translator/poc_translator/sql
 training:
   batch_size: 128
-  cov_weight: 0.1
+  cov_weight: 0.01
   cycle_weight: 0.3
-  domain_adversarial_weight: 0.05
+  domain_adversarial_weight: 0.2
   early_stop_patience: 15
-  epochs: 20
+  epochs: 10
   feature_recon_weight: 0.2
   gradient_clip_val: 1.0
   kl_warmup_epochs: 20

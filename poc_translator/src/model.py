@@ -243,14 +243,18 @@ class CycleVAE(pl.LightningModule):
             nn.Linear(hidden_dims[0], self.input_dim)
         )
         
-        # IMPROVEMENT 5: Adversarial domain classifier
+        # IMPROVEMENT 5: STRONGER Adversarial domain classifier
         self.domain_classifier = nn.Sequential(
-            nn.Linear(self.latent_dim, hidden_dims[0] // 2),
+            nn.Linear(self.latent_dim, hidden_dims[0]),  # Same size as encoder's first layer
+            nn.ReLU(),
+            nn.Dropout(0.2),  # More dropout for regularization
+            nn.Linear(hidden_dims[0], hidden_dims[0] // 2),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(hidden_dims[0] // 2, 128),  # Larger intermediate layer
             nn.ReLU(),
             nn.Dropout(0.1),
-            nn.Linear(hidden_dims[0] // 2, 32),
-            nn.ReLU(),
-            nn.Linear(32, 2)  # Binary classification: MIMIC vs eICU
+            nn.Linear(128, 2)  # Binary classification: MIMIC vs eICU
         )
         
         # IMPROVEMENT: Multi-kernel MMD parameters
@@ -270,9 +274,12 @@ class CycleVAE(pl.LightningModule):
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
                 # Different initialization for different components
-                if 'feature_reconstruction_head' in name or 'domain_classifier' in name:
-                    # Even more conservative for auxiliary heads
+                if 'feature_reconstruction_head' in name:
+                    # Conservative for feature reconstruction
                     nn.init.xavier_normal_(module.weight, gain=0.01)
+                elif 'domain_classifier' in name:
+                    # STRONGER initialization for domain classifier to compete with encoder
+                    nn.init.xavier_normal_(module.weight, gain=0.5)
                 else:
                     # Standard conservative initialization for main networks
                     nn.init.xavier_normal_(module.weight, gain=0.1)
@@ -346,8 +353,8 @@ class CycleVAE(pl.LightningModule):
         """
         # Encode
         mu, logvar = self.encoder(x)
-        # CRITICAL FIX: Tighter constraints for numerical stability
-        mu = torch.clamp(mu, min=-5, max=5)  # TIGHTENED: More conservative range for latent space
+        # MAJOR FIX: Relax latent constraints to preserve domain differences for classifier
+        mu = torch.clamp(mu, min=-15, max=15)  # WIDER: Allow domain-specific latent patterns
         logvar = torch.clamp(logvar, min=-5, max=3)  # Keep logvar range tight for stability
         if torch.isnan(mu).any() or torch.isinf(mu).any():
             mu = torch.zeros_like(mu)
@@ -682,8 +689,12 @@ class CycleVAE(pl.LightningModule):
         
         cov_loss = torch.norm(cov_diff, p='fro')
         
-        # Final safety clamp
-        cov_loss = torch.clamp(cov_loss, min=0, max=1e3)
+        # MAJOR FIX: Normalize by matrix size to prevent scale domination  
+        n_features = cov_diff.shape[0]
+        cov_loss = cov_loss / n_features  # Scale down by feature count
+        
+        # Final safety clamp (adjusted for normalized scale)
+        cov_loss = torch.clamp(cov_loss, min=0, max=10)
         
         if torch.isnan(cov_loss) or torch.isinf(cov_loss):
             return torch.tensor(0.0, device=self.device)
@@ -855,11 +866,12 @@ class CycleVAE(pl.LightningModule):
     
     def compute_domain_adversarial_loss(self, z: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
         """IMPROVEMENT 5: Domain adversarial loss for domain-invariant features"""
-        # CRITICAL FIX: Constrain latent input to domain classifier
-        z_constrained = torch.clamp(z, min=-5, max=5)  # Tighter constraint for classifier input
+        # MAJOR FIX: Don't over-constrain - domain classifier needs to see actual differences!
+        # Only apply minimal safety checks, keep the latent space information
+        z_safe = torch.clamp(z, min=-20, max=20)  # Much wider range to preserve domain differences
         
         # Forward pass through domain classifier
-        domain_pred = self.domain_classifier(z_constrained)
+        domain_pred = self.domain_classifier(z_safe)
         
         # Additional safety check for domain classifier output
         if torch.isnan(domain_pred).any() or torch.isinf(domain_pred).any():
@@ -868,6 +880,19 @@ class CycleVAE(pl.LightningModule):
         
         # Binary cross-entropy loss
         domain_loss = F.cross_entropy(domain_pred, domain)
+        
+        # DIAGNOSTIC: Log domain classifier accuracy to debug adversarial training
+        with torch.no_grad():
+            domain_pred_probs = F.softmax(domain_pred, dim=1)
+            predicted_domains = torch.argmax(domain_pred_probs, dim=1)
+            accuracy = (predicted_domains == domain).float().mean().item()
+            
+            # Log accuracy occasionally to monitor adversarial balance
+            if torch.rand(1).item() < 0.01:  # 1% of batches
+                mimic_count = (domain == 1).sum().item()
+                eicu_count = (domain == 0).sum().item()
+                logger.info(f"Domain classifier accuracy: {accuracy:.3f} (should start high, then decrease as encoder improves)")
+                logger.info(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (imbalance could cause ln(2) stagnation)")
         
         # FIXED: Return positive loss - adversarial training handled by gradient reversal in optimizer
         return domain_loss

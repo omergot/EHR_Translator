@@ -1,16 +1,16 @@
 {
   "round_trip": {
-    "eicu_mean_mse": 619.72412109375,
-    "eicu_mean_mae": 2.41190242767334,
-    "mimic_mean_mse": 98.39266204833984,
-    "mimic_mean_mae": 1.8970558643341064,
-    "overall_mean_mse": 359.0583801269531,
-    "overall_mean_mae": 2.1544790267944336
+    "eicu_mean_mse": 619.5995483398438,
+    "eicu_mean_mae": 2.413503646850586,
+    "mimic_mean_mse": 98.18417358398438,
+    "mimic_mean_mae": 1.8993380069732666,
+    "overall_mean_mse": 358.891845703125,
+    "overall_mean_mae": 2.1564207077026367
   },
   "distributional": {
-    "mmd_eicu_to_mimic": 0.7079157829284668,
-    "mmd_mimic_to_eicu": 0.6914637088775635,
-    "mean_ks_statistic": 0.6099747126493905,
+    "mmd_eicu_to_mimic": 0.7071331739425659,
+    "mmd_mimic_to_eicu": 0.6898986101150513,
+    "mean_ks_statistic": 0.608560840802337,
     "significant_features_pct": 100.0
   },
   "downstream": {
@@ -25,15 +25,15 @@
       "brier_score": 0.1808918377825777
     },
     "eicu_test_translated": {
-      "auc": 0.5275720164609053,
-      "average_precision": 0.27955409204815274,
-      "brier_score": 0.17743141966961715
+      "auc": 0.4037037037037038,
+      "average_precision": 0.19469840329950266,
+      "brier_score": 0.18266279428307297
     },
     "improvement": {
-      "auc_improvement": 0.006172839506172867,
-      "ap_improvement": -0.022053366280435638,
-      "brier_improvement": 0.0034604181129605505
+      "auc_improvement": -0.11769547325102869,
+      "ap_improvement": -0.10690905502908571,
+      "brier_improvement": -0.0017709565004952743
     }
   },
-  "evaluation_timestamp": "2025-09-24T17:13:22.725005"
+  "evaluation_timestamp": "2025-09-27T23:19:33.741796"
 }

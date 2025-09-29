@@ -1,18 +1,14 @@
 {
   "mimic": {
-    "train_size": 8497,
-    "val_size": 1821,
-    "test_size": 1821,
-    "train_patients": 8497,
-    "val_patients": 1821,
-    "test_patients": 1821
+    "train_size": 9711,
+    "test_size": 2428,
+    "train_patients": 9711,
+    "test_patients": 2428
   },
   "eicu": {
-    "train_size": 545,
-    "val_size": 117,
-    "test_size": 117,
-    "train_patients": 545,
-    "val_patients": 117,
-    "test_patients": 117
+    "train_size": 623,
+    "test_size": 156,
+    "train_patients": 623,
+    "test_patients": 156
   }
 }

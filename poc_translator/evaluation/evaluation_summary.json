@@ -1,39 +1,39 @@
 {
   "round_trip": {
-    "eicu_mean_mse": 619.5995483398438,
-    "eicu_mean_mae": 2.413503646850586,
-    "mimic_mean_mse": 98.18417358398438,
-    "mimic_mean_mae": 1.8993380069732666,
-    "overall_mean_mse": 358.891845703125,
-    "overall_mean_mae": 2.1564207077026367
+    "eicu_mean_mse": 18.421932220458984,
+    "eicu_mean_mae": 0.7440217733383179,
+    "mimic_mean_mse": 1.980263113975525,
+    "mimic_mean_mae": 0.4738938510417938,
+    "overall_mean_mse": 10.20109748840332,
+    "overall_mean_mae": 0.608957827091217
   },
   "distributional": {
-    "mmd_eicu_to_mimic": 0.7071331739425659,
-    "mmd_mimic_to_eicu": 0.6898986101150513,
-    "mean_ks_statistic": 0.608560840802337,
+    "mmd_eicu_to_mimic": 0.22477447986602783,
+    "mmd_mimic_to_eicu": 0.3001333475112915,
+    "mean_ks_statistic": 0.5425991014831988,
     "significant_features_pct": 100.0
   },
   "downstream": {
     "mimic_test": {
-      "auc": 0.5197268977027601,
-      "average_precision": 0.20631990543641882,
-      "brier_score": 0.156033291130441
+      "auc": 0.5083787695823119,
+      "average_precision": 0.2149861443928563,
+      "brier_score": 0.1715229106820073
     },
     "eicu_test_raw": {
-      "auc": 0.5213991769547325,
-      "average_precision": 0.3016074583285884,
-      "brier_score": 0.1808918377825777
+      "auc": 0.490530303030303,
+      "average_precision": 0.17945116342532536,
+      "brier_score": 0.1421783083059316
     },
     "eicu_test_translated": {
-      "auc": 0.4037037037037038,
-      "average_precision": 0.19469840329950266,
-      "brier_score": 0.18266279428307297
+      "auc": 0.5726010101010102,
+      "average_precision": 0.19503571142508905,
+      "brier_score": 0.12963199088982907
     },
     "improvement": {
-      "auc_improvement": -0.11769547325102869,
-      "ap_improvement": -0.10690905502908571,
-      "brier_improvement": -0.0017709565004952743
+      "auc_improvement": 0.08207070707070718,
+      "ap_improvement": 0.015584547999763693,
+      "brier_improvement": 0.012546317416102515
     }
   },
-  "evaluation_timestamp": "2025-09-27T23:19:33.741796"
+  "evaluation_timestamp": "2025-09-28T16:50:29.727774"
 }

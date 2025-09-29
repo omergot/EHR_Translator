@@ -337,8 +337,8 @@ def audit_preprocessing(output_dir: str, feature_spec: Dict = None) -> Dict:
     # Analyze feature distributions
     analysis_results = _analyze_feature_distributions(mimic_data, eicu_data, feature_spec)
     
-    # Investigate feature 32 specifically
-    feature_32_analysis = _investigate_feature_32(mimic_data, eicu_data, feature_spec)
+    # Comprehensive feature analysis for all features
+    comprehensive_analysis = _investigate_comprehensive_features(mimic_data, eicu_data, feature_spec)
     
     # Generate fixes
     preprocessing_fixes = _generate_preprocessing_fixes(analysis_results)
@@ -352,7 +352,7 @@ def audit_preprocessing(output_dir: str, feature_spec: Dict = None) -> Dict:
             'features_needing_log_transform': len(preprocessing_fixes['log_transform_features']),
             'features_needing_special_handling': len(preprocessing_fixes['special_handling_features'])
         },
-        'feature_32_analysis': feature_32_analysis,
+        'comprehensive_analysis': comprehensive_analysis,
         'problematic_features': analysis_results['problematic_features'],
         'preprocessing_fixes': preprocessing_fixes,
         'detailed_statistics': analysis_results['feature_statistics']
@@ -389,17 +389,35 @@ def audit_preprocessing(output_dir: str, feature_spec: Dict = None) -> Dict:
     logger.info(f"Features needing log transform: {summary['features_needing_log_transform']}")
     logger.info(f"Features needing special handling: {summary['features_needing_special_handling']}")
     
-    # Print feature 32 analysis
-    if audit_results['feature_32_analysis']:
-        f32_analysis = audit_results['feature_32_analysis']
-        logger.info(f"=== FEATURE 32 ANALYSIS ({f32_analysis.get('feature_name', 'Unknown')}) ===")
-        if 'mimic_stats' in f32_analysis and 'eicu_stats' in f32_analysis:
-            logger.info(f"MIMIC: mean={f32_analysis['mimic_stats']['mean']:.3f}, std={f32_analysis['mimic_stats']['std']:.3f}")
-            logger.info(f"eICU: mean={f32_analysis['eicu_stats']['mean']:.3f}, std={f32_analysis['eicu_stats']['std']:.3f}")
-            if 'comparison' in f32_analysis:
-                logger.info(f"Mean ratio: {f32_analysis['comparison']['mean_ratio']:.3f}")
-                logger.info(f"KS statistic: {f32_analysis['comparison']['ks_statistic']:.3f}")
-            logger.info(f"Recommendations: {f32_analysis.get('recommendations', [])}")
+    # Print comprehensive analysis summary
+    if audit_results['comprehensive_analysis']:
+        comprehensive_analysis = audit_results['comprehensive_analysis']
+        logger.info(f"=== COMPREHENSIVE FEATURE ANALYSIS SUMMARY ===")
+        
+        # Count features with issues
+        features_with_issues = 0
+        total_recommendations = 0
+        
+        for feature_name, analysis in comprehensive_analysis.items():
+            if analysis.get('recommendations'):
+                features_with_issues += 1
+                total_recommendations += len(analysis['recommendations'])
+        
+        logger.info(f"Features analyzed: {len(comprehensive_analysis)}")
+        logger.info(f"Features with issues: {features_with_issues}")
+        logger.info(f"Total recommendations: {total_recommendations}")
+        
+        # Show top problematic features
+        problematic_features = []
+        for feature_name, analysis in comprehensive_analysis.items():
+            if analysis.get('recommendations'):
+                problematic_features.append((feature_name, len(analysis['recommendations'])))
+        
+        problematic_features.sort(key=lambda x: x[1], reverse=True)
+        
+        logger.info("=== TOP PROBLEMATIC FEATURES ===")
+        for feature_name, num_issues in problematic_features[:10]:  # Show top 10
+            logger.info(f"{feature_name}: {num_issues} issues")
     
     return audit_results
 
@@ -497,6 +515,104 @@ def _analyze_feature_distributions(mimic_data: pd.DataFrame, eicu_data: pd.DataF
     logger.info(f"Identified {len(analysis_results['problematic_features'])} problematic features")
     
     return analysis_results
+
+def _investigate_comprehensive_features(mimic_data: pd.DataFrame, eicu_data: pd.DataFrame, feature_spec: Dict) -> Dict:
+    """Comprehensive analysis of all features for preprocessing recommendations"""
+    logger.info("Running comprehensive feature analysis for all features...")
+    
+    # Get all feature names
+    numeric_features = feature_spec.get('numeric_features', [])
+    missing_features = feature_spec.get('missing_features', [])
+    all_features = numeric_features + missing_features
+    
+    comprehensive_analysis = {}
+    
+    for feature_name in all_features:
+        if feature_name not in mimic_data.columns or feature_name not in eicu_data.columns:
+            logger.warning(f"Feature {feature_name} not found in data, skipping...")
+            continue
+            
+        logger.info(f"Analyzing feature: {feature_name}")
+        
+        mimic_values = mimic_data[feature_name].dropna()
+        eicu_values = eicu_data[feature_name].dropna()
+        
+        if len(mimic_values) == 0 or len(eicu_values) == 0:
+            logger.warning(f"No valid values for {feature_name}, skipping...")
+            continue
+        
+        analysis = {
+            'feature_name': feature_name,
+            'mimic_stats': {
+                'count': len(mimic_values),
+                'mean': mimic_values.mean(),
+                'std': mimic_values.std(),
+                'min': mimic_values.min(),
+                'max': mimic_values.max(),
+                'q25': mimic_values.quantile(0.25),
+                'q50': mimic_values.quantile(0.50),
+                'q75': mimic_values.quantile(0.75),
+                'q99': mimic_values.quantile(0.99),
+                'outliers': len(mimic_values[mimic_values > mimic_values.quantile(0.99)]),
+                'zeros': len(mimic_values[mimic_values == 0])
+            },
+            'eicu_stats': {
+                'count': len(eicu_values),
+                'mean': eicu_values.mean(),
+                'std': eicu_values.std(),
+                'min': eicu_values.min(),
+                'max': eicu_values.max(),
+                'q25': eicu_values.quantile(0.25),
+                'q50': eicu_values.quantile(0.50),
+                'q75': eicu_values.quantile(0.75),
+                'q99': eicu_values.quantile(0.99),
+                'outliers': len(eicu_values[eicu_values > eicu_values.quantile(0.99)]),
+                'zeros': len(eicu_values[eicu_values == 0])
+            }
+        }
+        
+        # Compute distribution differences
+        ks_stat, ks_p_value = stats.ks_2samp(mimic_values, eicu_values)
+        
+        analysis['comparison'] = {
+            'mean_ratio': analysis['mimic_stats']['mean'] / (analysis['eicu_stats']['mean'] + 1e-8),
+            'std_ratio': analysis['mimic_stats']['std'] / (analysis['eicu_stats']['std'] + 1e-8),
+            'range_mimic': analysis['mimic_stats']['max'] - analysis['mimic_stats']['min'],
+            'range_eicu': analysis['eicu_stats']['max'] - analysis['eicu_stats']['min'],
+            'ks_statistic': ks_stat,
+            'ks_p_value': ks_p_value
+        }
+        
+        # Generate recommendations for this feature
+        recommendations = []
+        
+        if abs(analysis['comparison']['mean_ratio']) > 10:
+            recommendations.append("Apply per-dataset standardization (z-score normalization)")
+        
+        if analysis['comparison']['ks_statistic'] > 0.3:
+            recommendations.append("Consider robust scaling (median/IQR) instead of mean/std")
+        
+        if analysis['mimic_stats']['outliers'] > len(mimic_values) * 0.01:
+            recommendations.append("Apply outlier clipping (99th percentile)")
+        
+        if analysis['mimic_stats']['zeros'] > len(mimic_values) * 0.1:
+            recommendations.append("Handle zero values specially (log1p transform or separate handling)")
+        
+        # Check for degenerate distribution (most values the same)
+        if analysis['mimic_stats']['q25'] == analysis['mimic_stats']['q75']:
+            recommendations.append("Degenerate distribution detected - consider log1p transform or robust scaling")
+        
+        if analysis['eicu_stats']['q25'] == analysis['eicu_stats']['q75']:
+            recommendations.append("Degenerate distribution detected in eICU - consider log1p transform or robust scaling")
+        
+        # Check for extreme standard deviation ratios
+        if abs(analysis['comparison']['std_ratio']) > 100 or abs(analysis['comparison']['std_ratio']) < 0.01:
+            recommendations.append("Extreme variance differences between datasets - use per-dataset scaling")
+        
+        analysis['recommendations'] = recommendations
+        comprehensive_analysis[feature_name] = analysis
+    
+    return comprehensive_analysis
 
 def _investigate_feature_32(mimic_data: pd.DataFrame, eicu_data: pd.DataFrame, feature_spec: Dict) -> Dict:
     """Specifically investigate feature 32 (the persistent outlier)"""

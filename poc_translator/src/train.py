@@ -208,10 +208,10 @@ def train_model(config: dict, feature_spec: dict, dry_run: bool = False):
     logger.info("Running final evaluation...")
     trainer.test(model, data_module)
     
-    # IMPROVEMENT 3: Run comprehensive evaluation built into model
-    logger.info("Running comprehensive evaluation...")
-    if hasattr(model, 'run_comprehensive_evaluation'):
-        model.run_comprehensive_evaluation(data_module, str(output_dir))
+    # IMPROVEMENT 3: DISABLED - Skip comprehensive evaluation to avoid multiprocessing hang
+    logger.info("Skipping comprehensive evaluation (disabled to prevent deadlock)")
+    # if hasattr(model, 'run_comprehensive_evaluation'):
+    #     model.run_comprehensive_evaluation(data_module, str(output_dir))
     
     # Save final model
     final_model_path = output_dir / "checkpoints" / "final_model.ckpt"

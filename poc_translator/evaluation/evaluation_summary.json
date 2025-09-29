@@ -1,39 +1,39 @@
 {
   "round_trip": {
-    "eicu_mean_mse": 104.5327377319336,
-    "eicu_mean_mae": 2.0968234539031982,
-    "mimic_mean_mse": 103.54007720947266,
-    "mimic_mean_mae": 1.951215147972107,
-    "overall_mean_mse": 104.03640747070312,
-    "overall_mean_mae": 2.024019241333008
+    "eicu_mean_mse": 18.421932220458984,
+    "eicu_mean_mae": 0.7440217733383179,
+    "mimic_mean_mse": 1.980263113975525,
+    "mimic_mean_mae": 0.4738938510417938,
+    "overall_mean_mse": 10.20109748840332,
+    "overall_mean_mae": 0.608957827091217
   },
   "distributional": {
-    "mmd_eicu_to_mimic": 0.6980459690093994,
-    "mmd_mimic_to_eicu": 0.6930978298187256,
-    "mean_ks_statistic": 0.5980403989327767,
+    "mmd_eicu_to_mimic": 0.22477447986602783,
+    "mmd_mimic_to_eicu": 0.3001333475112915,
+    "mean_ks_statistic": 0.5425991014831988,
     "significant_features_pct": 100.0
   },
   "downstream": {
     "mimic_test": {
-      "auc": 0.49763004728013915,
-      "average_precision": 0.19767174950760685,
-      "brier_score": 0.16012161060219507
+      "auc": 0.5083787695823119,
+      "average_precision": 0.2149861443928563,
+      "brier_score": 0.1715229106820073
     },
     "eicu_test_raw": {
-      "auc": 0.4996741104852987,
-      "average_precision": 0.20131058066469634,
-      "brier_score": 0.16190786128095958
+      "auc": 0.490530303030303,
+      "average_precision": 0.17945116342532536,
+      "brier_score": 0.1421783083059316
     },
     "eicu_test_translated": {
-      "auc": 0.5021108826187727,
-      "average_precision": 0.20212086369280324,
-      "brier_score": 0.16079974100946326
+      "auc": 0.5726010101010102,
+      "average_precision": 0.19503571142508905,
+      "brier_score": 0.12963199088982907
     },
     "improvement": {
-      "auc_improvement": 0.0024367721334739856,
-      "ap_improvement": 0.0008102830281069007,
-      "brier_improvement": 0.0011081202714963156
+      "auc_improvement": 0.08207070707070718,
+      "ap_improvement": 0.015584547999763693,
+      "brier_improvement": 0.012546317416102515
     }
   },
-  "evaluation_timestamp": "2025-09-29T22:42:29.627614"
+  "evaluation_timestamp": "2025-09-28T16:50:29.727774"
 }

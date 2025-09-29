@@ -12,7 +12,8 @@ import sys
 import pickle
 import json
 from pathlib import Path
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, RobustScaler, FunctionTransformer
+from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 import logging
 
@@ -130,92 +131,262 @@ class Preprocessor:
         
         return data_with_flags
     
-    def prepare_features(self, data, domain='mimic'):
-        """Prepare features for preprocessing"""
+    def analyze_feature_characteristics(self, data, feature_cols):
+        """Analyze feature characteristics to determine appropriate preprocessing"""
+        logger.info("Analyzing feature characteristics for adaptive preprocessing...")
+        
+        feature_analysis = {
+            "degenerate": [],        # Features with q25 == q75 (most values identical)
+            "high_outliers": [],     # Features with >1% outliers beyond 99th percentile
+            "high_zeros": [],        # Features with >10% zero values
+            "missing_flags": [],     # Binary missing indicator flags
+            "std_features": [],      # Standard deviation features (often problematic)
+            "demographic": []        # Demographic features
+        }
+        
+        for col in feature_cols:
+            if col in data.columns:
+                values = data[col].dropna()
+                
+                if len(values) == 0 or col == "Gender":  # Skip Gender from analysis
+                    continue
+                
+                # Check for degenerate distribution (q25 == q75)
+                q25 = values.quantile(0.25)
+                q75 = values.quantile(0.75)
+                if abs(q25 - q75) < 1e-8:  # Essentially the same
+                    feature_analysis["degenerate"].append(col)
+                
+                # Check for high outlier percentage
+                q99 = values.quantile(0.99)
+                outliers = len(values[values > q99])
+                if outliers > len(values) * 0.01:  # >1% outliers
+                    feature_analysis["high_outliers"].append(col)
+                
+                # Check for high zero percentage
+                zeros = len(values[values == 0])
+                if zeros > len(values) * 0.1:  # >10% zeros
+                    feature_analysis["high_zeros"].append(col)
+                
+                # Identify missing flags
+                if col.endswith("_missing"):
+                    feature_analysis["missing_flags"].append(col)
+                
+                # Identify std features
+                if "_std" in col:
+                    feature_analysis["std_features"].append(col)
+                
+                # Identify demographic features
+                if col in self.demographic_names:
+                    feature_analysis["demographic"].append(col)
+        
+        logger.info(f"Feature analysis complete:")
+        logger.info("Feature analysis complete:")
+        logger.info(f"  Degenerate distributions: {len(feature_analysis['degenerate'])}")
+        logger.info(f"  High outliers: {len(feature_analysis['high_outliers'])}")
+        logger.info(f"  High zeros: {len(feature_analysis['high_zeros'])}")
+        logger.info(f"  Missing flags: {len(feature_analysis['missing_flags'])}")
+        logger.info(f"  Std features: {len(feature_analysis['std_features'])}")
+        
+        return feature_analysis
+    
+    def apply_feature_specific_transforms(self, data, feature_analysis):
+        """Apply feature-specific transformations before scaling"""
+        logger.info("Applying feature-specific transformations...")
+        
+        data_transformed = data.copy()
+        
+        # Apply log1p transformation to degenerate and std features
+        log1p_features = set(feature_analysis["degenerate"] + feature_analysis["std_features"])
+        
+        for col in log1p_features:
+            if col in data_transformed.columns and col != "Gender":  # Skip Gender from transformations
+                # Ensure no negative values before log1p
+                min_val = data_transformed[col].min()
+                if min_val < 0:
+                    # Shift to make all values positive
+                    data_transformed[col] = data_transformed[col] - min_val
+                
+                # Apply log1p transformation
+                data_transformed[col] = np.log1p(data_transformed[col])
+                logger.debug(f"Applied log1p transform to {col}")
+        
+        # Clip outliers for high-outlier features
+        for col in feature_analysis["high_outliers"]:
+            if col in data_transformed.columns and col not in feature_analysis["missing_flags"] and col != "Gender":
+                q99 = data_transformed[col].quantile(0.99)
+                original_max = data_transformed[col].max()
+                data_transformed[col] = data_transformed[col].clip(upper=q99)
+                logger.debug(f"Clipped outliers for {col}: max {original_max:.3f} -> {q99:.3f}")
+        
+        return data_transformed
+
+
+    def prepare_features(self, data, domain="mimic"):
+        """Prepare features for preprocessing with advanced feature-specific handling"""
         logger.info(f"Preparing features for {domain}...")
         
         # Get feature columns
         feature_cols = self.get_feature_columns(data)
         
         # Separate numeric and demographic columns
-        numeric_cols = [col for col in feature_cols if '_mean' in col or '_min' in col or '_max' in col or '_std' in col]
+        clinical_numeric_cols = [col for col in feature_cols if "_mean" in col or "_min" in col or "_max" in col or "_std" in col]
         demographic_cols = [col for col in feature_cols if col in self.demographic_names]
-        
-        # Combine all columns that should be processed
-        all_processing_cols = numeric_cols + demographic_cols
         
         # Create missing flags for clinical features (not demographics)
         data = self.create_missing_flags(data, feature_cols)
-        missing_cols = [col for col in data.columns if '_missing' in col]
+        missing_cols = [col for col in data.columns if "_missing" in col]
         
-        # Clip to clinical ranges
-        data = self.clip_to_clinical_ranges(data, all_processing_cols)
+        # All available feature columns (including missing flags)
+        all_available_cols = clinical_numeric_cols + demographic_cols + missing_cols
         
-        # Fill missing values with 0 for numeric features
-        for col in numeric_cols:
+        # Analyze feature characteristics for adaptive preprocessing
+        feature_analysis = self.analyze_feature_characteristics(data, all_available_cols)
+        
+        # Determine which columns should be scaled vs kept as-is
+        # EXCLUDE missing flags and Gender from scaling (keep them as binary indicators)
+        excluded_from_scaling = feature_analysis["missing_flags"] + ["Gender"]
+        scalable_cols = [col for col in all_available_cols if col not in excluded_from_scaling]
+        
+        logger.info(f"Total features: {len(all_available_cols)}, Scalable: {len(scalable_cols)}, Missing flags: {len(missing_cols)}, Gender: excluded")
+        
+        # Clip to clinical ranges (only for clinical and demographic features)
+        clinical_and_demo_cols = clinical_numeric_cols + demographic_cols
+        data = self.clip_to_clinical_ranges(data, clinical_and_demo_cols)
+        
+        # Fill missing values with 0 for clinical numeric features only
+        for col in clinical_numeric_cols:
             data[col] = data[col].fillna(0)
         
         # Fill missing values for demographics with appropriate defaults
         for col in demographic_cols:
-            if col == 'Age':
+            if col == "Age":
                 data[col] = data[col].fillna(data[col].median())  # Use median age
-            elif col == 'Gender':
+            elif col == "Gender":
                 data[col] = data[col].fillna(0)  # Default to 0 for missing gender
+                # Ensure Gender remains binary (0 or 1) - no scaling applied
+                data[col] = data[col].astype(int).clip(0, 1)
         
         # Ensure missing flags are binary
         for col in missing_cols:
             data[col] = data[col].astype(int)
         
-        return data, numeric_cols, missing_cols
+        # Apply feature-specific transformations to scalable features
+        data = self.apply_feature_specific_transforms(data, feature_analysis)
+        
+        return data, scalable_cols, missing_cols, feature_analysis
     
     def fit_scalers(self, mimic_data, eicu_data):
-        """Fit scalers on training data only"""
-        logger.info("Fitting scalers on training data...")
+        """Fit adaptive scalers on training data"""
+        logger.info("Fitting adaptive scalers on training data...")
         
-        # Prepare features
-        mimic_prepared, mimic_numeric, mimic_missing = self.prepare_features(mimic_data, 'mimic')
-        eicu_prepared, eicu_numeric, eicu_missing = self.prepare_features(eicu_data, 'eicu')
+        # Prepare features with advanced analysis
+        mimic_prepared, mimic_scalable, mimic_missing, mimic_analysis = self.prepare_features(mimic_data, "mimic")
+        eicu_prepared, eicu_scalable, eicu_missing, eicu_analysis = self.prepare_features(eicu_data, "eicu")
         
         # Split data for scaler fitting
         mimic_train, _ = train_test_split(
             mimic_prepared, 
             test_size=0.3, 
-            random_state=self.config['data']['random_seed']
+            random_state=self.config["data"]["random_seed"]
         )
         eicu_train, _ = train_test_split(
             eicu_prepared, 
             test_size=0.3, 
-            random_state=self.config['data']['random_seed']
+            random_state=self.config["data"]["random_seed"]
         )
         
-        # Fit MIMIC scaler
-        self.mimic_scaler = StandardScaler()
-        self.mimic_scaler.fit(mimic_train[mimic_numeric])
+        # Determine which scaler to use based on feature analysis
+        # Use RobustScaler for problematic features, StandardScaler for well-behaved ones
+        problematic_features = set(
+            mimic_analysis["degenerate"] + mimic_analysis["std_features"] + 
+            mimic_analysis["high_outliers"] + eicu_analysis["degenerate"] + 
+            eicu_analysis["std_features"] + eicu_analysis["high_outliers"]
+        )
         
-        # Fit eICU scaler
-        self.eicu_scaler = StandardScaler()
-        self.eicu_scaler.fit(eicu_train[eicu_numeric])
+        robust_features = [col for col in mimic_scalable if col in problematic_features]
+        standard_features = [col for col in mimic_scalable if col not in problematic_features]
         
-        # Save scalers
-        with open(self.scalers_dir / "mimic_scaler.pkl", 'wb') as f:
-            pickle.dump(self.mimic_scaler, f)
+        logger.info(f"Using RobustScaler for {len(robust_features)} problematic features")
+        logger.info(f"Using StandardScaler for {len(standard_features)} well-behaved features")
         
-        with open(self.scalers_dir / "eicu_scaler.pkl", 'wb') as f:
-            pickle.dump(self.eicu_scaler, f)
+        # Create scalers
+        self.mimic_robust_scaler = RobustScaler() if robust_features else None
+        self.mimic_standard_scaler = StandardScaler() if standard_features else None
+        self.eicu_robust_scaler = RobustScaler() if robust_features else None
+        self.eicu_standard_scaler = StandardScaler() if standard_features else None
         
-        logger.info("Scalers fitted and saved")
-    
-    def transform_data(self, data, domain='mimic'):
-        """Transform data using fitted scalers"""
-        logger.info(f"Transforming {domain} data...")
+        # Fit scalers
+        if self.mimic_robust_scaler and robust_features:
+            self.mimic_robust_scaler.fit(mimic_train[robust_features])
+        if self.mimic_standard_scaler and standard_features:
+            self.mimic_standard_scaler.fit(mimic_train[standard_features])
+        if self.eicu_robust_scaler and robust_features:
+            self.eicu_robust_scaler.fit(eicu_train[robust_features])
+        if self.eicu_standard_scaler and standard_features:
+            self.eicu_standard_scaler.fit(eicu_train[standard_features])
         
-        # Prepare features
-        data_prepared, numeric_cols, missing_cols = self.prepare_features(data, domain)
+        # Store feature lists for later use
+        self.robust_features = robust_features
+        self.standard_features = standard_features
         
-        # Get appropriate scaler
-        scaler = self.mimic_scaler if domain == 'mimic' else self.eicu_scaler
+        # Save scalers and feature info
+        scaler_info = {
+            "robust_features": robust_features,
+            "standard_features": standard_features,
+            "mimic_analysis": mimic_analysis,
+            "eicu_analysis": eicu_analysis
+        }
         
-        # Scale numeric features
+        with open(self.scalers_dir / "mimic_robust_scaler.pkl", "wb") as f:
+            pickle.dump(self.mimic_robust_scaler, f)
+        with open(self.scalers_dir / "mimic_standard_scaler.pkl", "wb") as f:
+            pickle.dump(self.mimic_standard_scaler, f)
+        with open(self.scalers_dir / "eicu_robust_scaler.pkl", "wb") as f:
+            pickle.dump(self.eicu_robust_scaler, f)
+        with open(self.scalers_dir / "eicu_standard_scaler.pkl", "wb") as f:
+            pickle.dump(self.eicu_standard_scaler, f)
+        with open(self.scalers_dir / "scaler_info.json", "w") as f:
+            # Convert sets to lists for JSON serialization
+            scaler_info_json = {
+                "robust_features": list(scaler_info["robust_features"]),
+                "standard_features": list(scaler_info["standard_features"])
+            }
+            json.dump(scaler_info_json, f, indent=2)
+        
+        logger.info("Adaptive scalers fitted and saved")
+    def transform_data(self, data, domain="mimic"):
+        """Transform data using adaptive fitted scalers"""
+        logger.info(f"Transforming {domain} data with adaptive scaling...")
+        
+        # Prepare features with advanced analysis
+        data_prepared, scalable_cols, missing_cols, feature_analysis = self.prepare_features(data, domain)
+        
+        # Apply appropriate scalers
+        data_scaled = data_prepared.copy()
+        
+        # Use robust scalers for problematic features
+        robust_scaler = self.mimic_robust_scaler if domain == "mimic" else self.eicu_robust_scaler
+        standard_scaler = self.mimic_standard_scaler if domain == "mimic" else self.eicu_standard_scaler
+        
+        # Apply robust scaling to problematic features
+        if robust_scaler and self.robust_features:
+            robust_cols_available = [col for col in self.robust_features if col in data_scaled.columns]
+            if robust_cols_available:
+                data_scaled[robust_cols_available] = robust_scaler.transform(data_scaled[robust_cols_available])
+                logger.debug(f"Applied robust scaling to {len(robust_cols_available)} features")
+        
+        # Apply standard scaling to well-behaved features
+        if standard_scaler and self.standard_features:
+            standard_cols_available = [col for col in self.standard_features if col in data_scaled.columns]
+            if standard_cols_available:
+                data_scaled[standard_cols_available] = standard_scaler.transform(data_scaled[standard_cols_available])
+                logger.debug(f"Applied standard scaling to {len(standard_cols_available)} features")
+        
+        # Missing flags remain unscaled (binary indicators)
+        logger.info(f"Kept {len(missing_cols)} missing flags unscaled as binary indicators")
+        
+        return data_scaled, scalable_cols, missing_cols
         data_scaled = data_prepared.copy()
         data_scaled[numeric_cols] = scaler.transform(data_prepared[numeric_cols])
         
@@ -333,8 +504,9 @@ class Preprocessor:
         self.fit_scalers(mimic_data, eicu_data)
         
         # Transform data
-        mimic_transformed, mimic_numeric, mimic_missing = self.transform_data(mimic_data, 'mimic')
-        eicu_transformed, eicu_numeric, eicu_missing = self.transform_data(eicu_data, 'eicu')
+        # Transform data with adaptive scaling
+        mimic_transformed, mimic_scalable, mimic_missing = self.transform_data(mimic_data, "mimic")
+        eicu_transformed, eicu_scalable, eicu_missing = self.transform_data(eicu_data, "eicu")
         
         # Split data
         mimic_splits = self.split_data(mimic_transformed, 'mimic')

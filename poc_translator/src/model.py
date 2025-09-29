@@ -1274,7 +1274,7 @@ class CycleVAE(pl.LightningModule):
         outputs = self.forward(x, domain)
         
         # Compute losses
-        rec_loss = F.mse_loss(outputs['x_recon'], x)
+        rec_loss = self.compute_reconstruction_loss(x, outputs['x_recon'])
         kl_loss = self.compute_kl_loss(outputs['mu'], outputs['logvar'])
         # Cycle consistency loss
         cycle_loss = torch.tensor(0.0, device=self.device)
@@ -1291,6 +1291,7 @@ class CycleVAE(pl.LightningModule):
                 x_mimic = x[mimic_mask]
                 cycle_out_mimic = self.cycle_forward(x_mimic, 1, 0)
                 cycle_loss += self.compute_cycle_loss(x_mimic, cycle_out_mimic['x_cycle'])
+        
         # MMD loss
         mmd_loss = torch.tensor(0.0, device=self.device)
         if mimic_mask.any() and eicu_mask.any():
@@ -1299,7 +1300,7 @@ class CycleVAE(pl.LightningModule):
             mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
         
         # KL annealing weight
-        kl_weight = min(1.0, self.current_epoch / self.kl_warmup_epochs) if self.kl_warmup_epochs > 0 else 1.0
+        kl_weight = self.get_kl_weight()
         
         # Total loss
         total_loss = (

@@ -1,22 +1,22 @@
 {
   "mimic_test": {
-    "auc": 0.49763004728013915,
-    "average_precision": 0.19767174950760685,
-    "brier_score": 0.16012161060219507
+    "auc": 0.5083787695823119,
+    "average_precision": 0.2149861443928563,
+    "brier_score": 0.1715229106820073
   },
   "eicu_test_raw": {
-    "auc": 0.4996741104852987,
-    "average_precision": 0.20131058066469634,
-    "brier_score": 0.16190786128095958
+    "auc": 0.490530303030303,
+    "average_precision": 0.17945116342532536,
+    "brier_score": 0.1421783083059316
   },
   "eicu_test_translated": {
-    "auc": 0.5021108826187727,
-    "average_precision": 0.20212086369280324,
-    "brier_score": 0.16079974100946326
+    "auc": 0.5726010101010102,
+    "average_precision": 0.19503571142508905,
+    "brier_score": 0.12963199088982907
   },
   "improvement": {
-    "auc_improvement": 0.0024367721334739856,
-    "ap_improvement": 0.0008102830281069007,
-    "brier_improvement": 0.0011081202714963156
+    "auc_improvement": 0.08207070707070718,
+    "ap_improvement": 0.015584547999763693,
+    "brier_improvement": 0.012546317416102515
   }
 }

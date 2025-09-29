@@ -87,32 +87,38 @@ def create_db_connection(connection_string):
         logger.error(f"Failed to create database connection: {e}")
         raise
 
-def get_mimic_demographic_data(engine, config):
-    """Extract demographic data (age, gender) from MIMIC-IV using cohort table"""
-    cohort_table = config['db']['cohort_tables']['mimic']
+def get_mimic_demographic_data(engine):
+    """Extract demographic data (age, gender) from MIMIC-IV using public tables"""
     
-    query = f"""
+    query = """
     SELECT 
         i.stay_id as icustay_id,
         i.subject_id,
+        i.hadm_id,
         p.gender,
-        p.anchor_age as age
+        p.anchor_age as age,
+        i.intime,
+        i.outtime
     FROM mimiciv_icu.icustays i
     JOIN mimiciv_hosp.patients p ON i.subject_id = p.subject_id
-    JOIN {cohort_table} c ON i.stay_id = c.example_id
     WHERE p.anchor_age IS NOT NULL
+        AND p.anchor_age >= 18  -- Adult patients only
+        AND i.hadm_id IS NOT NULL  -- Must have hospital admission
+        AND EXTRACT(epoch FROM (i.outtime - i.intime))/3600 >= 24  -- At least 24h stay
+        AND i.intime IS NOT NULL
+        AND i.outtime IS NOT NULL
     """
     
-    logger.info(f"Extracting MIMIC demographic data using cohort: {cohort_table}...")
+    logger.info("Extracting MIMIC demographic data using public tables (adults, >=24h stays)...")
     return pd.read_sql(text(query), engine)
 
-def get_eicu_demographic_data(engine, config):
-    """Extract demographic data (age, gender) from eICU-CRD using cohort table"""
-    cohort_table = config['db']['cohort_tables']['eicu']
+def get_eicu_demographic_data(engine):
+    """Extract demographic data (age, gender) from eICU-CRD using public tables"""
     
-    query = f"""
+    query = """
     SELECT 
         p.patientunitstayid as icustay_id,
+        p.patientunitstayid as subject_id,  -- eICU uses same ID for both
         CASE 
             WHEN p.age = '> 89' THEN 91.0
             WHEN p.age ~ '^[0-9]+$' THEN p.age::float
@@ -120,92 +126,112 @@ def get_eicu_demographic_data(engine, config):
         END as age,
         p.gender
     FROM eicu_crd.patient p
-    JOIN {cohort_table} c ON p.patientunitstayid = c.example_id
     WHERE p.patientunitstayid IS NOT NULL
+        AND p.unitdischargeoffset >= 24 * 60  -- At least 24h stay (in minutes)
+        AND p.age != '' AND p.age != 'Unknown' AND p.age IS NOT NULL
+        AND CASE 
+            WHEN p.age = '> 89' THEN 90 
+            ELSE CAST(p.age AS INTEGER) 
+        END >= 18  -- Adult patients
     """
     
-    logger.info(f"Extracting eICU demographic data using cohort: {cohort_table}...")
+    logger.info("Extracting eICU demographic data using public tables (adults, >=24h stays)...")
     return pd.read_sql(text(query), engine)
 
-def extract_mimic_data(engine, config):
-    """Extract MIMIC-IV data for the 10 POC features"""
+def extract_mimic_data(engine):
+    """Extract MIMIC-IV data for the 10 POC features using optimized batch queries"""
     logger.info("Starting MIMIC-IV data extraction...")
     
     # Get demographic data first
-    demo_data = get_mimic_demographic_data(engine, config)
+    demo_data = get_mimic_demographic_data(engine)
     logger.info(f"Found {len(demo_data)} MIMIC ICU stays with demographic data")
     
-    # Initialize result DataFrame
-    result_data = []
+    if demo_data.empty:
+        logger.warning("No demographic data found")
+        return pd.DataFrame()
     
-    # Process each ICU stay
-    icustay_ids = demo_data['icustay_id'].unique()
+    # Get all ICU stay IDs
+    icustay_ids = demo_data['icustay_id'].unique().tolist()
+    
+    # Collect all itemids for vitals and labs
+    vital_itemids = []
+    lab_itemids = []
+    
+    for feature, itemids in MIMIC_ITEMID_MAP.items():
+        if itemids and feature not in ['Age', 'Gender']:
+            if feature in ['Heart Rate', 'Respiratory Rate', 'SpO₂', 'Temperature', 'MAP']:
+                vital_itemids.extend(itemids)
+            else:
+                lab_itemids.extend(itemids)
+    
+    logger.info(f"Extracting vitals for {len(vital_itemids)} item IDs from {len(icustay_ids)} stays...")
+    
+    # BATCH QUERY 1: Get ALL vital signs data in one query
+    vitals_df = pd.DataFrame()
+    if vital_itemids:
+        vitals_query = """
+        SELECT 
+            ce.stay_id as icustay_id,
+            ce.itemid,
+            ce.valuenum,
+            ce.charttime
+        FROM mimiciv_icu.chartevents ce
+        JOIN mimiciv_icu.icustays i ON ce.stay_id = i.stay_id
+        WHERE ce.stay_id = ANY(:icustay_ids)
+            AND ce.charttime >= i.intime
+            AND ce.charttime <= i.intime + INTERVAL '24 hours'
+            AND ce.itemid = ANY(:itemids)
+            AND ce.valuenum IS NOT NULL
+            AND ce.valuenum > 0
+        """
+        
+        vitals_df = pd.read_sql(text(vitals_query), engine, params={
+            'icustay_ids': icustay_ids,
+            'itemids': vital_itemids
+        })
+        logger.info(f"Retrieved {len(vitals_df)} vital sign measurements")
+    
+    logger.info(f"Extracting labs for {len(lab_itemids)} item IDs from {len(icustay_ids)} stays...")
+    
+    # BATCH QUERY 2: Get ALL lab data in one query
+    labs_df = pd.DataFrame()
+    if lab_itemids:
+        labs_query = """
+        SELECT 
+            i.stay_id as icustay_id,
+            le.itemid,
+            le.valuenum,
+            le.charttime
+        FROM mimiciv_hosp.labevents le
+        JOIN mimiciv_icu.icustays i ON le.subject_id = i.subject_id AND le.hadm_id = i.hadm_id
+        WHERE i.stay_id = ANY(:icustay_ids)
+            AND le.charttime >= i.intime
+            AND le.charttime <= i.intime + INTERVAL '24 hours'
+            AND le.itemid = ANY(:itemids)
+            AND le.valuenum IS NOT NULL
+            AND le.valuenum > 0
+        """
+        
+        labs_df = pd.read_sql(text(labs_query), engine, params={
+            'icustay_ids': icustay_ids,
+            'itemids': lab_itemids
+        })
+        logger.info(f"Retrieved {len(labs_df)} lab measurements")
+    
+    # Combine all measurements and add source column
+    all_measurements = pd.concat([vitals_df, labs_df], ignore_index=True)
+    logger.info(f"Processing {len(all_measurements)} total measurements for {len(icustay_ids)} patients...")
+    
+    # Process each ICU stay using batch data
+    result_data = []
     
     with tqdm(total=len(icustay_ids), desc="Processing MIMIC ICU stays") as pbar:
         for icustay_id in icustay_ids:
             try:
                 stay_data = demo_data[demo_data['icustay_id'] == icustay_id].iloc[0]
                 
-                # Get vital signs and lab values for this stay
-                vitals_query = """
-                SELECT 
-                    ce.itemid,
-                    ce.valuenum,
-                    ce.charttime
-                FROM mimiciv_icu.chartevents ce
-                JOIN mimiciv_icu.icustays i ON ce.stay_id = i.stay_id
-                WHERE ce.stay_id = :icustay_id
-                    AND ce.charttime >= i.intime
-                    AND ce.charttime <= i.intime + INTERVAL '24 hours'
-                    AND ce.itemid = ANY(:itemids)
-                    AND ce.valuenum IS NOT NULL
-                    AND ce.valuenum > 0
-                """
-                
-                labs_query = """
-                SELECT 
-                    le.itemid,
-                    le.valuenum,
-                    le.charttime
-                FROM mimiciv_hosp.labevents le
-                JOIN mimiciv_icu.icustays i ON le.subject_id = i.subject_id AND le.hadm_id = i.hadm_id
-                WHERE i.stay_id = :icustay_id
-                    AND le.charttime >= i.intime
-                    AND le.charttime <= i.intime + INTERVAL '24 hours'
-                    AND le.itemid = ANY(:itemids)
-                    AND le.valuenum IS NOT NULL
-                    AND le.valuenum > 0
-                """
-                
-                # Collect all itemids for vitals and labs
-                vital_itemids = []
-                lab_itemids = []
-                
-                for feature, itemids in MIMIC_ITEMID_MAP.items():
-                    if itemids and feature not in ['Age', 'Gender']:
-                        if feature in ['Heart Rate', 'Respiratory Rate', 'SpO₂', 'Temperature', 'MAP']:
-                            vital_itemids.extend(itemids)
-                        else:
-                            lab_itemids.extend(itemids)
-                
-                # Get vital signs data
-                vitals_df = pd.DataFrame()
-                if vital_itemids:
-                    vitals_df = pd.read_sql(text(vitals_query), engine, params={
-                        'icustay_id': int(icustay_id),
-                        'itemids': vital_itemids
-                    })
-                
-                # Get lab data  
-                labs_df = pd.DataFrame()
-                if lab_itemids:
-                    labs_df = pd.read_sql(text(labs_query), engine, params={
-                        'icustay_id': int(icustay_id),
-                        'itemids': lab_itemids
-                    })
-                
-                # Combine all measurements
-                all_measurements = pd.concat([vitals_df, labs_df], ignore_index=True)
+                # Filter measurements for this ICU stay
+                patient_measurements = all_measurements[all_measurements['icustay_id'] == icustay_id]
                 
                 # Build feature record
                 feature_record = {
@@ -224,7 +250,7 @@ def extract_mimic_data(engine, config):
                         # Get measurements for this feature
                         itemids = MIMIC_ITEMID_MAP[feature_name]
                         if itemids:
-                            feature_measurements = all_measurements[all_measurements['itemid'].isin(itemids)]
+                            feature_measurements = patient_measurements[patient_measurements['itemid'].isin(itemids)]
                             
                             if not feature_measurements.empty:
                                 values = feature_measurements['valuenum'].dropna()
@@ -261,52 +287,77 @@ def extract_mimic_data(engine, config):
     logger.info(f"Extracted MIMIC data for {len(result_df)} ICU stays")
     return result_df
 
-def extract_eicu_data(engine, config):
-    """Extract eICU-CRD data for the 10 POC features"""
+def extract_eicu_data(engine):
+    """Extract eICU-CRD data for the 10 POC features using optimized batch queries"""
     logger.info("Starting eICU-CRD data extraction...")
     
     # Get demographic data first
-    demo_data = get_eicu_demographic_data(engine, config)
+    demo_data = get_eicu_demographic_data(engine)
     logger.info(f"Found {len(demo_data)} eICU ICU stays with demographic data")
     
-    # Initialize result DataFrame
-    result_data = []
+    if demo_data.empty:
+        logger.warning("No demographic data found")
+        return pd.DataFrame()
     
-    # Process each ICU stay
-    icustay_ids = demo_data['icustay_id'].unique()
+    # Get all ICU stay IDs
+    icustay_ids = demo_data['icustay_id'].unique().tolist()
+    
+    logger.info(f"Extracting vitals from {len(icustay_ids)} eICU stays...")
+    
+    # BATCH QUERY 1: Get ALL vital signs data in one query (first 24 hours)
+    vitals_query = """
+    SELECT 
+        patientunitstayid as icustay_id,
+        heartrate,
+        respiration,
+        sao2,
+        temperature,
+        systemicmean,
+        observationoffset
+    FROM eicu_crd.vitalperiodic
+    WHERE patientunitstayid = ANY(:icustay_ids)
+        AND observationoffset >= 0
+        AND observationoffset <= 1440  -- 24 hours in minutes
+    """
+    
+    vitals_df = pd.read_sql(text(vitals_query), engine, params={
+        'icustay_ids': icustay_ids
+    })
+    logger.info(f"Retrieved {len(vitals_df)} vital sign measurements")
+    
+    logger.info(f"Extracting labs from {len(icustay_ids)} eICU stays...")
+    
+    # BATCH QUERY 2: Get ALL lab data in one query (first 24 hours)
+    lab_query = """
+    SELECT 
+        patientunitstayid as icustay_id,
+        labname, 
+        labresult, 
+        labresultoffset
+    FROM eicu_crd.lab
+    WHERE patientunitstayid = ANY(:icustay_ids)
+        AND labresultoffset >= 0
+        AND labresultoffset <= 1440  -- 24 hours in minutes
+        AND labname IN ('WBC x 1000', 'sodium', 'creatinine', 'Sodium', 'Creatinine')
+        AND labresult IS NOT NULL
+    """
+    
+    lab_df = pd.read_sql(text(lab_query), engine, params={
+        'icustay_ids': icustay_ids
+    })
+    logger.info(f"Retrieved {len(lab_df)} lab measurements")
+    
+    # Process each ICU stay using batch data
+    result_data = []
     
     with tqdm(total=len(icustay_ids), desc="Processing eICU ICU stays") as pbar:
         for icustay_id in icustay_ids:
             try:
                 stay_data = demo_data[demo_data['icustay_id'] == icustay_id].iloc[0]
                 
-                # Get vital signs data (first 24 hours)
-                vitals_query = """
-                SELECT *
-                FROM eicu_crd.vitalperiodic
-                WHERE patientunitstayid = :icustay_id
-                    AND observationoffset >= 0
-                    AND observationoffset <= 1440  -- 24 hours in minutes
-                """
-                
-                vitals_df = pd.read_sql(text(vitals_query), engine, params={
-                    'icustay_id': int(icustay_id)
-                })
-                
-                # Get lab data (first 24 hours)
-                lab_query = """
-                SELECT labname, labresult, labresultoffset
-                FROM eicu_crd.lab
-                WHERE patientunitstayid = :icustay_id
-                    AND labresultoffset >= 0
-                    AND labresultoffset <= 1440  -- 24 hours in minutes
-                    AND labname IN ('WBC x 1000', 'sodium', 'creatinine', 'Sodium', 'Creatinine')
-                    AND labresult IS NOT NULL
-                """
-                
-                lab_df = pd.read_sql(text(lab_query), engine, params={
-                    'icustay_id': int(icustay_id)
-                })
+                # Filter data for this ICU stay
+                patient_vitals = vitals_df[vitals_df['icustay_id'] == icustay_id]
+                patient_labs = lab_df[lab_df['icustay_id'] == icustay_id]
                 
                 # Build feature record
                 feature_record = {
@@ -335,7 +386,7 @@ def extract_eicu_data(engine, config):
                             'Creatinine': ['creatinine', 'Creatinine']
                         }
                         
-                        feature_labs = lab_df[lab_df['labname'].isin(lab_names[feature_name])]
+                        feature_labs = patient_labs[patient_labs['labname'].isin(lab_names[feature_name])]
                         
                         if not feature_labs.empty:
                             try:
@@ -363,8 +414,8 @@ def extract_eicu_data(engine, config):
                     else:
                         # Vital signs
                         column_name = EICU_COLUMN_MAP[feature_name]
-                        if column_name and column_name in vitals_df.columns:
-                            values = pd.to_numeric(vitals_df[column_name], errors='coerce').dropna()
+                        if column_name and column_name in patient_vitals.columns:
+                            values = pd.to_numeric(patient_vitals[column_name], errors='coerce').dropna()
                             
                             # Filter out unrealistic values
                             if feature_name == 'Heart Rate':
@@ -613,7 +664,7 @@ def main():
             logger.info("Connecting to MIMIC-IV database...")
             mimic_engine = create_db_connection(config['db']['mimic_conn'])
             
-            mimic_data = extract_mimic_data(mimic_engine, config)
+            mimic_data = extract_mimic_data(mimic_engine)
             
             if args.sample_size:
                 mimic_data = mimic_data.head(args.sample_size)
@@ -635,7 +686,7 @@ def main():
             logger.info("Connecting to eICU-CRD database...")
             eicu_engine = create_db_connection(config['db']['eicu_conn'])
             
-            eicu_data = extract_eicu_data(eicu_engine, config)
+            eicu_data = extract_eicu_data(eicu_engine)
             
             if args.sample_size:
                 eicu_data = eicu_data.head(args.sample_size)

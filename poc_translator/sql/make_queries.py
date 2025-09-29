@@ -20,17 +20,57 @@ def load_config():
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def load_aligned_features(config):
-    """Load aligned feature CSVs"""
-    eicu_features = pd.read_csv(config['paths']['aligned_eicu_csv'])
-    mimic_features = pd.read_csv(config['paths']['aligned_mimic_csv'])
+def load_poc_features(config):
+    """Load POC feature CSVs and extract feature names"""
+    eicu_df = pd.read_csv(config['paths']['eicu_poc_csv'])
+    mimic_df = pd.read_csv(config['paths']['mimic_poc_csv'])
+    
+    # Extract feature columns (exclude metadata columns)
+    metadata_cols = ['patient_id', 'icu_stay_id']
+    eicu_feature_cols = [col for col in eicu_df.columns if col not in metadata_cols]
+    mimic_feature_cols = [col for col in mimic_df.columns if col not in metadata_cols]
+    
+    # Map processed feature names to raw feature names for SQL queries
+    feature_name_mapping = {
+        # Heart Rate features
+        'HR_min': 'Heart Rate', 'HR_max': 'Heart Rate', 'HR_mean': 'Heart Rate', 'HR_std': 'Heart Rate',
+        # Respiratory Rate features  
+        'RR_min': 'Respiratory Rate', 'RR_max': 'Respiratory Rate', 'RR_mean': 'Respiratory Rate', 'RR_std': 'Respiratory Rate',
+        # SpO2 features
+        'SpO2_min': 'O2 Sat (%)', 'SpO2_max': 'O2 Sat (%)', 'SpO2_mean': 'O2 Sat (%)', 'SpO2_std': 'O2 Sat (%)',
+        # Temperature features
+        'Temp_min': 'Temperature', 'Temp_max': 'Temperature', 'Temp_mean': 'Temperature', 'Temp_std': 'Temperature',
+        # MAP features (Mean Arterial Pressure)
+        'MAP_min': 'Non-Invasive BP Mean', 'MAP_max': 'Non-Invasive BP Mean', 'MAP_mean': 'Non-Invasive BP Mean', 'MAP_std': 'Non-Invasive BP Mean',
+        # WBC features
+        'WBC_min': 'WBC', 'WBC_max': 'WBC', 'WBC_mean': 'WBC', 'WBC_std': 'WBC',
+        # Sodium features
+        'Na_min': 'sodium', 'Na_max': 'sodium', 'Na_mean': 'sodium', 'Na_std': 'sodium',
+        # Creatinine features
+        'Creat_min': 'creatinine', 'Creat_max': 'creatinine', 'Creat_mean': 'creatinine', 'Creat_std': 'creatinine',
+        # Demographics
+        'Age': 'Age', 'Gender': 'Gender'
+    }
+    
+    # Create feature DataFrames in expected format
+    eicu_features = pd.DataFrame({
+        'Feature_Name': [feature_name_mapping.get(col, col) for col in eicu_feature_cols],
+        'Index': range(len(eicu_feature_cols)),
+        'Original_Column': eicu_feature_cols
+    })
+    
+    mimic_features = pd.DataFrame({
+        'Feature_Name': [feature_name_mapping.get(col, col) for col in mimic_feature_cols], 
+        'Index': range(len(mimic_feature_cols)),
+        'Original_Column': mimic_feature_cols
+    })
     
     # Create feature mapping
     feature_mapping = {}
-    for _, row in eicu_features.iterrows():
-        eicu_name = row['Feature_Name']
-        index = row['Index']
-        mimic_name = mimic_features.iloc[index]['Feature_Name']
+    min_length = min(len(eicu_features), len(mimic_features))
+    for i in range(min_length):
+        eicu_name = eicu_features.iloc[i]['Feature_Name']
+        mimic_name = mimic_features.iloc[i]['Feature_Name']
         feature_mapping[eicu_name] = mimic_name
     
     return eicu_features, mimic_features, feature_mapping
@@ -162,14 +202,12 @@ def generate_mimic_sql(features_df, itemid_map=None, omop_schema="omop", cohort_
     
     # Header
     sql_parts.append(f"""
--- MIMIC-IV Feature Extraction Query using native MIMIC-IV tables and cohort table
--- Extracts 24-hour aggregated features for each ICU stay in the BSI cohort
+-- MIMIC-IV Feature Extraction Query using public tables (non-restrictive)  
+-- Extracts 24-hour aggregated features for adult ICU stays (>=24h duration)
+-- CHANGE: Switched from restrictive BSI cohort to public tables for more data
 
-WITH cohort_patients AS (
-  SELECT DISTINCT person_id, example_id
-  FROM {cohort_table if cohort_table else 'mimiciv_bsi_100_2h_test.__mimiciv_bsi_100_2h_cohort'}
-),
-icu_window AS (
+-- Using public tables instead of restrictive cohort
+WITH icu_window AS (
   SELECT 
     i.stay_id as icustay_id, 
     i.subject_id as subject_id, 
@@ -177,8 +215,11 @@ icu_window AS (
     i.intime,
     i.intime + INTERVAL '24 hours' as intime_plus_24h
   FROM mimiciv_icu.icustays i
-  JOIN cohort_patients c ON i.stay_id = c.example_id
+  JOIN mimiciv_hosp.patients p ON i.subject_id = p.subject_id
   WHERE i.intime IS NOT NULL
+    AND i.hadm_id IS NOT NULL  -- Must have hospital admission
+    AND EXTRACT(epoch FROM (i.outtime - i.intime))/3600 >= 24  -- At least 24h stay
+    AND p.anchor_age >= 18  -- Adult patients
 )
 SELECT""")
     
@@ -190,8 +231,29 @@ SELECT""")
         # Map feature name to itemid
         itemid = default_itemids.get(feature_name, f"ITEMID_{feature_idx}")
         
-        # Generate aggregation for this feature
-        feature_sql = f"""
+        # Handle demographic features specially
+        if feature_name in ['Age', 'Gender']:
+            if feature_name == 'Age':
+                feature_sql = f"""
+  -- {feature_name} (Index: {feature_idx}) - From patients table
+  p.anchor_age AS feature_{feature_idx}_mean,
+  p.anchor_age AS feature_{feature_idx}_min,
+  p.anchor_age AS feature_{feature_idx}_max,
+  p.anchor_age AS feature_{feature_idx}_last,
+  1 AS feature_{feature_idx}_count,
+  CASE WHEN p.anchor_age IS NULL THEN 1 ELSE 0 END AS feature_{feature_idx}_missing,"""
+            else:  # Gender
+                feature_sql = f"""
+  -- {feature_name} (Index: {feature_idx}) - From patients table
+  CASE WHEN p.gender = 'M' THEN 1 ELSE 0 END AS feature_{feature_idx}_mean,
+  CASE WHEN p.gender = 'M' THEN 1 ELSE 0 END AS feature_{feature_idx}_min,
+  CASE WHEN p.gender = 'M' THEN 1 ELSE 0 END AS feature_{feature_idx}_max,
+  CASE WHEN p.gender = 'M' THEN 1 ELSE 0 END AS feature_{feature_idx}_last,
+  1 AS feature_{feature_idx}_count,
+  CASE WHEN p.gender IS NULL THEN 1 ELSE 0 END AS feature_{feature_idx}_missing,"""
+        else:
+            # Generate aggregation for clinical features
+            feature_sql = f"""
   -- {feature_name} (Index: {feature_idx})
   AVG(CASE WHEN m.itemid = {itemid} THEN m.valuenum END) AS feature_{feature_idx}_mean,
   MIN(CASE WHEN m.itemid = {itemid} THEN m.valuenum END) AS feature_{feature_idx}_min,
@@ -217,6 +279,7 @@ SELECT""")
   i.subject_id,
   i.hadm_id
 FROM icu_window i
+LEFT JOIN mimiciv_hosp.patients p ON i.subject_id = p.subject_id
 LEFT JOIN (
   SELECT subject_id, hadm_id, itemid, valuenum, charttime FROM mimiciv_hosp.labevents 
   WHERE valuenum IS NOT NULL
@@ -226,7 +289,7 @@ LEFT JOIN (
 ) m ON (m.subject_id = i.subject_id AND m.hadm_id = i.hadm_id)
   AND m.charttime >= i.intime 
   AND m.charttime < i.intime_plus_24h
-GROUP BY i.icustay_id, i.subject_id, i.hadm_id, i.intime, i.intime_plus_24h
+GROUP BY i.icustay_id, i.subject_id, i.hadm_id, i.intime, i.intime_plus_24h, p.anchor_age, p.gender
 ORDER BY i.icustay_id;
 """)
     
@@ -343,19 +406,22 @@ def generate_eicu_sql(features_df, column_map=None, cohort_table=None):
     
     # Header
     sql_parts.append(f"""
--- eICU Feature Extraction Query using cohort table
--- Extracts 24-hour aggregated features for each ICU stay in the BSI cohort
+-- eICU Feature Extraction Query using public tables (non-restrictive)
+-- Extracts 24-hour aggregated features for adult ICU stays (>=24h duration) 
+-- CHANGE: Switched from restrictive BSI cohort to public tables for more data
 
-WITH cohort_patients AS (
-  SELECT DISTINCT example_id as patientunitstayid
-  FROM {cohort_table if cohort_table else 'eicu_bsi_100_2h_test.__eicu_bsi_100_2h_cohort'}
-),
-stays AS (
+-- Using public tables instead of restrictive cohort  
+WITH stays AS (
   SELECT 
     p.patientunitstayid
   FROM eicu_crd.patient p
-  JOIN cohort_patients c ON p.patientunitstayid = c.patientunitstayid
   WHERE p.patientunitstayid IS NOT NULL
+    AND p.unitdischargeoffset >= 24 * 60  -- At least 24h stay (in minutes)
+    AND p.age != '' AND p.age != 'Unknown' AND p.age IS NOT NULL
+    AND CASE 
+        WHEN p.age = '> 89' THEN 90 
+        ELSE CAST(p.age AS INTEGER) 
+        END >= 18  -- Adult patients
 )
 SELECT""")
     
@@ -367,16 +433,37 @@ SELECT""")
         # Map feature name to column
         column_name = default_columns.get(feature_name, None)
         
-        # Available columns in eicu_crd.vitalperiodic
-        available_vitalperiodic_cols = [
-            'heartrate', 'respiration', 'temperature', 'sao2',
-            'systemicsystolic', 'systemicdiastolic', 'systemicmean',
-            'pasystolic', 'padiastolic', 'pamean', 'cvp', 'icp', 'etco2'
-        ]
-        
-        if column_name and column_name in available_vitalperiodic_cols:
-            # Feature is available in vitalperiodic - use real data
-            feature_sql = f"""
+        # Handle demographic features specially
+        if feature_name in ['Age', 'Gender']:
+            if feature_name == 'Age':
+                feature_sql = f"""
+  -- {feature_name} (Index: {feature_idx}) - From patient table
+  CASE WHEN p.age = '> 89' THEN 90 ELSE CAST(p.age AS INTEGER) END AS feature_{feature_idx}_mean,
+  CASE WHEN p.age = '> 89' THEN 90 ELSE CAST(p.age AS INTEGER) END AS feature_{feature_idx}_min,
+  CASE WHEN p.age = '> 89' THEN 90 ELSE CAST(p.age AS INTEGER) END AS feature_{feature_idx}_max,
+  CASE WHEN p.age = '> 89' THEN 90 ELSE CAST(p.age AS INTEGER) END AS feature_{feature_idx}_last,
+  1 AS feature_{feature_idx}_count,
+  CASE WHEN p.age IS NULL OR p.age = '' THEN 1 ELSE 0 END AS feature_{feature_idx}_missing,"""
+            else:  # Gender
+                feature_sql = f"""
+  -- {feature_name} (Index: {feature_idx}) - From patient table
+  CASE WHEN p.gender = 'Male' THEN 1 ELSE 0 END AS feature_{feature_idx}_mean,
+  CASE WHEN p.gender = 'Male' THEN 1 ELSE 0 END AS feature_{feature_idx}_min,
+  CASE WHEN p.gender = 'Male' THEN 1 ELSE 0 END AS feature_{feature_idx}_max,
+  CASE WHEN p.gender = 'Male' THEN 1 ELSE 0 END AS feature_{feature_idx}_last,
+  1 AS feature_{feature_idx}_count,
+  CASE WHEN p.gender IS NULL OR p.gender = '' THEN 1 ELSE 0 END AS feature_{feature_idx}_missing,"""
+        else:
+            # Available columns in eicu_crd.vitalperiodic
+            available_vitalperiodic_cols = [
+                'heartrate', 'respiration', 'temperature', 'sao2',
+                'systemicsystolic', 'systemicdiastolic', 'systemicmean',
+                'pasystolic', 'padiastolic', 'pamean', 'cvp', 'icp', 'etco2'
+            ]
+            
+            if column_name and column_name in available_vitalperiodic_cols:
+                # Feature is available in vitalperiodic - use real data
+                feature_sql = f"""
   -- {feature_name} (Index: {feature_idx}) - Available in vitalperiodic
   AVG(CASE WHEN v.{column_name} IS NOT NULL THEN v.{column_name} END) AS feature_{feature_idx}_mean,
   MIN(CASE WHEN v.{column_name} IS NOT NULL THEN v.{column_name} END) AS feature_{feature_idx}_min,
@@ -391,9 +478,9 @@ SELECT""")
    LIMIT 1) AS feature_{feature_idx}_last,
   COUNT(CASE WHEN v.{column_name} IS NOT NULL THEN 1 END) AS feature_{feature_idx}_count,
   CASE WHEN COUNT(CASE WHEN v.{column_name} IS NOT NULL THEN 1 END) = 0 THEN 1 ELSE 0 END AS feature_{feature_idx}_missing,"""
-        else:
-            # Feature not available in vitalperiodic - use NULL placeholders
-            feature_sql = f"""
+            else:
+                # Feature not available in vitalperiodic - use NULL placeholders
+                feature_sql = f"""
   -- {feature_name} (Index: {feature_idx}) - Not available in vitalperiodic (would need lab/nursing tables)
   NULL AS feature_{feature_idx}_mean,
   NULL AS feature_{feature_idx}_min,
@@ -409,10 +496,11 @@ SELECT""")
   -- Additional metadata
   s.patientunitstayid as icustay_id
 FROM stays s
+JOIN eicu_crd.patient p ON p.patientunitstayid = s.patientunitstayid
 LEFT JOIN eicu_crd.vitalperiodic v ON v.patientunitstayid = s.patientunitstayid
   AND v.observationoffset >= 0
   AND v.observationoffset < 24 * 60
-GROUP BY s.patientunitstayid
+GROUP BY s.patientunitstayid, p.age, p.gender
 ORDER BY s.patientunitstayid;
 """)
     
@@ -453,10 +541,10 @@ def main():
     # Load configuration
     config = load_config()
     
-    # Load aligned features
-    eicu_features, mimic_features, feature_mapping = load_aligned_features(config)
+    # Load POC features
+    eicu_features, mimic_features, feature_mapping = load_poc_features(config)
     
-    print(f"Loaded {len(eicu_features)} aligned features")
+    print(f"Loaded POC features for SQL generation")
     print(f"EICU features: {len(eicu_features)}")
     print(f"MIMIC features: {len(mimic_features)}")
     

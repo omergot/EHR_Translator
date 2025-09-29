@@ -209,9 +209,9 @@ def train_model(config: dict, feature_spec: dict, dry_run: bool = False):
     trainer.test(model, data_module)
     
     # IMPROVEMENT 3: Run comprehensive evaluation built into model
-    logger.info("Running comprehensive evaluation...")
-    if hasattr(model, 'run_comprehensive_evaluation'):
-        model.run_comprehensive_evaluation(data_module, str(output_dir))
+    # logger.info("Running comprehensive evaluation...")
+    # if hasattr(model, 'run_comprehensive_evaluation'):
+    #     model.run_comprehensive_evaluation(data_module, str(output_dir))
     
     # Save final model
     final_model_path = output_dir / "checkpoints" / "final_model.ckpt"

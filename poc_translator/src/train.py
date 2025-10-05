@@ -245,6 +245,8 @@ def main():
                        help='Data balancing strategy')
     parser.add_argument('--audit', action='store_true',
                        help='Run preprocessing audit to identify problematic features')
+    parser.add_argument('--mimic-only', action='store_true',
+                       help='Train and test only on MIMIC data (for same-domain validation)')
     
     args = parser.parse_args()
     
@@ -263,8 +265,13 @@ def main():
     # Override balance strategy if specified
     config['balance_strategy'] = args.balance
     
+    # Set MIMIC-only mode if specified
+    config['mimic_only'] = args.mimic_only
+    
     logger.info(f"Using configuration: {config_path}")
     logger.info(f"Output directory: {config['paths']['output_dir']}")
+    if args.mimic_only:
+        logger.info("MIMIC-ONLY MODE: Training and testing will use only MIMIC data")
     
     try:
         # Prepare data

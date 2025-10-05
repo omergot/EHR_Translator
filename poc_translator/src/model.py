@@ -556,11 +556,11 @@ class CycleVAE(pl.LightningModule):
             # decoder_output is x_recon tensor  
             x_recon = decoder_output
             
-            # CRITICAL FIX: Separate binary (missing indicators) from continuous features
-            # FIXED: Handle missing indicators properly - they cause extreme ratios
-            # Missing indicators are indices 34-41 (binary 0/1)
-            continuous_indices = list(range(34))  # Indices 0-33 (continuous features)  
-            binary_indices = list(range(34, min(42, x.shape[1])))   # Indices 34+ (missing indicators)
+            # CRITICAL FIX: Calculate indices dynamically based on actual dimensions
+            # numeric_dim includes all continuous features (clinical + demographic)
+            # missing_dim includes all binary missing indicators
+            continuous_indices = list(range(self.numeric_dim))  # All numeric features
+            binary_indices = list(range(self.numeric_dim, self.numeric_dim + self.missing_dim))  # All missing indicators
             
             total_loss = torch.tensor(0.0, device=x.device)
             
@@ -892,7 +892,16 @@ class CycleVAE(pl.LightningModule):
                 mimic_count = (domain == 1).sum().item()
                 eicu_count = (domain == 0).sum().item()
                 logger.info(f"Domain classifier accuracy: {accuracy:.3f} (should start high, then decrease as encoder improves)")
-                logger.info(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (imbalance could cause ln(2) stagnation)")
+                
+                # Only warn about imbalance if it's significant (>10% difference)
+                imbalance = abs(mimic_count - eicu_count)
+                expected_each = (mimic_count + eicu_count) / 2
+                imbalance_pct = (imbalance / expected_each) * 100 if expected_each > 0 else 0
+                
+                if imbalance_pct > 15:  # Warn if >15% imbalance (e.g., 55 vs 73 in batch of 128)
+                    logger.warning(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (imbalance {imbalance_pct:.1f}% could cause ln(2) stagnation)")
+                else:
+                    logger.info(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (balanced ✓)")
         
         # FIXED: Return positive loss - adversarial training handled by gradient reversal in optimizer
         return domain_loss

@@ -37,6 +37,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.model import CycleVAE
 from src.dataset import CombinedDataModule
 from src.utils import mmd_rbf, ks_test_featurewise
+from src.comprehensive_evaluator import ComprehensiveEvaluator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -152,7 +153,8 @@ class Evaluator:
         
         # Iterate through clinical features
         for feature in self.feature_spec['clinical_features']:
-            for suffix in ['_mean', '_min', '_max', '_std']:
+            # IMPORTANT: Order must match the CSV column order (min, max, mean, std)
+            for suffix in ['_min', '_max', '_mean', '_std']:
                 col_name = f"{feature}{suffix}"
                 if col_name in mimic_numeric_cols:
                     results.append({
@@ -236,7 +238,8 @@ class Evaluator:
         
         # Test clinical features
         for feature in self.feature_spec['clinical_features']:
-            for suffix in ['_mean', '_min', '_max', '_std']:
+            # IMPORTANT: Order must match the CSV column order (min, max, mean, std)
+            for suffix in ['_min', '_max', '_mean', '_std']:
                 col_name = f"{feature}{suffix}"
                 if col_name in mimic_numeric_cols:
                     # KS test: translated eICU vs real MIMIC
@@ -561,6 +564,361 @@ class Evaluator:
         logger.info("Full evaluation completed successfully!")
         
         return summary
+    
+    def run_comprehensive_evaluation(self):
+        """Run comprehensive patient-level and feature-level evaluation using actual test set"""
+        logger.info("Starting comprehensive evaluation...")
+        
+        # FIXED: Load test data directly from CSV files (same as standard evaluation)
+        logger.info("Loading actual test data from CSV files...")
+        test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
+        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        
+        logger.info(f"Loaded test data - MIMIC: {len(test_mimic_data)} samples, eICU: {len(test_eicu_data)} samples")
+        
+        # Convert to tensors (same format as other evaluation methods)
+        mimic_numeric_cols = [col for col in test_mimic_data.columns 
+                             if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
+                             or col in ['Age', 'Gender']]
+        mimic_missing_cols = [col for col in test_mimic_data.columns if '_missing' in col]
+        
+        mimic_numeric = torch.FloatTensor(test_mimic_data[mimic_numeric_cols].values)
+        mimic_missing = torch.FloatTensor(test_mimic_data[mimic_missing_cols].values)
+        x_mimic_test = torch.cat([mimic_numeric, mimic_missing], dim=1)
+        
+        eicu_numeric_cols = [col for col in test_eicu_data.columns 
+                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
+                            or col in ['Age', 'Gender']]
+        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
+        
+        eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
+        eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
+        x_eicu_test = torch.cat([eicu_numeric, eicu_missing], dim=1)
+        
+        logger.info(f"Converted to tensors - MIMIC: {x_mimic_test.size(0)} samples, eICU: {x_eicu_test.size(0)} samples")
+        logger.info(f"Running comprehensive evaluation with {x_mimic_test.size(0)} MIMIC and {x_eicu_test.size(0)} eICU samples")
+        
+        # Create comprehensive evaluator
+        logger.info("Creating comprehensive evaluator...")
+        comprehensive_evaluator = ComprehensiveEvaluator(
+            self.model, self.feature_spec, str(self.output_dir)
+        )
+        
+        # Run comprehensive evaluation with error handling
+        try:
+            logger.info("Starting comprehensive evaluation...")
+            comprehensive_results = comprehensive_evaluator.evaluate_translation_quality(
+                x_eicu_test, x_mimic_test
+            )
+            logger.info("Comprehensive evaluation completed successfully!")
+            return comprehensive_results
+        except Exception as e:
+            logger.error(f"Comprehensive evaluation failed: {e}")
+            logger.error("This might be due to memory issues or model problems")
+            logger.info("Continuing with standard evaluation only...")
+            return None
+    
+    def generate_comprehensive_report(self):
+        """Generate comprehensive evaluation report from results."""
+        logger.info("Generating comprehensive evaluation report...")
+        
+        # Check if comprehensive evaluation was run
+        comprehensive_dir = self.output_dir / "comprehensive_evaluation"
+        if not comprehensive_dir.exists():
+            logger.warning("No comprehensive evaluation results found. Run with --comprehensive flag first.")
+            return None
+        
+        # Load results
+        results = {}
+        
+        # Load comprehensive results
+        comprehensive_path = comprehensive_dir / "comprehensive_results.json"
+        if comprehensive_path.exists():
+            try:
+                with open(comprehensive_path, 'r') as f:
+                    results['comprehensive'] = json.load(f)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Corrupted comprehensive results JSON file: {e}")
+                logger.info("Deleting corrupted file - it will be regenerated on next evaluation")
+                comprehensive_path.unlink()  # Delete corrupted file
+                results['comprehensive'] = None
+        
+        # Load CSV files
+        csv_files = [
+            'correlation_metrics.csv',
+            'ks_analysis.csv',
+            'summary_statistics.csv'
+        ]
+        
+        for csv_file in csv_files:
+            csv_path = comprehensive_dir / "data" / csv_file
+            if csv_path.exists():
+                df = pd.read_csv(csv_path)
+                results[csv_file.replace('.csv', '')] = df
+        
+        # Generate report sections
+        report_sections = []
+        
+        # 1. Executive Summary
+        report_sections.append(self._generate_executive_summary(results))
+        
+        # 2. Feature Quality Analysis
+        report_sections.append(self._generate_feature_quality_analysis(results))
+        
+        # 3. Distribution Analysis
+        report_sections.append(self._generate_distribution_analysis(results))
+        
+        # 4. Missingness Analysis
+        report_sections.append(self._generate_missingness_analysis(results))
+        
+        # 5. Demographic Analysis
+        report_sections.append(self._generate_demographic_analysis(results))
+        
+        # 6. Recommendations
+        report_sections.append(self._generate_recommendations(results))
+        
+        # Combine sections
+        full_report = "\n\n".join(report_sections)
+        
+        # Save report
+        report_path = self.eval_dir / "comprehensive_evaluation_report.md"
+        with open(report_path, 'w') as f:
+            f.write(full_report)
+        
+        logger.info(f"Comprehensive report saved to: {report_path}")
+        
+        return str(report_path)
+    
+    def _generate_executive_summary(self, results: dict) -> str:
+        """Generate executive summary."""
+        summary = "# Comprehensive Evaluation Report\n\n"
+        summary += "## Executive Summary\n\n"
+        
+        if 'correlation_metrics' in results:
+            df = results['correlation_metrics']
+            good_eicu = df['eicu_good_quality'].sum()
+            good_mimic = df['mimic_good_quality'].sum()
+            total_features = len(df)
+            
+            summary += f"### Translation Quality Overview\n\n"
+            summary += f"- **Total Features Evaluated**: {total_features}\n"
+            summary += f"- **eICU Round-trip Quality**: {good_eicu}/{total_features} features ({good_eicu/total_features*100:.1f}%) with R² > 0.5 and correlation > 0.7\n"
+            summary += f"- **MIMIC Round-trip Quality**: {good_mimic}/{total_features} features ({good_mimic/total_features*100:.1f}%) with R² > 0.5 and correlation > 0.7\n\n"
+        
+        if 'ks_analysis' in results:
+            df = results['ks_analysis']
+            good_eicu = df['eicu_to_mimic_good'].sum()
+            good_mimic = df['mimic_to_eicu_good'].sum()
+            
+            summary += f"### Distribution Matching\n\n"
+            summary += f"- **eICU→MIMIC Translation**: {good_eicu}/{total_features} features ({good_eicu/total_features*100:.1f}%) with good distribution matching (KS < 0.3, p > 0.05)\n"
+            summary += f"- **MIMIC→eICU Translation**: {good_mimic}/{total_features} features ({good_mimic/total_features*100:.1f}%) with good distribution matching\n\n"
+        
+        # Overall assessment
+        if 'correlation_metrics' in results and 'ks_analysis' in results:
+            overall_quality = (good_eicu + good_mimic) / (2 * total_features)
+            if overall_quality > 0.8:
+                assessment = "**EXCELLENT** - Model shows strong translation quality"
+            elif overall_quality > 0.6:
+                assessment = "**GOOD** - Model shows acceptable translation quality"
+            elif overall_quality > 0.4:
+                assessment = "**FAIR** - Model shows moderate translation quality with room for improvement"
+            else:
+                assessment = "**POOR** - Model shows weak translation quality requiring significant improvements"
+            
+            summary += f"### Overall Assessment\n\n{assessment}\n\n"
+        
+        return summary
+    
+    def _generate_feature_quality_analysis(self, results: dict) -> str:
+        """Generate feature quality analysis."""
+        if 'correlation_metrics' not in results:
+            return "## Feature Quality Analysis\n\n*No correlation metrics available.*\n"
+        
+        df = results['correlation_metrics']
+        
+        analysis = "## Feature Quality Analysis\n\n"
+        
+        # Best performing features
+        best_eicu = df.nlargest(5, 'eicu_r2')[['feature_name', 'eicu_r2', 'eicu_correlation']]
+        best_mimic = df.nlargest(5, 'mimic_r2')[['feature_name', 'mimic_r2', 'mimic_correlation']]
+        
+        analysis += "### Best Performing Features (eICU Round-trip)\n\n"
+        analysis += "| Feature | R² | Correlation |\n"
+        analysis += "|---------|----|-------------|\n"
+        for _, row in best_eicu.iterrows():
+            analysis += f"| {row['feature_name']} | {row['eicu_r2']:.3f} | {row['eicu_correlation']:.3f} |\n"
+        
+        analysis += "\n### Best Performing Features (MIMIC Round-trip)\n\n"
+        analysis += "| Feature | R² | Correlation |\n"
+        analysis += "|---------|----|-------------|\n"
+        for _, row in best_mimic.iterrows():
+            analysis += f"| {row['feature_name']} | {row['mimic_r2']:.3f} | {row['mimic_correlation']:.3f} |\n"
+        
+        # Worst performing features
+        worst_eicu = df.nsmallest(5, 'eicu_r2')[['feature_name', 'eicu_r2', 'eicu_correlation']]
+        worst_mimic = df.nsmallest(5, 'mimic_r2')[['feature_name', 'mimic_r2', 'mimic_correlation']]
+        
+        analysis += "\n### Worst Performing Features (eICU Round-trip)\n\n"
+        analysis += "| Feature | R² | Correlation |\n"
+        analysis += "|---------|----|-------------|\n"
+        for _, row in worst_eicu.iterrows():
+            analysis += f"| {row['feature_name']} | {row['eicu_r2']:.3f} | {row['eicu_correlation']:.3f} |\n"
+        
+        analysis += "\n### Worst Performing Features (MIMIC Round-trip)\n\n"
+        analysis += "| Feature | R² | Correlation |\n"
+        analysis += "|---------|----|-------------|\n"
+        for _, row in worst_mimic.iterrows():
+            analysis += f"| {row['feature_name']} | {row['mimic_r2']:.3f} | {row['mimic_correlation']:.3f} |\n"
+        
+        return analysis
+    
+    def _generate_distribution_analysis(self, results: dict) -> str:
+        """Generate distribution analysis."""
+        if 'ks_analysis' not in results:
+            return "## Distribution Analysis\n\n*No KS analysis available.*\n"
+        
+        df = results['ks_analysis']
+        
+        analysis = "## Distribution Analysis\n\n"
+        
+        # Features with good distribution matching
+        good_eicu = df[df['eicu_to_mimic_good']]['feature_name'].tolist()
+        good_mimic = df[df['mimic_to_eicu_good']]['feature_name'].tolist()
+        
+        analysis += f"### Features with Good Distribution Matching\n\n"
+        analysis += f"- **eICU→MIMIC**: {len(good_eicu)} features\n"
+        if good_eicu:
+            analysis += f"  - {', '.join(good_eicu[:10])}"
+            if len(good_eicu) > 10:
+                analysis += f" (and {len(good_eicu) - 10} more)"
+            analysis += "\n"
+        
+        analysis += f"- **MIMIC→eICU**: {len(good_mimic)} features\n"
+        if good_mimic:
+            analysis += f"  - {', '.join(good_mimic[:10])}"
+            if len(good_mimic) > 10:
+                analysis += f" (and {len(good_mimic) - 10} more)"
+            analysis += "\n"
+        
+        # Features with poor distribution matching
+        poor_eicu = df[~df['eicu_to_mimic_good']]['feature_name'].tolist()
+        poor_mimic = df[~df['mimic_to_eicu_good']]['feature_name'].tolist()
+        
+        analysis += f"\n### Features with Poor Distribution Matching\n\n"
+        analysis += f"- **eICU→MIMIC**: {len(poor_eicu)} features\n"
+        if poor_eicu:
+            analysis += f"  - {', '.join(poor_eicu[:10])}"
+            if len(poor_eicu) > 10:
+                analysis += f" (and {len(poor_eicu) - 10} more)"
+            analysis += "\n"
+        
+        analysis += f"- **MIMIC→eICU**: {len(poor_mimic)} features\n"
+        if poor_mimic:
+            analysis += f"  - {', '.join(poor_mimic[:10])}"
+            if len(poor_mimic) > 10:
+                analysis += f" (and {len(poor_mimic) - 10} more)"
+            analysis += "\n"
+        
+        return analysis
+    
+    def _generate_missingness_analysis(self, results: dict) -> str:
+        """Generate missingness analysis."""
+        if not results or 'comprehensive' not in results or not results['comprehensive'] or 'missingness_analysis' not in results['comprehensive']:
+            return "## Missingness Analysis\n\n*No missingness analysis available.*\n"
+        
+        missingness = results['comprehensive']['missingness_analysis']
+        
+        analysis = "## Missingness Analysis\n\n"
+        analysis += "### Performance by Feature Count Buckets\n\n"
+        analysis += "| Bucket | eICU Samples | MIMIC Samples | eICU MSE | MIMIC MSE |\n"
+        analysis += "|--------|--------------|---------------|----------|----------|\n"
+        
+        for bucket, data in missingness.get('bucket_analysis', {}).items():
+            analysis += f"| {bucket} | {data['eicu_samples']} | {data['mimic_samples']} | {data['eicu_mse']:.4f} | {data['mimic_mse']:.4f} |\n"
+        
+        return analysis
+    
+    def _generate_demographic_analysis(self, results: dict) -> str:
+        """Generate demographic analysis."""
+        if not results or 'comprehensive' not in results or not results['comprehensive'] or 'demographic_analysis' not in results['comprehensive']:
+            return "## Demographic Analysis\n\n*No demographic analysis available.*\n"
+        
+        demo = results['comprehensive']['demographic_analysis']
+        
+        analysis = "## Demographic Analysis\n\n"
+        
+        if 'age_analysis' in demo:
+            analysis += "### Age-based Performance\n\n"
+            analysis += "| Age Group | Samples | MSE | Mean Age |\n"
+            analysis += "|-----------|---------|-----|----------|\n"
+            
+            for group, data in demo['age_analysis'].items():
+                analysis += f"| {group} | {data['samples']} | {data['mse']:.4f} | {data['age_mean']:.1f} |\n"
+        
+        if 'gender_analysis' in demo:
+            analysis += "\n### Gender-based Performance\n\n"
+            analysis += "| Gender | Samples | MSE |\n"
+            analysis += "|--------|---------|-----|\n"
+            
+            for gender, data in demo['gender_analysis'].items():
+                analysis += f"| {gender} | {data['samples']} | {data['mse']:.4f} |\n"
+        
+        return analysis
+    
+    def _generate_recommendations(self, results: dict) -> str:
+        """Generate recommendations based on results."""
+        recommendations = "## Recommendations\n\n"
+        
+        if 'correlation_metrics' in results:
+            df = results['correlation_metrics']
+            poor_eicu = df[~df['eicu_good_quality']]['feature_name'].tolist()
+            poor_mimic = df[~df['mimic_good_quality']]['feature_name'].tolist()
+            
+            if poor_eicu or poor_mimic:
+                recommendations += "### Feature-specific Improvements\n\n"
+                recommendations += "The following features show poor round-trip consistency and may need special attention:\n\n"
+                
+                if poor_eicu:
+                    recommendations += f"- **eICU round-trip issues**: {', '.join(poor_eicu[:5])}"
+                    if len(poor_eicu) > 5:
+                        recommendations += f" (and {len(poor_eicu) - 5} more)"
+                    recommendations += "\n"
+                
+                if poor_mimic:
+                    recommendations += f"- **MIMIC round-trip issues**: {', '.join(poor_mimic[:5])}"
+                    if len(poor_mimic) > 5:
+                        recommendations += f" (and {len(poor_mimic) - 5} more)"
+                    recommendations += "\n"
+                
+                recommendations += "\n**Suggested actions**:\n"
+                recommendations += "- Review feature preprocessing and normalization\n"
+                recommendations += "- Consider feature-specific loss weighting\n"
+                recommendations += "- Investigate domain-specific feature distributions\n\n"
+        
+        if 'ks_analysis' in results:
+            df = results['ks_analysis']
+            poor_dist = df[~df['eicu_to_mimic_good'] & ~df['mimic_to_eicu_good']]['feature_name'].tolist()
+            
+            if poor_dist:
+                recommendations += "### Distribution Matching Improvements\n\n"
+                recommendations += f"Features with poor distribution matching: {', '.join(poor_dist[:5])}"
+                if len(poor_dist) > 5:
+                    recommendations += f" (and {len(poor_dist) - 5} more)"
+                recommendations += "\n\n"
+                recommendations += "**Suggested actions**:\n"
+                recommendations += "- Increase MMD loss weight for problematic features\n"
+                recommendations += "- Consider per-feature MMD loss\n"
+                recommendations += "- Review feature scaling and normalization\n\n"
+        
+        recommendations += "### General Recommendations\n\n"
+        recommendations += "1. **Monitor training stability**: Ensure loss components are balanced\n"
+        recommendations += "2. **Validate on held-out data**: Test translation quality on unseen patients\n"
+        recommendations += "3. **Consider ensemble methods**: Combine multiple models for better robustness\n"
+        recommendations += "4. **Domain adaptation**: Fine-tune on target domain data if available\n"
+        recommendations += "5. **Clinical validation**: Validate translations with domain experts\n"
+        
+        return recommendations
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""
@@ -577,6 +935,10 @@ def main():
                        help='Path to trained model checkpoint')
     parser.add_argument('--output-dir', type=str, default=None,
                        help='Output directory for evaluation results')
+    parser.add_argument('--comprehensive', action='store_true',
+                       help='Run comprehensive patient-level evaluation')
+    parser.add_argument('--mimic-only', action='store_true',
+                       help='Evaluate only on MIMIC data (for same-domain validation)')
     
     args = parser.parse_args()
     
@@ -588,11 +950,29 @@ def main():
     if args.output_dir:
         config['paths']['output_dir'] = args.output_dir
     
+    # Set MIMIC-only mode if specified
+    config['mimic_only'] = args.mimic_only
+    
+    if args.mimic_only:
+        logger.info("MIMIC-ONLY MODE: Evaluation will use only MIMIC data")
+    
     # Create evaluator
     evaluator = Evaluator(config, args.model)
     
-    # Run evaluation
+    # Run standard evaluation
     summary = evaluator.run_full_evaluation()
+    
+    # Run comprehensive evaluation if requested
+    if args.comprehensive:
+        comprehensive_results = evaluator.run_comprehensive_evaluation()
+        if comprehensive_results:
+            logger.info("Comprehensive evaluation completed successfully!")
+            # Automatically generate report
+            report_path = evaluator.generate_comprehensive_report()
+            if report_path:
+                logger.info(f"Comprehensive report generated: {report_path}")
+        else:
+            logger.warning("Comprehensive evaluation failed or was skipped")
     
     logger.info("Evaluation completed successfully!")
 

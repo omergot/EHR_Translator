@@ -20,6 +20,8 @@ import logging
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
+from src.utils import audit_preprocessing
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -40,6 +42,10 @@ class Preprocessor:
         # Define feature columns based on POC features CSV structure
         self.feature_names = ['HR', 'RR', 'SpO2', 'Temp', 'MAP', 'WBC', 'Na', 'Creat']
         self.demographic_names = ['Age', 'Gender']
+        
+        # Get max missing percentage from config (default 0.5 = 50%)
+        self.max_missing_pct = config.get('preprocessing', {}).get('max_missing_pct', 0.5)
+        self.removed_features = []  # Track removed features
         
         # Clinical ranges for clipping (feature_name -> (min, max))
         self.clinical_ranges = {
@@ -76,13 +82,70 @@ class Preprocessor:
         
         return mimic_data, eicu_data
     
+    def filter_high_missingness_features(self, mimic_data, eicu_data):
+        """Remove features with high missingness from both datasets"""
+        logger.info(f"Filtering features with >{self.max_missing_pct*100:.0f}% missing values...")
+        
+        # Calculate missingness for each clinical feature across both datasets
+        feature_missingness = {}
+        
+        for feature in self.feature_names:
+            for suffix in ['_min', '_max', '_mean', '_std']:
+                col_name = f"{feature}{suffix}"
+                if col_name in mimic_data.columns and col_name in eicu_data.columns:
+                    # Calculate missingness in both datasets
+                    mimic_missing_pct = mimic_data[col_name].isna().sum() / len(mimic_data)
+                    eicu_missing_pct = eicu_data[col_name].isna().sum() / len(eicu_data)
+                    
+                    # Use the maximum missingness across both datasets
+                    max_missing_pct = max(mimic_missing_pct, eicu_missing_pct)
+                    feature_missingness[col_name] = {
+                        'mimic_pct': mimic_missing_pct,
+                        'eicu_pct': eicu_missing_pct,
+                        'max_pct': max_missing_pct
+                    }
+        
+        # Identify features to remove
+        features_to_remove = []
+        for col_name, stats in feature_missingness.items():
+            if stats['max_pct'] > self.max_missing_pct:
+                features_to_remove.append(col_name)
+                logger.info(f"  Removing {col_name}: MIMIC {stats['mimic_pct']*100:.1f}%, "
+                           f"eICU {stats['eicu_pct']*100:.1f}% missing")
+        
+        # Also remove the base feature name if ALL its suffixes are removed
+        features_to_remove_base = set()
+        for feature in self.feature_names:
+            feature_cols = [f"{feature}{s}" for s in ['_min', '_max', '_mean', '_std']]
+            if all(col in features_to_remove for col in feature_cols if col in mimic_data.columns):
+                features_to_remove_base.add(feature)
+                logger.info(f"  Removing entire feature: {feature} (all statistics have high missingness)")
+        
+        # Update feature_names to exclude removed features
+        self.feature_names = [f for f in self.feature_names if f not in features_to_remove_base]
+        self.removed_features = list(features_to_remove_base)
+        
+        # Drop columns from both datasets
+        if features_to_remove:
+            mimic_data = mimic_data.drop(columns=features_to_remove, errors='ignore')
+            eicu_data = eicu_data.drop(columns=features_to_remove, errors='ignore')
+            logger.info(f"Removed {len(features_to_remove)} feature columns due to high missingness")
+        else:
+            logger.info("No features removed - all have acceptable missingness levels")
+        
+        logger.info(f"Remaining features: {self.feature_names}")
+        logger.info(f"Final shapes - MIMIC: {mimic_data.shape}, eICU: {eicu_data.shape}")
+        
+        return mimic_data, eicu_data
+    
     def get_feature_columns(self, data):
         """Get feature columns from POC features data"""
         feature_cols = []
         
         # Add all clinical features with their suffixes
+        # IMPORTANT: Order must match the CSV column order (min, max, mean, std)
         for feature in self.feature_names:
-            for suffix in ['_mean', '_min', '_max', '_std']:
+            for suffix in ['_min', '_max', '_mean', '_std']:
                 col_name = f"{feature}{suffix}"
                 if col_name in data.columns:
                     feature_cols.append(col_name)
@@ -101,6 +164,10 @@ class Preprocessor:
         data_clipped = data.copy()
         
         for col in feature_cols:
+            # CRITICAL: Don't clip _std columns - they have different ranges than base features!
+            if '_std' in col:
+                continue
+            
             # Extract feature name from column (e.g., 'HR_mean' -> 'HR')
             if '_' in col:
                 feature_name = col.split('_')[0]
@@ -137,7 +204,7 @@ class Preprocessor:
         
         feature_analysis = {
             "degenerate": [],        # Features with q25 == q75 (most values identical)
-            "high_outliers": [],     # Features with >1% outliers beyond 99th percentile
+            "high_outliers": [],     # Features with outliers using IQR method (Q3 + 1.5*IQR)
             "high_zeros": [],        # Features with >10% zero values
             "missing_flags": [],     # Binary missing indicator flags
             "std_features": [],      # Standard deviation features (often problematic)
@@ -157,10 +224,14 @@ class Preprocessor:
                 if abs(q25 - q75) < 1e-8:  # Essentially the same
                     feature_analysis["degenerate"].append(col)
                 
-                # Check for high outlier percentage
-                q99 = values.quantile(0.99)
-                outliers = len(values[values > q99])
-                if outliers > len(values) * 0.01:  # >1% outliers
+                # Check for outliers using IQR method
+                q1 = values.quantile(0.25)
+                q3 = values.quantile(0.75)
+                iqr = q3 - q1
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                outliers = len(values[(values < lower_bound) | (values > upper_bound)])
+                if outliers > 0:  # Any outliers detected by IQR method
                     feature_analysis["high_outliers"].append(col)
                 
                 # Check for high zero percentage
@@ -181,9 +252,8 @@ class Preprocessor:
                     feature_analysis["demographic"].append(col)
         
         logger.info(f"Feature analysis complete:")
-        logger.info("Feature analysis complete:")
         logger.info(f"  Degenerate distributions: {len(feature_analysis['degenerate'])}")
-        logger.info(f"  High outliers: {len(feature_analysis['high_outliers'])}")
+        logger.info(f"  High outliers (IQR method): {len(feature_analysis['high_outliers'])}")
         logger.info(f"  High zeros: {len(feature_analysis['high_zeros'])}")
         logger.info(f"  Missing flags: {len(feature_analysis['missing_flags'])}")
         logger.info(f"  Std features: {len(feature_analysis['std_features'])}")
@@ -196,28 +266,48 @@ class Preprocessor:
         
         data_transformed = data.copy()
         
-        # Apply log1p transformation to degenerate and std features
+        # FIRST: Clip outliers for high-outlier features using IQR method (before transformation)
+        # Skip degenerate features (IQR=0) to avoid collapsing all values to a single point
+        for col in feature_analysis["high_outliers"]:
+            if col in data_transformed.columns and col not in feature_analysis["missing_flags"] and col != "Gender":
+                # Skip if feature is degenerate (already identified)
+                if col in feature_analysis["degenerate"]:
+                    logger.debug(f"Skipping IQR clipping for {col} (degenerate distribution)")
+                    continue
+                
+                values = data_transformed[col].dropna()
+                if len(values) > 0:
+                    q1 = values.quantile(0.25)
+                    q3 = values.quantile(0.75)
+                    iqr = q3 - q1
+                    
+                    # Additional check: skip if IQR is too small (would collapse values)
+                    if iqr < 0.01:
+                        logger.debug(f"Skipping IQR clipping for {col} (IQR={iqr:.4f} too small)")
+                        continue
+                    
+                    lower_bound = q1 - 1.5 * iqr
+                    upper_bound = q3 + 1.5 * iqr
+                    
+                    original_min = data_transformed[col].min()
+                    original_max = data_transformed[col].max()
+                    data_transformed[col] = data_transformed[col].clip(lower=lower_bound, upper=upper_bound)
+                    logger.debug(f"Clipped outliers for {col} using IQR: [{original_min:.3f}, {original_max:.3f}] -> [{lower_bound:.3f}, {upper_bound:.3f}]")
+        
+        # THEN: Apply log1p transformation to degenerate and std features
         log1p_features = set(feature_analysis["degenerate"] + feature_analysis["std_features"])
         
         for col in log1p_features:
-            if col in data_transformed.columns and col != "Gender":  # Skip Gender from transformations
-                # Ensure no negative values before log1p
-                min_val = data_transformed[col].min()
-                if min_val < 0:
+            if col in data_transformed.columns and col not in feature_analysis["missing_flags"] and col != "Gender":  # Skip Gender and missing flags from transformations
+                # Ensure no negative values before log1p (check only non-NaN values)
+                min_val = data_transformed[col].min(skipna=True)
+                if not pd.isna(min_val) and min_val < 0:
                     # Shift to make all values positive
                     data_transformed[col] = data_transformed[col] - min_val
                 
-                # Apply log1p transformation
+                # Apply log1p transformation (NaN stays NaN)
                 data_transformed[col] = np.log1p(data_transformed[col])
                 logger.debug(f"Applied log1p transform to {col}")
-        
-        # Clip outliers for high-outlier features
-        for col in feature_analysis["high_outliers"]:
-            if col in data_transformed.columns and col not in feature_analysis["missing_flags"] and col != "Gender":
-                q99 = data_transformed[col].quantile(0.99)
-                original_max = data_transformed[col].max()
-                data_transformed[col] = data_transformed[col].clip(upper=q99)
-                logger.debug(f"Clipped outliers for {col}: max {original_max:.3f} -> {q99:.3f}")
         
         return data_transformed
 
@@ -250,13 +340,10 @@ class Preprocessor:
         
         logger.info(f"Total features: {len(all_available_cols)}, Scalable: {len(scalable_cols)}, Missing flags: {len(missing_cols)}, Gender: excluded")
         
-        # Clip to clinical ranges (only for clinical and demographic features)
-        clinical_and_demo_cols = clinical_numeric_cols + demographic_cols
-        data = self.clip_to_clinical_ranges(data, clinical_and_demo_cols)
         
-        # Fill missing values with 0 for clinical numeric features only
-        for col in clinical_numeric_cols:
-            data[col] = data[col].fillna(0)
+        # IMPORTANT: DON'T fill missing values yet! 
+        # Filling with 0 before transformation breaks RobustScaler when most values are missing
+        # We'll fill AFTER transformations and scaling
         
         # Fill missing values for demographics with appropriate defaults
         for col in demographic_cols:
@@ -272,125 +359,192 @@ class Preprocessor:
             data[col] = data[col].astype(int)
         
         # Apply feature-specific transformations to scalable features
+        # NaN values will remain NaN through transformations (log1p(NaN) = NaN)
         data = self.apply_feature_specific_transforms(data, feature_analysis)
         
         return data, scalable_cols, missing_cols, feature_analysis
     
-    def fit_scalers(self, mimic_data, eicu_data):
-        """Fit adaptive scalers on training data"""
-        logger.info("Fitting adaptive scalers on training data...")
+    def fit_scalers(self, mimic_train_data, eicu_train_data):
+        """Fit unified scalers that preserve min/max/mean relationships within each feature"""
+        logger.info("Fitting unified scalers on training data...")
         
-        # Prepare features with advanced analysis
-        mimic_prepared, mimic_scalable, mimic_missing, mimic_analysis = self.prepare_features(mimic_data, "mimic")
-        eicu_prepared, eicu_scalable, eicu_missing, eicu_analysis = self.prepare_features(eicu_data, "eicu")
+        # Prepare features with advanced analysis for TRAINING data only
+        mimic_prepared, mimic_scalable, mimic_missing, mimic_analysis = self.prepare_features(mimic_train_data, "mimic")
+        eicu_prepared, eicu_scalable, eicu_missing, eicu_analysis = self.prepare_features(eicu_train_data, "eicu")
         
-        # Split data for scaler fitting
-        mimic_train, _ = train_test_split(
-            mimic_prepared, 
-            test_size=0.3, 
-            random_state=self.config["data"]["random_seed"]
-        )
-        eicu_train, _ = train_test_split(
-            eicu_prepared, 
-            test_size=0.3, 
-            random_state=self.config["data"]["random_seed"]
-        )
+        # Group features by base name (HR, RR, SpO2, etc.)
+        feature_groups = {}
+        for col in mimic_scalable:
+            # Extract base feature name (e.g., "HR" from "HR_min")
+            if '_' in col:
+                base_name = col.rsplit('_', 1)[0]  # Get everything before last underscore
+                suffix = col.rsplit('_', 1)[1]
+                if suffix in ['min', 'max', 'mean', 'std']:
+                    if base_name not in feature_groups:
+                        feature_groups[base_name] = {'min': [], 'max': [], 'mean': [], 'std': []}
+                    feature_groups[base_name][suffix].append(col)
         
-        # Determine which scaler to use based on feature analysis
-        # Use RobustScaler for problematic features, StandardScaler for well-behaved ones
-        problematic_features = set(
-            mimic_analysis["degenerate"] + mimic_analysis["std_features"] + 
-            mimic_analysis["high_outliers"] + eicu_analysis["degenerate"] + 
-            eicu_analysis["std_features"] + eicu_analysis["high_outliers"]
-        )
+        logger.info(f"Identified {len(feature_groups)} feature groups for unified scaling")
         
-        robust_features = [col for col in mimic_scalable if col in problematic_features]
-        standard_features = [col for col in mimic_scalable if col not in problematic_features]
+        # Store unified scaling parameters for each feature group
+        self.unified_scaling_params = {
+            'mimic': {},
+            'eicu': {}
+        }
         
-        logger.info(f"Using RobustScaler for {len(robust_features)} problematic features")
-        logger.info(f"Using StandardScaler for {len(standard_features)} well-behaved features")
+        # For each feature group, compute unified scaling parameters
+        for base_name, group_cols in feature_groups.items():
+            # Pool min, max, mean values together to compute unified parameters
+            mimic_values = []
+            eicu_values = []
+            
+            for suffix in ['min', 'max', 'mean']:
+                if group_cols[suffix]:
+                    col = group_cols[suffix][0]
+                    mimic_values.append(mimic_prepared[col].dropna().values)
+                    eicu_values.append(eicu_prepared[col].dropna().values)
+            
+            # Compute unified parameters from pooled data
+            if mimic_values:
+                mimic_pooled = np.concatenate(mimic_values)
+                mimic_mean = np.mean(mimic_pooled)
+                mimic_std = np.std(mimic_pooled)
+                mimic_median = np.median(mimic_pooled)
+                mimic_q25 = np.percentile(mimic_pooled, 25)
+                mimic_q75 = np.percentile(mimic_pooled, 75)
+                mimic_iqr = mimic_q75 - mimic_q25
+                
+                self.unified_scaling_params['mimic'][base_name] = {
+                    'mean': mimic_mean,
+                    'std': mimic_std if mimic_std > 0 else 1.0,
+                    'median': mimic_median,
+                    'iqr': mimic_iqr if mimic_iqr > 0 else 1.0
+                }
+            
+            if eicu_values:
+                eicu_pooled = np.concatenate(eicu_values)
+                eicu_mean = np.mean(eicu_pooled)
+                eicu_std = np.std(eicu_pooled)
+                eicu_median = np.median(eicu_pooled)
+                eicu_q25 = np.percentile(eicu_pooled, 25)
+                eicu_q75 = np.percentile(eicu_pooled, 75)
+                eicu_iqr = eicu_q75 - eicu_q25
+                
+                self.unified_scaling_params['eicu'][base_name] = {
+                    'mean': eicu_mean,
+                    'std': eicu_std if eicu_std > 0 else 1.0,
+                    'median': eicu_median,
+                    'iqr': eicu_iqr if eicu_iqr > 0 else 1.0
+                }
+            
+            # For _std columns, use separate RobustScaler
+            for suffix in ['std']:
+                if group_cols[suffix]:
+                    col = group_cols[suffix][0]
+                    mimic_std_vals = mimic_prepared[col].dropna().values
+                    eicu_std_vals = eicu_prepared[col].dropna().values
+                    
+                    if len(mimic_std_vals) > 0:
+                        mimic_std_median = np.median(mimic_std_vals)
+                        mimic_std_q25 = np.percentile(mimic_std_vals, 25)
+                        mimic_std_q75 = np.percentile(mimic_std_vals, 75)
+                        mimic_std_iqr = mimic_std_q75 - mimic_std_q25
+                        
+                        self.unified_scaling_params['mimic'][f"{base_name}_std"] = {
+                            'median': mimic_std_median,
+                            'iqr': mimic_std_iqr if mimic_std_iqr > 0 else 1.0
+                        }
+                    
+                    if len(eicu_std_vals) > 0:
+                        eicu_std_median = np.median(eicu_std_vals)
+                        eicu_std_q25 = np.percentile(eicu_std_vals, 25)
+                        eicu_std_q75 = np.percentile(eicu_std_vals, 75)
+                        eicu_std_iqr = eicu_std_q75 - eicu_std_q25
+                        
+                        self.unified_scaling_params['eicu'][f"{base_name}_std"] = {
+                            'median': eicu_std_median,
+                            'iqr': eicu_std_iqr if eicu_std_iqr > 0 else 1.0
+                        }
         
-        # Create scalers
-        self.mimic_robust_scaler = RobustScaler() if robust_features else None
-        self.mimic_standard_scaler = StandardScaler() if standard_features else None
-        self.eicu_robust_scaler = RobustScaler() if robust_features else None
-        self.eicu_standard_scaler = StandardScaler() if standard_features else None
+        # Store feature groups for later use
+        self.feature_groups = feature_groups
+        self.scalable_features = mimic_scalable
         
-        # Fit scalers
-        if self.mimic_robust_scaler and robust_features:
-            self.mimic_robust_scaler.fit(mimic_train[robust_features])
-        if self.mimic_standard_scaler and standard_features:
-            self.mimic_standard_scaler.fit(mimic_train[standard_features])
-        if self.eicu_robust_scaler and robust_features:
-            self.eicu_robust_scaler.fit(eicu_train[robust_features])
-        if self.eicu_standard_scaler and standard_features:
-            self.eicu_standard_scaler.fit(eicu_train[standard_features])
-        
-        # Store feature lists for later use
-        self.robust_features = robust_features
-        self.standard_features = standard_features
-        
-        # Save scalers and feature info
+        # Save scaling parameters
         scaler_info = {
-            "robust_features": robust_features,
-            "standard_features": standard_features,
+            "unified_scaling_params": self.unified_scaling_params,
+            "feature_groups": {k: {k2: v2 for k2, v2 in v.items()} for k, v in feature_groups.items()},
             "mimic_analysis": mimic_analysis,
             "eicu_analysis": eicu_analysis
         }
         
-        with open(self.scalers_dir / "mimic_robust_scaler.pkl", "wb") as f:
-            pickle.dump(self.mimic_robust_scaler, f)
-        with open(self.scalers_dir / "mimic_standard_scaler.pkl", "wb") as f:
-            pickle.dump(self.mimic_standard_scaler, f)
-        with open(self.scalers_dir / "eicu_robust_scaler.pkl", "wb") as f:
-            pickle.dump(self.eicu_robust_scaler, f)
-        with open(self.scalers_dir / "eicu_standard_scaler.pkl", "wb") as f:
-            pickle.dump(self.eicu_standard_scaler, f)
+        with open(self.scalers_dir / "unified_scaling_params.pkl", "wb") as f:
+            pickle.dump(self.unified_scaling_params, f)
+        with open(self.scalers_dir / "feature_groups.pkl", "wb") as f:
+            pickle.dump(feature_groups, f)
         with open(self.scalers_dir / "scaler_info.json", "w") as f:
-            # Convert sets to lists for JSON serialization
+            # Convert for JSON serialization
             scaler_info_json = {
-                "robust_features": list(scaler_info["robust_features"]),
-                "standard_features": list(scaler_info["standard_features"])
+                "feature_groups": {k: {k2: v2 for k2, v2 in v.items()} for k, v in feature_groups.items()},
+                "base_features": list(feature_groups.keys())
             }
             json.dump(scaler_info_json, f, indent=2)
         
-        logger.info("Adaptive scalers fitted and saved")
+        logger.info("Unified scalers fitted and saved")
+        logger.info(f"Feature groups: {list(feature_groups.keys())}")
     def transform_data(self, data, domain="mimic"):
-        """Transform data using adaptive fitted scalers"""
-        logger.info(f"Transforming {domain} data with adaptive scaling...")
+        """Transform data using unified scaling that preserves min/max/mean relationships"""
+        logger.info(f"Transforming {domain} data with unified scaling...")
         
         # Prepare features with advanced analysis
         data_prepared, scalable_cols, missing_cols, feature_analysis = self.prepare_features(data, domain)
         
-        # Apply appropriate scalers
+        # Apply unified scaling
         data_scaled = data_prepared.copy()
         
-        # Use robust scalers for problematic features
-        robust_scaler = self.mimic_robust_scaler if domain == "mimic" else self.eicu_robust_scaler
-        standard_scaler = self.mimic_standard_scaler if domain == "mimic" else self.eicu_standard_scaler
+        # Get scaling parameters for this domain
+        scaling_params = self.unified_scaling_params[domain]
         
-        # Apply robust scaling to problematic features
-        if robust_scaler and self.robust_features:
-            robust_cols_available = [col for col in self.robust_features if col in data_scaled.columns]
-            if robust_cols_available:
-                data_scaled[robust_cols_available] = robust_scaler.transform(data_scaled[robust_cols_available])
-                logger.debug(f"Applied robust scaling to {len(robust_cols_available)} features")
+        # Apply unified scaling to each feature group
+        for base_name, group_cols in self.feature_groups.items():
+            if base_name not in scaling_params:
+                continue
+            
+            params = scaling_params[base_name]
+            
+            # Scale min, max, mean with unified parameters (StandardScaler-like)
+            for suffix in ['min', 'max', 'mean']:
+                if group_cols[suffix]:
+                    col = group_cols[suffix][0]
+                    if col in data_scaled.columns:
+                        # Apply: (x - mean) / std
+                        data_scaled[col] = (data_scaled[col] - params['mean']) / params['std']
+            
+            # Scale std columns with RobustScaler-like approach
+            if group_cols['std']:
+                col = group_cols['std'][0]
+                std_key = f"{base_name}_std"
+                if col in data_scaled.columns and std_key in scaling_params:
+                    std_params = scaling_params[std_key]
+                    # Apply: (x - median) / IQR
+                    data_scaled[col] = (data_scaled[col] - std_params['median']) / std_params['iqr']
         
-        # Apply standard scaling to well-behaved features
-        if standard_scaler and self.standard_features:
-            standard_cols_available = [col for col in self.standard_features if col in data_scaled.columns]
-            if standard_cols_available:
-                data_scaled[standard_cols_available] = standard_scaler.transform(data_scaled[standard_cols_available])
-                logger.debug(f"Applied standard scaling to {len(standard_cols_available)} features")
+        logger.info(f"Applied unified scaling to {len(self.feature_groups)} feature groups")
         
         # Missing flags remain unscaled (binary indicators)
         logger.info(f"Kept {len(missing_cols)} missing flags unscaled as binary indicators")
         
-        return data_scaled, scalable_cols, missing_cols
-        data_scaled = data_prepared.copy()
-        data_scaled[numeric_cols] = scaler.transform(data_prepared[numeric_cols])
+        # NOW fill missing values with 0 for clinical features (after scaling)
+        # This prevents breaking the scaler when most values are missing
+        clinical_feature_cols = [col for col in data_scaled.columns 
+                                 if ('_min' in col or '_max' in col or '_mean' in col or '_std' in col)
+                                 and not col.endswith('_missing')]
+        for col in clinical_feature_cols:
+            data_scaled[col] = data_scaled[col].fillna(0)
         
-        return data_scaled, numeric_cols, missing_cols
+        logger.info(f"Filled remaining NaN values with 0 after scaling")
+        
+        return data_scaled, scalable_cols, missing_cols
     
     def split_data(self, data, domain='mimic'):
         """Split data into train/val/test sets"""
@@ -473,7 +627,8 @@ class Preprocessor:
         
         # Add numeric feature columns
         for feature in self.feature_names:
-            for suffix in ['_mean', '_min', '_max', '_std']:
+            # IMPORTANT: Order must match the CSV column order (min, max, mean, std)
+            for suffix in ['_min', '_max', '_mean', '_std']:
                 col_name = f"{feature}{suffix}"
                 if col_name in mimic_data.columns:
                     feature_spec['numeric_features'].append(col_name)
@@ -485,38 +640,59 @@ class Preprocessor:
         # Add demographic features to numeric features (they don't have missing flags)
         feature_spec['numeric_features'].extend(self.demographic_names)
         
+        # Add information about removed features
+        feature_spec['removed_features'] = self.removed_features
+        feature_spec['max_missing_pct_threshold'] = self.max_missing_pct
+        
         # Save feature spec
         spec_path = self.output_dir / "feature_spec.json"
         with open(spec_path, 'w') as f:
             json.dump(feature_spec, f, indent=2)
         
         logger.info(f"Feature specification saved to {spec_path}")
+        if self.removed_features:
+            logger.info(f"Removed features due to high missingness: {self.removed_features}")
         return feature_spec
     
     def preprocess(self):
-        """Main preprocessing pipeline"""
+        """Main preprocessing pipeline - FIXED for no data leakage"""
         logger.info("Starting preprocessing pipeline...")
         
         # Load raw data
         mimic_data, eicu_data = self.load_raw_data()
         
-        # Fit scalers
-        self.fit_scalers(mimic_data, eicu_data)
+        # STEP 0: Filter out features with high missingness
+        mimic_data, eicu_data = self.filter_high_missingness_features(mimic_data, eicu_data)
         
-        # Transform data
-        # Transform data with adaptive scaling
-        mimic_transformed, mimic_scalable, mimic_missing = self.transform_data(mimic_data, "mimic")
-        eicu_transformed, eicu_scalable, eicu_missing = self.transform_data(eicu_data, "eicu")
+        # STEP 1: Split data FIRST (before any preprocessing)
+        logger.info("Splitting data into train/test sets...")
+        mimic_splits = self.split_data(mimic_data, 'mimic')
+        eicu_splits = self.split_data(eicu_data, 'eicu')
         
-        # Split data
-        mimic_splits = self.split_data(mimic_transformed, 'mimic')
-        eicu_splits = self.split_data(eicu_transformed, 'eicu')
+        mimic_train_raw, mimic_test_raw = mimic_splits
+        eicu_train_raw, eicu_test_raw = eicu_splits
+        
+        # STEP 2: Fit scalers ONLY on training data
+        self.fit_scalers(mimic_train_raw, eicu_train_raw)
+        
+        # STEP 3: Transform both train and test data using fitted scalers
+        logger.info("Transforming training data...")
+        mimic_train_transformed, mimic_scalable, mimic_missing = self.transform_data(mimic_train_raw, "mimic")
+        eicu_train_transformed, eicu_scalable, eicu_missing = self.transform_data(eicu_train_raw, "eicu")
+        
+        logger.info("Transforming test data...")
+        mimic_test_transformed, _, _ = self.transform_data(mimic_test_raw, "mimic")
+        eicu_test_transformed, _, _ = self.transform_data(eicu_test_raw, "eicu")
+        
+        # STEP 4: Create final splits (already split, just reorganize)
+        mimic_final_splits = (mimic_train_transformed, mimic_test_transformed)
+        eicu_final_splits = (eicu_train_transformed, eicu_test_transformed)
         
         # Save splits
-        self.save_splits(mimic_splits, eicu_splits)
+        self.save_splits(mimic_final_splits, eicu_final_splits)
         
         # Create feature specification
-        feature_spec = self.create_feature_spec(mimic_data, eicu_data)
+        feature_spec = self.create_feature_spec(mimic_train_transformed, eicu_train_transformed)
         
         logger.info("Preprocessing completed successfully!")
         return feature_spec
@@ -526,6 +702,7 @@ def main():
     parser = argparse.ArgumentParser(description='Preprocess MIMIC and eICU data')
     parser.add_argument('--config', type=str, default='conf/config.yml', help='Path to config file')
     parser.add_argument('--fit', action='store_true', help='Fit scalers and preprocess data')
+    parser.add_argument('--audit', action='store_true', help='Run preprocessing audit to identify problematic features')
     
     args = parser.parse_args()
     
@@ -541,8 +718,23 @@ def main():
         # Run preprocessing
         feature_spec = preprocessor.preprocess()
         logger.info("Preprocessing completed!")
+        
+        # Run audit if requested
+        if args.audit:
+            logger.info("Running preprocessing audit...")
+            audit_results = audit_preprocessing(config['paths']['output_dir'], feature_spec)
+            if audit_results:
+                logger.info("Preprocessing audit completed - check preprocessing_audit_results.json for details")
+    elif args.audit:
+        # Run audit only (on existing preprocessed data)
+        logger.info("Running preprocessing audit on existing data...")
+        audit_results = audit_preprocessing(config['paths']['output_dir'])
+        if audit_results:
+            logger.info("Preprocessing audit completed - check preprocessing_audit_results.json for details")
+        else:
+            logger.error("Audit failed - check that preprocessed data exists")
     else:
-        logger.info("Use --fit flag to run preprocessing")
+        logger.info("Use --fit flag to run preprocessing or --audit flag to run audit on existing data")
 
 if __name__ == "__main__":
     main()

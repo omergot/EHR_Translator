@@ -25,12 +25,15 @@ logging:
   log_every_n_steps: 50
   project: poc_translator_optimized
   use_wandb: false
+mimic_only: true
 paths:
   analyze_features_path: /bigdata/omerg/RatchetEHR/analyze_features.py
   eicu_poc_csv: /bigdata/omerg/Thesis/EHR_Translator/poc_translator/eicu_poc_features.csv
   mimic_poc_csv: /bigdata/omerg/Thesis/EHR_Translator/poc_translator/mimic_poc_features.csv
   output_dir: /bigdata/omerg/Thesis/EHR_Translator/poc_translator
   tmp_sql_dir: /bigdata/omerg/Thesis/EHR_Translator/poc_translator/sql
+preprocessing:
+  max_missing_pct: 0.5
 training:
   batch_size: 128
   cov_weight: 0.01

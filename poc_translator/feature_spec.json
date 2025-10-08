@@ -78,8 +78,8 @@
     "Gender"
   ],
   "removed_features": [
-    "MAP",
-    "Temp"
+    "Temp",
+    "MAP"
   ],
   "max_missing_pct_threshold": 0.5
 }

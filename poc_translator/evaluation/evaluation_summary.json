@@ -1,39 +1,39 @@
 {
   "round_trip": {
-    "eicu_mean_mse": 136.2565460205078,
-    "eicu_mean_mae": 2.566338062286377,
-    "mimic_mean_mse": 134.9560089111328,
-    "mimic_mean_mae": 2.5825517177581787,
-    "overall_mean_mse": 135.6062774658203,
-    "overall_mean_mae": 2.5744447708129883
+    "eicu_mean_mse": 0.1538114845752716,
+    "eicu_mean_mae": 0.24768683314323425,
+    "mimic_mean_mse": 0.10331527888774872,
+    "mimic_mean_mae": 0.20827744901180267,
+    "overall_mean_mse": 0.12856337428092957,
+    "overall_mean_mae": 0.22798213362693787
   },
   "distributional": {
-    "mmd_eicu_to_mimic": 0.7021313905715942,
-    "mmd_mimic_to_eicu": 0.6982133388519287,
-    "mean_ks_statistic": 0.6201197246827757,
+    "mmd_eicu_to_mimic": 0.010654568672180176,
+    "mmd_mimic_to_eicu": 0.024721741676330566,
+    "mean_ks_statistic": 0.2082748603971734,
     "significant_features_pct": 100.0
   },
   "downstream": {
     "mimic_test": {
-      "auc": 0.5105708819387641,
-      "average_precision": 0.20015933088371335,
-      "brier_score": 0.16002013446071545
+      "auc": 0.49973077560564094,
+      "average_precision": 0.19913182961352965,
+      "brier_score": 0.1599839768601834
     },
     "eicu_test_raw": {
-      "auc": 0.49925962968924176,
-      "average_precision": 0.20196148391317068,
-      "brier_score": 0.16202624846457822
+      "auc": 0.49172834630626255,
+      "average_precision": 0.19529559030629123,
+      "brier_score": 0.16203934255070826
     },
     "eicu_test_translated": {
-      "auc": 0.5040170555124696,
-      "average_precision": 0.20216139908275502,
-      "brier_score": 0.16641149397954302
+      "auc": 0.48959828101614034,
+      "average_precision": 0.19433879497522671,
+      "brier_score": 0.1609464040587434
     },
     "improvement": {
-      "auc_improvement": 0.004757425823227801,
-      "ap_improvement": 0.00019991516958434152,
-      "brier_improvement": -0.004385245514964803
+      "auc_improvement": -0.0021300652901222183,
+      "ap_improvement": -0.0009567953310645194,
+      "brier_improvement": 0.0010929384919648732
     }
   },
-  "evaluation_timestamp": "2025-10-04T16:29:44.942749"
+  "evaluation_timestamp": "2025-10-06T15:20:32.584727"
 }

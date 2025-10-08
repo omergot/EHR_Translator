@@ -673,6 +673,26 @@ def main():
             # Standardize column names
             mimic_data = standardize_column_names(mimic_data, "MIMIC")
             
+            # Validate min/mean/max monotonicity on RAW MIMIC and drop bad rows
+            try:
+                required_cols = [
+                    (f"{base}", f"{base}_min", f"{base}_mean", f"{base}_max")
+                    for base in ["HR","RR","SpO2","Temp","MAP","WBC","Na","Creat"]
+                ]
+                bad_mask = None
+                for _, mn, md, mx in required_cols:
+                    if mn in mimic_data.columns and md in mimic_data.columns and mx in mimic_data.columns:
+                        vals = mimic_data[[mn, md, mx]].values
+                        v = (vals[:,1] < vals[:,0]) | (vals[:,1] > vals[:,2]) | (vals[:,0] > vals[:,2])
+                        bad_mask = v if bad_mask is None else (bad_mask | v)
+                if bad_mask is not None and bad_mask.any():
+                    num_bad = int(bad_mask.sum())
+                    logger.warning(f"[RAW-MIMIC] Dropping {num_bad} rows with min/mean/max monotonicity violations before saving")
+                    mimic_data = mimic_data.loc[~bad_mask].reset_index(drop=True)
+            except Exception as ve:
+                logger.error(f"Validation failed on RAW MIMIC data: {ve}")
+                raise
+
             # Save MIMIC data
             mimic_output_path = os.path.join(config['paths']['output_dir'], "mimic_poc_features.csv")
             mimic_data.to_csv(mimic_output_path, index=False)

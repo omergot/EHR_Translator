@@ -54,7 +54,7 @@ class FeatureDataset(Dataset):
                                     or col in ['Age', 'Gender']]
             self.missing_features = [col for col in data.columns if '_missing' in col]
         
-        # Convert to tensors
+        # Convert to tensors (outliers already clipped in preprocessing)
         self.numeric_tensor = torch.FloatTensor(data[self.numeric_features].values)
         self.missing_tensor = torch.FloatTensor(data[self.missing_features].values)
         

@@ -5,8 +5,8 @@
 ### Translation Quality Overview
 
 - **Total Features Evaluated**: 32
-- **eICU Round-trip Quality**: 0/32 features (0.0%) with R² > 0.5 and correlation > 0.7
-- **MIMIC Round-trip Quality**: 0/32 features (0.0%) with R² > 0.5 and correlation > 0.7
+- **eICU Round-trip Quality**: 16/32 features (50.0%) with R² > 0.5 and correlation > 0.7
+- **MIMIC Round-trip Quality**: 17/32 features (53.1%) with R² > 0.5 and correlation > 0.7
 
 ### Distribution Matching
 
@@ -25,41 +25,41 @@
 
 | Feature | R² | Correlation |
 |---------|----|-------------|
-| Creat_mean | -0.004 | 0.005 |
-| Na_mean | -0.008 | 0.000 |
-| HR_std | -0.009 | -0.006 |
-| Creat_min | -0.009 | 0.017 |
-| SpO2_std | -0.009 | 0.004 |
+| Creat_mean | 0.939 | 0.972 |
+| Creat_max | 0.932 | 0.972 |
+| WBC_mean | 0.930 | 1.000 |
+| Creat_min | 0.930 | 0.965 |
+| WBC_max | 0.928 | 0.567 |
 
 ### Best Performing Features (MIMIC Round-trip)
 
 | Feature | R² | Correlation |
 |---------|----|-------------|
-| Creat_mean | -0.006 | -0.007 |
-| HR_std | -0.008 | -0.003 |
-| HR_mean | -0.009 | 0.009 |
-| SpO2_std | -0.010 | 0.009 |
-| Creat_min | -0.011 | 0.001 |
+| Creat_max | 0.956 | 0.980 |
+| Creat_mean | 0.954 | 0.917 |
+| WBC_mean | 0.942 | 0.930 |
+| Creat_min | 0.938 | 0.781 |
+| WBC_max | 0.933 | 0.976 |
 
 ### Worst Performing Features (eICU Round-trip)
 
 | Feature | R² | Correlation |
 |---------|----|-------------|
-| SpO2_max | -42.859 | -0.004 |
-| SpO2_mean | -42.179 | 0.004 |
-| Age | -14.740 | 0.002 |
-| SpO2_min | -7.212 | -0.003 |
-| RR_min | -3.096 | 0.001 |
+| SpO2_max | -1.926 | -0.027 |
+| WBC_missing | -0.133 | 0.320 |
+| RR_missing | -0.101 | 0.206 |
+| Creat_missing | -0.093 | 0.364 |
+| Na_missing | -0.093 | 0.379 |
 
 ### Worst Performing Features (MIMIC Round-trip)
 
 | Feature | R² | Correlation |
 |---------|----|-------------|
-| SpO2_max | -777.909 | 0.013 |
-| SpO2_mean | -210.123 | -0.010 |
-| SpO2_min | -45.437 | 0.000 |
-| Age | -14.798 | 0.004 |
-| RR_min | -5.728 | -0.007 |
+| SpO2_max | -0.316 | -0.004 |
+| Gender | -0.062 | 0.155 |
+| WBC_missing | -0.019 | 0.153 |
+| Na_missing | -0.013 | 0.179 |
+| Creat_missing | -0.013 | 0.179 |
 
 
 ## Distribution Analysis
@@ -83,11 +83,11 @@
 
 | Bucket | eICU Samples | MIMIC Samples | eICU MSE | MIMIC MSE |
 |--------|--------------|---------------|----------|----------|
-| very_low | 112 | 77 | 136.9795 | 140.2138 |
-| low | 456 | 84 | 130.4212 | 127.2247 |
-| medium | 1835 | 34 | 133.0725 | 113.5731 |
-| high | 3003 | 97 | 134.1473 | 130.9529 |
-| very_high | 21117 | 11255 | 136.7078 | 135.0079 |
+| very_low | 129 | 89 | 0.2895 | 0.1693 |
+| low | 462 | 69 | 0.2083 | 0.1649 |
+| medium | 2078 | 30 | 0.1656 | 0.1236 |
+| high | 4706 | 347 | 0.1298 | 0.0834 |
+| very_high | 19000 | 10927 | 0.1392 | 0.0895 |
 
 
 ## Demographic Analysis
@@ -96,18 +96,18 @@
 
 | Age Group | Samples | MSE | Mean Age |
 |-----------|---------|-----|----------|
-| young | 1955 | 25.6577 | 27.9 |
-| adult | 2914 | 60.0372 | 43.5 |
-| middle | 7108 | 102.5288 | 57.0 |
-| senior | 8578 | 155.4026 | 70.3 |
-| elderly | 5968 | 221.4785 | 84.1 |
+| young | 1466 | 0.2203 | -1.8 |
+| adult | 2773 | 0.1653 | -1.1 |
+| middle | 6487 | 0.1369 | -0.5 |
+| senior | 9053 | 0.1274 | 0.1 |
+| elderly | 6596 | 0.1380 | 0.8 |
 
 ### Gender-based Performance
 
 | Gender | Samples | MSE |
 |--------|---------|-----|
-| gender_0 | 12311 | 139.6974 |
-| gender_1 | 14212 | 132.9082 |
+| gender_0 | 12081 | 0.1463 |
+| gender_1 | 14294 | 0.1375 |
 
 
 ## Recommendations
@@ -116,8 +116,8 @@
 
 The following features show poor round-trip consistency and may need special attention:
 
-- **eICU round-trip issues**: HR_min, HR_max, HR_mean, HR_std, RR_min (and 27 more)
-- **MIMIC round-trip issues**: HR_min, HR_max, HR_mean, HR_std, RR_min (and 27 more)
+- **eICU round-trip issues**: HR_min, RR_min, RR_mean, SpO2_max, SpO2_mean (and 11 more)
+- **MIMIC round-trip issues**: HR_min, RR_min, RR_mean, SpO2_max, SpO2_mean (and 10 more)
 
 **Suggested actions**:
 - Review feature preprocessing and normalization

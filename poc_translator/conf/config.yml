@@ -23,13 +23,14 @@ paths:
 training:
   epochs: 10   # VALIDATION: Short test run to verify fixes
   batch_size: 128  # REVERTED: Back to stable batch size
-  lr: 1e-6  # EMERGENCY: Back to ultra-conservative LR for stability
-  latent_dim: 64
+  
+  lr: 1e-3  # Increased LR for effective optimization after fixes
+  latent_dim: 256
   
   # CRITICAL: Much more conservative weights for numerical stability
-  kl_weight: 1e-3  # Keep low for stability
+  kl_weight: 1e-5  # Keep low for stability
   cycle_weight: 0.3  # REBALANCED: Increased for better cycle consistency
-  rec_weight: 1.0   # PRIMARY: Focus on reconstruction first
+  rec_weight: 5.0   # PRIMARY: Focus on reconstruction first
   mmd_weight: 0.5   # REBALANCED: Increased for proper distribution matching
   
   # EMERGENCY: Disable heteroscedastic again - still causing instability

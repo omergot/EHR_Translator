@@ -44,12 +44,12 @@ training:
   feature_recon_weight: 0.2
   gradient_clip_val: 1.0
   kl_warmup_epochs: 20
-  kl_weight: 1e-3
-  latent_dim: 64
-  lr: 1e-6
+  kl_weight: 1e-5
+  latent_dim: 256
+  lr: 1e-3
   mmd_weight: 0.5
   per_feature_mmd_weight: 0.2
-  rec_weight: 1.0
+  rec_weight: 5.0
   use_heteroscedastic: false
   use_safe_mode: false
   wasserstein_weight: 0.1

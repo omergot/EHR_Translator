@@ -91,20 +91,25 @@ class Encoder(nn.Module):
         return z
 
 class Decoder(nn.Module):
-    """IMPROVED: Domain-specific decoder with heteroscedastic output"""
+    """IMPROVED: Domain-specific decoder with proper binary feature handling"""
     
-    def __init__(self, latent_dim: int, hidden_dims: list, output_dim: int, use_heteroscedastic: bool = True):
+    def __init__(self, latent_dim: int, hidden_dims: list, output_dim: int, use_heteroscedastic: bool = True, 
+                 numeric_dim: int = None, missing_dim: int = None):
         """
-        Initialize decoder with optional heteroscedastic outputs
+        Initialize decoder with optional heteroscedastic outputs and proper binary handling
         
         Args:
             latent_dim: Latent space dimension
             hidden_dims: List of hidden layer dimensions
             output_dim: Output feature dimension
             use_heteroscedastic: If True, predict both mean and log-variance per feature
+            numeric_dim: Number of numeric features (for identifying binary features)
+            missing_dim: Number of missing indicator features (binary)
         """
         super().__init__()
         self.use_heteroscedastic = use_heteroscedastic
+        self.numeric_dim = numeric_dim if numeric_dim is not None else output_dim
+        self.missing_dim = missing_dim if missing_dim is not None else 0
         
         layers = []
         prev_dim = latent_dim
@@ -129,18 +134,18 @@ class Decoder(nn.Module):
         else:
             # Standard single output
             self.fc_out = nn.Linear(prev_dim, output_dim)
-            logger.info(f"Created standard decoder: {latent_dim} -> {hidden_dims} -> {output_dim}")
+            logger.info(f"Created standard decoder: {latent_dim} -> {hidden_dims} -> {output_dim}, numeric={numeric_dim}, binary={missing_dim}")
     
     def forward(self, z: torch.Tensor) -> torch.Tensor or tuple:
         """
-        Forward pass
+        Forward pass with proper sigmoid activation for binary features
         
         Args:
             z: Latent vector [batch_size, latent_dim]
             
         Returns:
             If heteroscedastic: (mu, logvar) tuple
-            If standard: x_recon tensor
+            If standard: x_recon tensor with sigmoid applied to binary features
         """
         features = self.feature_generator(z)
         
@@ -154,6 +159,20 @@ class Decoder(nn.Module):
             return mu, logvar
         else:
             x_recon = self.fc_out(features)
+            
+            # Apply sigmoid to binary features (missing indicators + Gender is at numeric_dim-1)
+            if self.missing_dim > 0:
+                # Missing indicators are at the end: [numeric_features | missing_indicators]
+                binary_start = self.numeric_dim
+                binary_end = self.numeric_dim + self.missing_dim
+                
+                # Also apply sigmoid to Gender (assumed to be at numeric_dim - 1)
+                # Gender sigmoid
+                x_recon[:, self.numeric_dim - 1] = torch.sigmoid(x_recon[:, self.numeric_dim - 1])
+                
+                # Missing flags sigmoid
+                x_recon[:, binary_start:binary_end] = torch.sigmoid(x_recon[:, binary_start:binary_end])
+            
             return x_recon
 
 class CycleVAE(pl.LightningModule):
@@ -176,11 +195,7 @@ class CycleVAE(pl.LightningModule):
         self.missing_dim = len(feature_spec['missing_features'])
         self.input_dim = self.numeric_dim + self.missing_dim
         
-        # IMPROVEMENT 1: Per-dataset normalization parameters (FIXED: use correct input_dim)
-        self.register_buffer('mimic_feature_mean', torch.zeros(self.input_dim))
-        self.register_buffer('mimic_feature_std', torch.ones(self.input_dim))
-        self.register_buffer('eicu_feature_mean', torch.zeros(self.input_dim))
-        self.register_buffer('eicu_feature_std', torch.ones(self.input_dim))
+        # Removed model-side per-dataset normalization – rely on preprocessing only
         self.normalization_initialized = False
         
         # Training parameters (ensure they are proper numeric types)
@@ -232,8 +247,10 @@ class CycleVAE(pl.LightningModule):
         
         # Initialize networks
         self.encoder = Encoder(self.input_dim, hidden_dims, self.latent_dim)
-        self.decoder_mimic = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic)
-        self.decoder_eicu = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic)
+        self.decoder_mimic = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic,
+                                      numeric_dim=self.numeric_dim, missing_dim=self.missing_dim)
+        self.decoder_eicu = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic,
+                                     numeric_dim=self.numeric_dim, missing_dim=self.missing_dim)
         
         # IMPROVEMENT 4: Feature reconstruction head to prevent mode collapse
         self.feature_reconstruction_head = nn.Sequential(
@@ -290,45 +307,12 @@ class CycleVAE(pl.LightningModule):
                 nn.init.constant_(module.bias, 0.0)
      
     def initialize_normalization(self, x_mimic: torch.Tensor, x_eicu: torch.Tensor):
-        """IMPROVEMENT 1: Initialize per-dataset normalization parameters"""
-        if not self.normalization_initialized and x_mimic.size(0) > 1 and x_eicu.size(0) > 1:
-            with torch.no_grad():
-                # Compute dataset-specific statistics
-                self.mimic_feature_mean = torch.mean(x_mimic, dim=0)
-                self.mimic_feature_std = torch.std(x_mimic, dim=0) + 1e-8
-                self.eicu_feature_mean = torch.mean(x_eicu, dim=0) 
-                self.eicu_feature_std = torch.std(x_eicu, dim=0) + 1e-8
-                
-                self.normalization_initialized = True
-                logger.info("Initialized per-dataset normalization parameters")
-                logger.info(f"MIMIC stats - mean: [{self.mimic_feature_mean[0]:.3f}...], std: [{self.mimic_feature_std[0]:.3f}...]")
-                logger.info(f"eICU stats - mean: [{self.eicu_feature_mean[0]:.3f}...], std: [{self.eicu_feature_std[0]:.3f}...]")
+        """No-op: model-side normalization removed; kept for backward compatibility."""
+        return
     
     def normalize_features(self, x: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
-        """IMPROVEMENT 1: Apply per-dataset normalization with safety constraints"""
-        if not self.normalization_initialized:
-            return x  # Skip if not initialized yet
-        
-        mimic_mask = (domain == 1)
-        eicu_mask = (domain == 0)
-        
-        x_normalized = torch.zeros_like(x)
-        
-        if mimic_mask.any():
-            x_normalized[mimic_mask] = (x[mimic_mask] - self.mimic_feature_mean) / self.mimic_feature_std
-        
-        if eicu_mask.any():
-            x_normalized[eicu_mask] = (x[eicu_mask] - self.eicu_feature_mean) / self.eicu_feature_std
-        
-        # CRITICAL FIX: Constrain normalized values to prevent extreme values
-        x_normalized = torch.clamp(x_normalized, min=-10, max=10)
-        
-        # Additional safety check
-        if torch.isnan(x_normalized).any() or torch.isinf(x_normalized).any():
-            logger.warning("NaN/Inf detected in normalized features - using zeros")
-            x_normalized = torch.zeros_like(x)
-            
-        return x_normalized
+        """No-op: rely on preprocessing normalization only."""
+        return x
     
     def denormalize_features(self, x_norm: torch.Tensor, target_domain: int) -> torch.Tensor:
         """IMPROVEMENT 1: Denormalize features back to original scale"""
@@ -409,11 +393,35 @@ class CycleVAE(pl.LightningModule):
             
             if mimic_mask.any():
                 x_recon_mimic = self.decoder_mimic(z[mimic_mask])
+                
+                # DIAGNOSTIC: Check for extreme decoder outputs
+                if x_recon_mimic.abs().max() > 20:
+                    logger.warning(f"LARGE DECODER OUTPUT (MIMIC): min={x_recon_mimic.min().item():.4f}, "
+                                 f"max={x_recon_mimic.max().item():.4f}, mean={x_recon_mimic.mean().item():.4f}")
+                    logger.warning(f"  Input z stats: min={z[mimic_mask].min().item():.4f}, "
+                                 f"max={z[mimic_mask].max().item():.4f}, mean={z[mimic_mask].mean().item():.4f}")
+                
                 x_recon[mimic_mask] = x_recon_mimic.to(x_recon.dtype)
             
             if eicu_mask.any():
                 x_recon_eicu = self.decoder_eicu(z[eicu_mask])
+                
+                # DIAGNOSTIC: Check for extreme decoder outputs
+                if x_recon_eicu.abs().max() > 20:
+                    logger.warning(f"LARGE DECODER OUTPUT (eICU): min={x_recon_eicu.min().item():.4f}, "
+                                 f"max={x_recon_eicu.max().item():.4f}, mean={x_recon_eicu.mean().item():.4f}")
+                    logger.warning(f"  Input z stats: min={z[eicu_mask].min().item():.4f}, "
+                                 f"max={z[eicu_mask].max().item():.4f}, mean={z[eicu_mask].mean().item():.4f}")
+                
                 x_recon[eicu_mask] = x_recon_eicu.to(x_recon.dtype)
+            
+            # IMPROVEMENT: Bypass latent bottleneck for demographics (Age, Gender)
+            # Copy Age and Gender directly from input to reconstruction
+            # Assuming Age is at index numeric_dim-2 and Gender is at numeric_dim-1
+            if len(self.demographic_indices) > 0:
+                for demo_idx in self.demographic_indices:
+                    x_recon[:, demo_idx] = x[:, demo_idx]
+                logger.debug(f"Applied demographic bypass for indices: {self.demographic_indices}")
             
             return {
                 'z': z,
@@ -569,6 +577,19 @@ class CycleVAE(pl.LightningModule):
                 x_cont = x[:, continuous_indices] 
                 x_recon_cont = x_recon[:, continuous_indices]
                 cont_loss = F.mse_loss(x_cont, x_recon_cont, reduction='mean')
+                
+                # DIAGNOSTIC: Log if continuous loss is very high
+                if cont_loss > 100:
+                    logger.error(f"VERY HIGH CONTINUOUS RECONSTRUCTION LOSS: {cont_loss.item():.6f}")
+                    # Find worst features
+                    per_feature_loss = ((x_cont - x_recon_cont) ** 2).mean(dim=0)
+                    worst_idx = per_feature_loss.argmax().item()
+                    logger.error(f"  Worst feature index: {worst_idx}, loss: {per_feature_loss[worst_idx].item():.6f}")
+                    logger.error(f"  Feature {worst_idx} - x range: [{x_cont[:, worst_idx].min().item():.4f}, {x_cont[:, worst_idx].max().item():.4f}]")
+                    logger.error(f"  Feature {worst_idx} - x_recon range: [{x_recon_cont[:, worst_idx].min().item():.4f}, {x_recon_cont[:, worst_idx].max().item():.4f}]")
+                    logger.error(f"  Top 5 worst features: {per_feature_loss.topk(5).indices.tolist()}")
+                    logger.error(f"  Their losses: {per_feature_loss.topk(5).values.tolist()}")
+                
                 total_loss += cont_loss
             
             # CRITICAL FIX: Handle binary features with BCE loss (safe for autocast)
@@ -978,18 +999,21 @@ class CycleVAE(pl.LightningModule):
         # Combine features
         x = torch.cat([x_numeric, x_missing], dim=1)
         
+        # CRITICAL VALIDATION: Check for extreme values that would cause explosion
+        if torch.abs(x).max() > 1000:
+            logger.error(f"EXTREME VALUES DETECTED in batch {batch_idx}!")
+            logger.error(f"  x range: [{x.min().item():.2f}, {x.max().item():.2f}]")
+            logger.error(f"  x_numeric range: [{x_numeric.min().item():.2f}, {x_numeric.max().item():.2f}]")
+            # Clip as emergency fallback
+            x = torch.clamp(x, min=-100, max=100)
+            logger.error(f"  Emergency clipping applied: [{x.min().item():.2f}, {x.max().item():.2f}]")
+        
         # Separate by domain
         mimic_mask = (domain == 1)
         eicu_mask = (domain == 0)
         
-        # IMPROVEMENT 1: Initialize and apply per-dataset normalization
-        if mimic_mask.any() and eicu_mask.any():
-            x_mimic = x[mimic_mask]
-            x_eicu = x[eicu_mask]
-            self.initialize_normalization(x_mimic, x_eicu)
-        
-        # Apply normalization
-        x_normalized = self.normalize_features(x, domain)
+        # Model-side normalization removed – use inputs as provided by preprocessing
+        x_normalized = x
         
         # Forward pass with normalized features
         outputs = self.forward(x_normalized, domain)
@@ -1139,9 +1163,18 @@ class CycleVAE(pl.LightningModule):
         if batch_idx % 100 == 0 and mimic_mask.any() and eicu_mask.any():
             self._log_detailed_feature_metrics(x, outputs, domain, mimic_mask, eicu_mask)
         
-        # CRITICAL: DETAILED LOGGING to find explosion source
-        if batch_idx == 0 or total_loss > 1e10:  # Log first batch and any huge losses
-            logger.info(f"DETAILED LOSS BREAKDOWN (batch {batch_idx}):")
+        # CRITICAL: DETAILED LOGGING to find explosion source - LOWERED THRESHOLD
+        # Log first batch of each epoch, every 50 batches, and any concerning losses
+        should_log = (batch_idx == 0 or 
+                     batch_idx % 50 == 0 or 
+                     total_loss > 1e3 or  # LOWERED from 1e10 to 1e3 to catch issues earlier
+                     rec_loss > 1e3 or 
+                     cycle_loss > 1e3 or
+                     feature_recon_loss > 1e3)
+        
+        if should_log:
+            logger.info(f"=" * 80)
+            logger.info(f"DETAILED LOSS BREAKDOWN (epoch {self.current_epoch}, batch {batch_idx}):")
             logger.info(f"  rec_loss: {rec_loss.item():.6f} (weight: {self.rec_weight})")
             logger.info(f"  kl_loss: {kl_loss.item():.6f} (weight: {kl_weight:.6f})")
             logger.info(f"  cycle_loss: {cycle_loss.item():.6f} (weight: {self.cycle_weight})")
@@ -1152,6 +1185,24 @@ class CycleVAE(pl.LightningModule):
             logger.info(f"  feature_recon_loss: {feature_recon_loss.item():.6f} (weight: {self.feature_recon_weight})")
             logger.info(f"  domain_adv_loss: {domain_adv_loss.item():.6f} (weight: {self.domain_adversarial_weight})")
             logger.info(f"  TOTAL: {total_loss.item():.6f}")
+            
+            # Add decoder output statistics when loss is concerning
+            if total_loss > 100 or rec_loss > 100:
+                logger.warning(f"CONCERNING LOSS DETECTED - Adding decoder output statistics:")
+                if self.use_heteroscedastic:
+                    x_recon_mu, x_recon_logvar = x_recon
+                    logger.warning(f"  x_recon_mu: min={x_recon_mu.min().item():.4f}, max={x_recon_mu.max().item():.4f}, "
+                                 f"mean={x_recon_mu.mean().item():.4f}, std={x_recon_mu.std().item():.4f}")
+                    logger.warning(f"  x_recon_logvar: min={x_recon_logvar.min().item():.4f}, max={x_recon_logvar.max().item():.4f}, "
+                                 f"mean={x_recon_logvar.mean().item():.4f}")
+                else:
+                    logger.warning(f"  x_recon: min={x_recon.min().item():.4f}, max={x_recon.max().item():.4f}, "
+                                 f"mean={x_recon.mean().item():.4f}, std={x_recon.std().item():.4f}")
+                logger.warning(f"  x_input: min={x.min().item():.4f}, max={x.max().item():.4f}, "
+                             f"mean={x.mean().item():.4f}, std={x.std().item():.4f}")
+                logger.warning(f"  z: min={z.min().item():.4f}, max={z.max().item():.4f}, "
+                             f"mean={z.mean().item():.4f}, std={z.std().item():.4f}")
+            logger.info(f"=" * 80)
         
         # CRITICAL: Final safety check to prevent training crashes
         if torch.isnan(total_loss) or torch.isinf(total_loss):
@@ -1275,16 +1326,23 @@ class CycleVAE(pl.LightningModule):
         return total_loss
     
     def test_step(self, batch, batch_idx):
-        """Test step"""
+        """Test step with proper handling for single-domain mode"""
         x = torch.cat([batch['numeric'], batch['missing']], dim=1)
         domain = batch['domain']
         
         # Forward pass
         outputs = self.forward(x, domain)
         
-        # Compute losses
+        # Compute losses with safety checks
         rec_loss = self.compute_reconstruction_loss(x, outputs['x_recon'])
+        
+        # Safety check for rec_loss
+        if torch.isnan(rec_loss) or torch.isinf(rec_loss):
+            logger.warning(f"Invalid rec_loss detected in test_step batch {batch_idx}: {rec_loss}")
+            rec_loss = torch.tensor(0.0, device=self.device)
+        
         kl_loss = self.compute_kl_loss(outputs['mu'], outputs['logvar'])
+        
         # Cycle consistency loss
         cycle_loss = torch.tensor(0.0, device=self.device)
         mimic_mask = (domain == 1)
@@ -1319,12 +1377,17 @@ class CycleVAE(pl.LightningModule):
             self.mmd_weight * mmd_loss
         )
         
-        # Logging
-        self.log('test_loss', total_loss, prog_bar=True)
-        self.log('test_rec_loss', rec_loss)
-        self.log('test_kl_loss', kl_loss)
-        self.log('test_cycle_loss', cycle_loss)
-        self.log('test_mmd_loss', mmd_loss)
+        # Safety check for total_loss
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            logger.warning(f"Invalid total_loss in test_step batch {batch_idx}, using rec_loss only")
+            total_loss = rec_loss
+        
+        # Logging with on_epoch=True to aggregate properly
+        self.log('test_loss', total_loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log('test_rec_loss', rec_loss, on_step=False, on_epoch=True)
+        self.log('test_kl_loss', kl_loss, on_step=False, on_epoch=True)
+        self.log('test_cycle_loss', cycle_loss, on_step=False, on_epoch=True)
+        self.log('test_mmd_loss', mmd_loss, on_step=False, on_epoch=True)
         
         return total_loss
     
@@ -1354,6 +1417,47 @@ class CycleVAE(pl.LightningModule):
             # Enable gradient clipping
             "gradient_clip_val": self.gradient_clip_val
         }
+    
+    def on_before_optimizer_step(self, optimizer):
+        """DIAGNOSTIC: Log gradient norms to detect explosions"""
+        # Compute gradient norm
+        total_norm = 0.0
+        max_grad = 0.0
+        min_grad = float('inf')
+        
+        for p in self.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                max_grad = max(max_grad, p.grad.data.abs().max().item())
+                min_grad = min(min_grad, p.grad.data.abs().min().item())
+        
+        total_norm = total_norm ** 0.5
+        
+        # Log gradient statistics
+        self.log('grad_norm', total_norm, prog_bar=False)
+        self.log('grad_max', max_grad, prog_bar=False)
+        
+        # Warning for concerning gradient norms
+        if total_norm > 10.0:
+            logger.warning(f"HIGH GRADIENT NORM DETECTED: {total_norm:.4f} (max_grad: {max_grad:.4f})")
+        
+        if total_norm > 100.0:
+            logger.error(f"GRADIENT EXPLOSION! Norm: {total_norm:.4f}, Max: {max_grad:.4f}, Min: {min_grad:.8f}")
+            logger.error(f"  Epoch: {self.current_epoch}, Global step: {self.global_step}")
+            
+            # Log which parameters have the largest gradients
+            large_grad_params = []
+            for name, p in self.named_parameters():
+                if p.grad is not None:
+                    param_max = p.grad.data.abs().max().item()
+                    if param_max > 10.0:
+                        large_grad_params.append((name, param_max))
+            
+            if large_grad_params:
+                logger.error(f"  Parameters with large gradients:")
+                for name, grad_val in sorted(large_grad_params, key=lambda x: x[1], reverse=True)[:5]:
+                    logger.error(f"    {name}: {grad_val:.4f}")
     
     def translate_eicu_to_mimic(self, x_eicu: torch.Tensor) -> torch.Tensor:
         """IMPROVED: Translate eICU data to MIMIC format (supports heteroscedastic)"""

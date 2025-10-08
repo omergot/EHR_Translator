@@ -24,9 +24,43 @@ from src.preprocess import Preprocessor
 from src.utils import audit_preprocessing
 from data.raw_extractors import create_sample_data
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Set up logging with file handler to capture all training logs
+def setup_file_logging():
+    """Setup logging to both console and file"""
+    log_dir = Path(__file__).parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create log file with timestamp
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"training_{timestamp}.log"
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    root_logger.handlers = []
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(console_formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler - capture EVERYTHING
+    file_handler = logging.FileHandler(log_file, mode='w')
+    file_handler.setLevel(logging.DEBUG)  # Capture debug level and above
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    root_logger.addHandler(file_handler)
+    
+    return log_file
+
+log_file_path = setup_file_logging()
 logger = logging.getLogger(__name__)
+logger.info(f"Logging to file: {log_file_path}")
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""

@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-Evaluation Script for Cycle-VAE
-Performs comprehensive evaluation including round-trip reconstruction, 
-distributional tests, and downstream evaluation.
+Evaluation Script for Cycle-VAE (SIMPLIFIED MODEL)
+Performs comprehensive evaluation including:
+- Per-feature percentage errors (reconstruction & cycle)
+- Latent space distance metrics
+- Per-feature distribution distance (Wasserstein, KS)
+- Hybrid relative error thresholds (5%, 10%, 20%, 30%)
+- Round-trip reconstruction quality
+- Distributional tests
+- Downstream evaluation
+
+UPDATED: Compatible with simplified 3-loss model (reconstruction, cycle, conditional Wasserstein)
 """
 
 import argparse
@@ -70,6 +78,26 @@ class Evaluator:
         
         logger.info("Evaluator initialized successfully")
     
+    def _get_feature_columns(self, df: pd.DataFrame) -> tuple:
+        """Return numeric and missing columns in feature_spec order, filtered by availability."""
+        numeric_cols = [c for c in self.feature_spec.get('numeric_features', []) if c in df.columns]
+        missing_cols = [c for c in self.feature_spec.get('missing_features', []) if c in df.columns]
+        return numeric_cols, missing_cols
+
+    def _split_mimic_for_cycle(self, df: pd.DataFrame) -> tuple:
+        """Split a single MIMIC dataframe into two pseudo-domains like FeatureDataset(split_for_cycle).
+
+        Uses a fixed seed and 50/50 split (domain 0 and domain 1) with shuffled labels.
+        Returns (domain0_df, domain1_df) with reset indices.
+        """
+        n = len(df)
+        labels = np.array([0] * (n // 2) + [1] * (n - n // 2))
+        rng = np.random.RandomState(42)
+        rng.shuffle(labels)
+        dom0_df = df[labels == 0].reset_index(drop=True)
+        dom1_df = df[labels == 1].reset_index(drop=True)
+        return dom0_df, dom1_df
+
     def load_model(self, model_path: str) -> CycleVAE:
         """Load trained model"""
         logger.info(f"Loading model from {model_path}")
@@ -109,22 +137,23 @@ class Evaluator:
         
         # Get test data
         test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
-        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        if self.config.get('mimic_only', False):
+            logger.info("MIMIC-ONLY MODE: Splitting MIMIC test data into two pseudo-domains for round-trip evaluation")
+            eicu_df, mimic_df = self._split_mimic_for_cycle(test_mimic_data)
+            logger.info(f"Split sizes - pseudo-eICU: {len(eicu_df)}, pseudo-MIMIC: {len(mimic_df)}")
+            test_eicu_data = eicu_df
+            test_mimic_data = mimic_df
+        else:
+            test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
         
         # Convert to tensors (POC features format)
-        mimic_numeric_cols = [col for col in test_mimic_data.columns 
-                             if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                             or col in ['Age', 'Gender']]
-        mimic_missing_cols = [col for col in test_mimic_data.columns if '_missing' in col]
+        mimic_numeric_cols, mimic_missing_cols = self._get_feature_columns(test_mimic_data)
         
         mimic_numeric = torch.FloatTensor(test_mimic_data[mimic_numeric_cols].values)
         mimic_missing = torch.FloatTensor(test_mimic_data[mimic_missing_cols].values)
         mimic_x = torch.cat([mimic_numeric, mimic_missing], dim=1)
         
-        eicu_numeric_cols = [col for col in test_eicu_data.columns 
-                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                            or col in ['Age', 'Gender']]
-        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
+        eicu_numeric_cols, eicu_missing_cols = self._get_feature_columns(test_eicu_data)
         
         eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
         eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
@@ -132,13 +161,13 @@ class Evaluator:
         
         # Perform round-trip translation
         with torch.no_grad():
-            # eICU -> MIMIC -> eICU
-            eicu_to_mimic = self.model.translate_eicu_to_mimic(eicu_x)
-            eicu_round_trip = self.model.translate_mimic_to_eicu(eicu_to_mimic)
+            # eICU -> MIMIC -> eICU (DETERMINISTIC for evaluation)
+            eicu_to_mimic = self.model.translate_eicu_to_mimic_deterministic(eicu_x)
+            eicu_round_trip = self.model.translate_mimic_to_eicu_deterministic(eicu_to_mimic)
             
-            # MIMIC -> eICU -> MIMIC
-            mimic_to_eicu = self.model.translate_mimic_to_eicu(mimic_x)
-            mimic_round_trip = self.model.translate_eicu_to_mimic(mimic_to_eicu)
+            # MIMIC -> eICU -> MIMIC (DETERMINISTIC for evaluation)
+            mimic_to_eicu = self.model.translate_mimic_to_eicu_deterministic(mimic_x)
+            mimic_round_trip = self.model.translate_eicu_to_mimic_deterministic(mimic_to_eicu)
         
         # Compute metrics
         eicu_mse = torch.mean((eicu_x - eicu_round_trip) ** 2, dim=0)
@@ -206,31 +235,32 @@ class Evaluator:
         
         # Get test data
         test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
-        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        if self.config.get('mimic_only', False):
+            logger.info("MIMIC-ONLY MODE: Splitting MIMIC test data into two pseudo-domains for distributional evaluation")
+            eicu_df, mimic_df = self._split_mimic_for_cycle(test_mimic_data)
+            logger.info(f"Split sizes - pseudo-eICU: {len(eicu_df)}, pseudo-MIMIC: {len(mimic_df)}")
+            test_eicu_data = eicu_df
+            test_mimic_data = mimic_df
+        else:
+            test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
         
         # Convert to tensors (POC features format)
-        mimic_numeric_cols = [col for col in test_mimic_data.columns 
-                             if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                             or col in ['Age', 'Gender']]
-        mimic_missing_cols = [col for col in test_mimic_data.columns if '_missing' in col]
+        mimic_numeric_cols, mimic_missing_cols = self._get_feature_columns(test_mimic_data)
         
         mimic_numeric = torch.FloatTensor(test_mimic_data[mimic_numeric_cols].values)
         mimic_missing = torch.FloatTensor(test_mimic_data[mimic_missing_cols].values)
         mimic_x = torch.cat([mimic_numeric, mimic_missing], dim=1)
         
-        eicu_numeric_cols = [col for col in test_eicu_data.columns 
-                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                            or col in ['Age', 'Gender']]
-        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
+        eicu_numeric_cols, eicu_missing_cols = self._get_feature_columns(test_eicu_data)
         
         eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
         eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
         eicu_x = torch.cat([eicu_numeric, eicu_missing], dim=1)
         
-        # Perform translation
+        # Perform translation (DETERMINISTIC for evaluation)
         with torch.no_grad():
-            eicu_to_mimic = self.model.translate_eicu_to_mimic(eicu_x)
-            mimic_to_eicu = self.model.translate_mimic_to_eicu(mimic_x)
+            eicu_to_mimic = self.model.translate_eicu_to_mimic_deterministic(eicu_x)
+            mimic_to_eicu = self.model.translate_mimic_to_eicu_deterministic(mimic_x)
         
         # KS test for each feature (updated for POC features)
         ks_results = []
@@ -307,7 +337,14 @@ class Evaluator:
         # Load data
         train_mimic_data = pd.read_csv(self.output_dir / "data" / "train_mimic_preprocessed.csv")
         test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
-        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        if self.config.get('mimic_only', False):
+            logger.info("MIMIC-ONLY MODE: Splitting MIMIC test data into two pseudo-domains for downstream evaluation")
+            eicu_df, mimic_df = self._split_mimic_for_cycle(test_mimic_data)
+            logger.info(f"Split sizes - pseudo-eICU: {len(eicu_df)}, pseudo-MIMIC: {len(mimic_df)}")
+            test_eicu_data = eicu_df
+            test_mimic_data = mimic_df
+        else:
+            test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
         
         # Create synthetic target variable (in-hospital mortality)
         # In real scenario, this would come from actual outcome data
@@ -317,9 +354,8 @@ class Evaluator:
         test_eicu_data['mortality'] = np.random.choice([0, 1], size=len(test_eicu_data), p=[0.8, 0.2])
         
         # Prepare features (POC features format)
-        feature_cols = [col for col in train_mimic_data.columns 
-                       if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                       or col in ['Age', 'Gender']]
+        # Use feature_spec order for features
+        feature_cols = [c for c in self.feature_spec.get('numeric_features', []) if c in train_mimic_data.columns]
         
         # Train XGBoost on MIMIC training data
         xgb_model = xgb.XGBClassifier(**self.config['downstream']['xgboost_params'], random_state=42)
@@ -338,17 +374,14 @@ class Evaluator:
         eicu_brier = brier_score_loss(test_eicu_data['mortality'], eicu_pred_proba)
         
         # Translate eICU data and evaluate
-        eicu_numeric_cols = [col for col in test_eicu_data.columns 
-                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                            or col in ['Age', 'Gender']]
-        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
+        eicu_numeric_cols, eicu_missing_cols = self._get_feature_columns(test_eicu_data)
         
         eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
         eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
         eicu_x = torch.cat([eicu_numeric, eicu_missing], dim=1)
         
         with torch.no_grad():
-            eicu_translated = self.model.translate_eicu_to_mimic(eicu_x)
+            eicu_translated = self.model.translate_eicu_to_mimic_deterministic(eicu_x)
         
         # Convert back to DataFrame format
         all_feature_cols = feature_cols + [col for col in train_mimic_data.columns if '_missing' in col]
@@ -407,31 +440,32 @@ class Evaluator:
         
         # Get test data
         test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
-        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        if self.config.get('mimic_only', False):
+            logger.info("MIMIC-ONLY MODE: Splitting MIMIC test data into two pseudo-domains for visualizations")
+            eicu_df, mimic_df = self._split_mimic_for_cycle(test_mimic_data)
+            logger.info(f"Split sizes - pseudo-eICU: {len(eicu_df)}, pseudo-MIMIC: {len(mimic_df)}")
+            test_eicu_data = eicu_df
+            test_mimic_data = mimic_df
+        else:
+            test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
         
         # Convert to tensors (POC features format)
-        mimic_numeric_cols = [col for col in test_mimic_data.columns 
-                             if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                             or col in ['Age', 'Gender']]
-        mimic_missing_cols = [col for col in test_mimic_data.columns if '_missing' in col]
+        mimic_numeric_cols, mimic_missing_cols = self._get_feature_columns(test_mimic_data)
         
         mimic_numeric = torch.FloatTensor(test_mimic_data[mimic_numeric_cols].values)
         mimic_missing = torch.FloatTensor(test_mimic_data[mimic_missing_cols].values)
         mimic_x = torch.cat([mimic_numeric, mimic_missing], dim=1)
         
-        eicu_numeric_cols = [col for col in test_eicu_data.columns 
-                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                            or col in ['Age', 'Gender']]
-        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
+        eicu_numeric_cols, eicu_missing_cols = self._get_feature_columns(test_eicu_data)
         
         eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
         eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
         eicu_x = torch.cat([eicu_numeric, eicu_missing], dim=1)
         
-        # Perform translation
+        # Perform translation (DETERMINISTIC for evaluation)
         with torch.no_grad():
-            eicu_to_mimic = self.model.translate_eicu_to_mimic(eicu_x)
-            mimic_to_eicu = self.model.translate_mimic_to_eicu(mimic_x)
+            eicu_to_mimic = self.model.translate_eicu_to_mimic_deterministic(eicu_x)
+            mimic_to_eicu = self.model.translate_mimic_to_eicu_deterministic(mimic_x)
         
         # 1. Feature distribution comparison
         self.plot_feature_distributions(mimic_x, eicu_to_mimic, "eICU_to_MIMIC")
@@ -501,14 +535,14 @@ class Evaluator:
     def plot_round_trip_errors(self, mimic_x, eicu_x):
         """Plot round-trip reconstruction errors"""
         with torch.no_grad():
-            # eICU round-trip
-            eicu_to_mimic = self.model.translate_eicu_to_mimic(eicu_x)
-            eicu_round_trip = self.model.translate_mimic_to_eicu(eicu_to_mimic)
+            # eICU round-trip (DETERMINISTIC for evaluation)
+            eicu_to_mimic = self.model.translate_eicu_to_mimic_deterministic(eicu_x)
+            eicu_round_trip = self.model.translate_mimic_to_eicu_deterministic(eicu_to_mimic)
             eicu_errors = torch.mean((eicu_x - eicu_round_trip) ** 2, dim=0)
             
-            # MIMIC round-trip
-            mimic_to_eicu = self.model.translate_mimic_to_eicu(mimic_x)
-            mimic_round_trip = self.model.translate_eicu_to_mimic(mimic_to_eicu)
+            # MIMIC round-trip (DETERMINISTIC for evaluation)
+            mimic_to_eicu = self.model.translate_mimic_to_eicu_deterministic(mimic_x)
+            mimic_round_trip = self.model.translate_eicu_to_mimic_deterministic(mimic_to_eicu)
             mimic_errors = torch.mean((mimic_x - mimic_round_trip) ** 2, dim=0)
         
         plt.figure(figsize=(15, 6))
@@ -572,25 +606,24 @@ class Evaluator:
         # FIXED: Load test data directly from CSV files (same as standard evaluation)
         logger.info("Loading actual test data from CSV files...")
         test_mimic_data = pd.read_csv(self.output_dir / "data" / "test_mimic_preprocessed.csv")
-        test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
+        if self.config.get('mimic_only', False):
+            logger.info("MIMIC-ONLY MODE: Splitting MIMIC test data into two pseudo-domains for comprehensive evaluation")
+            eicu_df, mimic_df = self._split_mimic_for_cycle(test_mimic_data)
+            logger.info(f"Split sizes - pseudo-eICU: {len(eicu_df)}, pseudo-MIMIC: {len(mimic_df)}")
+            test_eicu_data = eicu_df
+            test_mimic_data = mimic_df
+        else:
+            test_eicu_data = pd.read_csv(self.output_dir / "data" / "test_eicu_preprocessed.csv")
         
         logger.info(f"Loaded test data - MIMIC: {len(test_mimic_data)} samples, eICU: {len(test_eicu_data)} samples")
         
-        # Convert to tensors (same format as other evaluation methods)
-        mimic_numeric_cols = [col for col in test_mimic_data.columns 
-                             if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                             or col in ['Age', 'Gender']]
-        mimic_missing_cols = [col for col in test_mimic_data.columns if '_missing' in col]
-        
+        # Convert to tensors (feature_spec-ordered columns)
+        mimic_numeric_cols, mimic_missing_cols = self._get_feature_columns(test_mimic_data)
         mimic_numeric = torch.FloatTensor(test_mimic_data[mimic_numeric_cols].values)
         mimic_missing = torch.FloatTensor(test_mimic_data[mimic_missing_cols].values)
         x_mimic_test = torch.cat([mimic_numeric, mimic_missing], dim=1)
         
-        eicu_numeric_cols = [col for col in test_eicu_data.columns 
-                            if ('_mean' in col or '_min' in col or '_max' in col or '_std' in col) 
-                            or col in ['Age', 'Gender']]
-        eicu_missing_cols = [col for col in test_eicu_data.columns if '_missing' in col]
-        
+        eicu_numeric_cols, eicu_missing_cols = self._get_feature_columns(test_eicu_data)
         eicu_numeric = torch.FloatTensor(test_eicu_data[eicu_numeric_cols].values)
         eicu_missing = torch.FloatTensor(test_eicu_data[eicu_missing_cols].values)
         x_eicu_test = torch.cat([eicu_numeric, eicu_missing], dim=1)
@@ -665,16 +698,19 @@ class Evaluator:
         # 2. Feature Quality Analysis
         report_sections.append(self._generate_feature_quality_analysis(results))
         
-        # 3. Distribution Analysis
+        # 3. Per-Feature IQR Analysis
+        report_sections.append(self._generate_per_feature_iqr_analysis(results))
+        
+        # 4. Distribution Analysis
         report_sections.append(self._generate_distribution_analysis(results))
         
-        # 4. Missingness Analysis
+        # 5. Missingness Analysis
         report_sections.append(self._generate_missingness_analysis(results))
         
-        # 5. Demographic Analysis
+        # 6. Demographic Analysis
         report_sections.append(self._generate_demographic_analysis(results))
         
-        # 6. Recommendations
+        # 7. Recommendations
         report_sections.append(self._generate_recommendations(results))
         
         # Combine sections
@@ -690,33 +726,149 @@ class Evaluator:
         return str(report_path)
     
     def _generate_executive_summary(self, results: dict) -> str:
-        """Generate executive summary."""
-        summary = "# Comprehensive Evaluation Report\n\n"
+        """UPDATED: Generate executive summary with simplified model metrics."""
+        summary = "# Comprehensive Evaluation Report (Simplified Model)\n\n"
+        summary += "*Generated for simplified CycleVAE with 3 losses: reconstruction, cycle, conditional Wasserstein*\n\n"
+        summary += "*Note: Missing flags, Age, and Gender are excluded from evaluation (input-only)*\n\n"
         summary += "## Executive Summary\n\n"
+        
+        # NEW: Per-feature percentage error metrics
+        comprehensive = results.get('comprehensive', {})
+        if comprehensive and 'eicu_reconstruction_errors' in comprehensive:
+            summary += "### 📊 Reconstruction Quality (A→A')\n\n"
+            summary += "*Note: Data is normalized - MAE in standard deviation units, use IQR metrics*\n\n"
+            
+            eicu_err = comprehensive['eicu_reconstruction_errors']
+            mimic_err = comprehensive['mimic_reconstruction_errors']
+            
+            if eicu_err and 'pct_within_iqr' in eicu_err:
+                summary += "**eICU Reconstruction:**\n"
+                summary += f"- MAE: {np.mean(eicu_err.get('mae', [])):.4f} (std dev units)\n"
+                summary += f"- % within 0.5 IQR: {np.mean(eicu_err['pct_within_iqr'].get('within_0.5_iqr', [])):.1f}%\n"
+                summary += f"- % within 1.0 IQR: {np.mean(eicu_err['pct_within_iqr'].get('within_1.0_iqr', [])):.1f}%\n\n"
+            
+            if mimic_err and 'pct_within_iqr' in mimic_err:
+                summary += "**MIMIC Reconstruction:**\n"
+                summary += f"- MAE: {np.mean(mimic_err.get('mae', [])):.4f} (std dev units)\n"
+                summary += f"- % within 0.5 IQR: {np.mean(mimic_err['pct_within_iqr'].get('within_0.5_iqr', [])):.1f}%\n"
+                summary += f"- % within 1.0 IQR: {np.mean(mimic_err['pct_within_iqr'].get('within_1.0_iqr', [])):.1f}%\n\n"
+        
+        if comprehensive and 'eicu_cycle_errors' in comprehensive:
+            summary += "### 🔄 Cycle Consistency (A→B'→A')\n\n"
+            summary += "*Note: Data is normalized - use IQR metrics for meaningful percentages*\n\n"
+            
+            eicu_cyc = comprehensive['eicu_cycle_errors']
+            mimic_cyc = comprehensive['mimic_cycle_errors']
+            
+            if eicu_cyc and 'pct_within_iqr' in eicu_cyc:
+                summary += "**eICU Cycle:**\n"
+                summary += f"- MAE: {np.mean(eicu_cyc.get('mae', [])):.4f} (std dev units)\n"
+                summary += f"- % within 0.5 IQR: {np.mean(eicu_cyc['pct_within_iqr'].get('within_0.5_iqr', [])):.1f}%\n"
+                summary += f"- % within 1.0 IQR: {np.mean(eicu_cyc['pct_within_iqr'].get('within_1.0_iqr', [])):.1f}%\n\n"
+            
+            if mimic_cyc and 'pct_within_iqr' in mimic_cyc:
+                summary += "**MIMIC Cycle:**\n"
+                summary += f"- MAE: {np.mean(mimic_cyc.get('mae', [])):.4f} (std dev units)\n"
+                summary += f"- % within 0.5 IQR: {np.mean(mimic_cyc['pct_within_iqr'].get('within_0.5_iqr', [])):.1f}%\n"
+                summary += f"- % within 1.0 IQR: {np.mean(mimic_cyc['pct_within_iqr'].get('within_1.0_iqr', [])):.1f}%\n\n"
+        
+        # NEW: Latent space distance
+        if comprehensive and 'latent_distance_eicu_vs_mimic' in comprehensive:
+            summary += "### 🧠 Latent Space Analysis\n\n"
+            
+            latent_orig = comprehensive['latent_distance_eicu_vs_mimic']
+            latent_trans = comprehensive.get('latent_distance_translated_vs_real', {})
+            
+            if latent_orig:
+                summary += "**Original Domains (eICU vs MIMIC):**\n"
+                summary += f"- Euclidean Distance: {latent_orig.get('mean_euclidean_distance', 0):.4f}\n"
+                summary += f"- Cosine Similarity: {latent_orig.get('cosine_similarity', 0):.4f}\n"
+                summary += f"- KL Divergence: {latent_orig.get('kl_divergence', 0):.4f}\n\n"
+            
+            if latent_trans:
+                summary += "**After Translation (eICU→MIMIC vs real MIMIC):**\n"
+                summary += f"- Euclidean Distance: {latent_trans.get('mean_euclidean_distance', 0):.4f}\n"
+                summary += f"- Cosine Similarity: {latent_trans.get('cosine_similarity', 0):.4f}\n"
+                summary += f"- KL Divergence: {latent_trans.get('kl_divergence', 0):.4f}\n\n"
+        
+        # NEW: Distribution distance
+        if comprehensive and 'distribution_distance_eicu_to_mimic' in comprehensive:
+            summary += "### 📈 Distribution Matching\n\n"
+            
+            dist_e2m = comprehensive['distribution_distance_eicu_to_mimic']
+            
+            if dist_e2m and 'wasserstein_distances' in dist_e2m:
+                wass_dists = dist_e2m['wasserstein_distances']
+                ks_stats = dist_e2m.get('ks_statistics', [])
+                
+                summary += f"- Mean Wasserstein Distance: {np.mean(wass_dists):.4f}\n"
+                summary += f"- Mean KS Statistic: {np.mean(ks_stats):.4f}\n\n"
+        
+        summary += "---\n\n"
+        summary += "### Legacy Metrics (Clinical Features Only)\n\n"
+        summary += "*Note: R² and Correlation below are computed on **roundtrip/cycle** data (A→B'→A'), not on direct reconstruction*\n\n"
         
         if 'correlation_metrics' in results:
             df = results['correlation_metrics']
-            good_eicu = df['eicu_good_quality'].sum()
-            good_mimic = df['mimic_good_quality'].sum()
+            
+            # Separate metrics
+            r2_good_eicu = (df['eicu_r2'] > 0.5).sum()
+            r2_good_mimic = (df['mimic_r2'] > 0.5).sum()
+            corr_good_eicu = (df['eicu_correlation'] > 0.7).sum()
+            corr_good_mimic = (df['mimic_correlation'] > 0.7).sum()
+            both_good_eicu = df['eicu_good_quality'].sum()
+            both_good_mimic = df['mimic_good_quality'].sum()
             total_features = len(df)
             
-            summary += f"### Translation Quality Overview\n\n"
-            summary += f"- **Total Features Evaluated**: {total_features}\n"
-            summary += f"- **eICU Round-trip Quality**: {good_eicu}/{total_features} features ({good_eicu/total_features*100:.1f}%) with R² > 0.5 and correlation > 0.7\n"
-            summary += f"- **MIMIC Round-trip Quality**: {good_mimic}/{total_features} features ({good_mimic/total_features*100:.1f}%) with R² > 0.5 and correlation > 0.7\n\n"
+            mean_r2_eicu = df['eicu_r2'].mean()
+            mean_r2_mimic = df['mimic_r2'].mean()
+            mean_corr_eicu = df['eicu_correlation'].mean()
+            mean_corr_mimic = df['mimic_correlation'].mean()
+            
+            summary += f"**Translation Quality Metrics:**\n"
+            summary += f"- **Clinical Features Evaluated**: {total_features}\n\n"
+            summary += f"**R² (Variance Explained) - Target: > 0.5:**\n"
+            summary += f"- **eICU**: {r2_good_eicu}/{total_features} features ({r2_good_eicu/total_features*100:.1f}%), Mean R²: {mean_r2_eicu:.3f}\n"
+            summary += f"- **MIMIC**: {r2_good_mimic}/{total_features} features ({r2_good_mimic/total_features*100:.1f}%), Mean R²: {mean_r2_mimic:.3f}\n\n"
+            summary += f"**Correlation (Linear Relationship) - Target: > 0.7:**\n"
+            summary += f"- **eICU**: {corr_good_eicu}/{total_features} features ({corr_good_eicu/total_features*100:.1f}%), Mean corr: {mean_corr_eicu:.3f}\n"
+            summary += f"- **MIMIC**: {corr_good_mimic}/{total_features} features ({corr_good_mimic/total_features*100:.1f}%), Mean corr: {mean_corr_mimic:.3f}\n\n"
+            summary += f"**Combined (R² > 0.5 AND correlation > 0.7):**\n"
+            summary += f"- **eICU**: {both_good_eicu}/{total_features} features ({both_good_eicu/total_features*100:.1f}%)\n"
+            summary += f"- **MIMIC**: {both_good_mimic}/{total_features} features ({both_good_mimic/total_features*100:.1f}%)\n\n"
         
         if 'ks_analysis' in results:
             df = results['ks_analysis']
-            good_eicu = df['eicu_to_mimic_good'].sum()
-            good_mimic = df['mimic_to_eicu_good'].sum()
+            total_features = len(df)
             
-            summary += f"### Distribution Matching\n\n"
-            summary += f"- **eICU→MIMIC Translation**: {good_eicu}/{total_features} features ({good_eicu/total_features*100:.1f}%) with good distribution matching (KS < 0.3, p > 0.05)\n"
-            summary += f"- **MIMIC→eICU Translation**: {good_mimic}/{total_features} features ({good_mimic/total_features*100:.1f}%) with good distribution matching\n\n"
+            # Use KS-based thresholds only (p-values uninformative with large N)
+            excellent_e2m = df['eicu_to_mimic_excellent'].sum()
+            good_e2m = df['eicu_to_mimic_good'].sum()
+            acceptable_e2m = df['eicu_to_mimic_acceptable'].sum()
+            excellent_m2e = df['mimic_to_eicu_excellent'].sum()
+            good_m2e = df['mimic_to_eicu_good'].sum()
+            acceptable_m2e = df['mimic_to_eicu_acceptable'].sum()
+            
+            mean_ks_e2m = df['eicu_to_mimic_ks'].mean()
+            mean_ks_m2e = df['mimic_to_eicu_ks'].mean()
+            
+            summary += f"**Distribution Matching (KS statistic - effect size):**\n"
+            summary += f"*Note: p-values not used (uninformative with large N={len(df)})*\n\n"
+            summary += f"**eICU→MIMIC Translation:**\n"
+            summary += f"- Excellent (KS<0.1): {excellent_e2m}/{total_features} ({excellent_e2m/total_features*100:.1f}%)\n"
+            summary += f"- Good (KS<0.2): {good_e2m}/{total_features} ({good_e2m/total_features*100:.1f}%)\n"
+            summary += f"- Acceptable (KS<0.3): {acceptable_e2m}/{total_features} ({acceptable_e2m/total_features*100:.1f}%)\n"
+            summary += f"- Mean KS: {mean_ks_e2m:.3f}\n\n"
+            summary += f"**MIMIC→eICU Translation:**\n"
+            summary += f"- Excellent (KS<0.1): {excellent_m2e}/{total_features} ({excellent_m2e/total_features*100:.1f}%)\n"
+            summary += f"- Good (KS<0.2): {good_m2e}/{total_features} ({good_m2e/total_features*100:.1f}%)\n"
+            summary += f"- Acceptable (KS<0.3): {acceptable_m2e}/{total_features} ({acceptable_m2e/total_features*100:.1f}%)\n"
+            summary += f"- Mean KS: {mean_ks_m2e:.3f}\n\n"
         
         # Overall assessment
         if 'correlation_metrics' in results and 'ks_analysis' in results:
-            overall_quality = (good_eicu + good_mimic) / (2 * total_features)
+            # Use "good" threshold (KS<0.2) for overall quality
+            overall_quality = (good_e2m + good_m2e) / (2 * total_features)
             if overall_quality > 0.8:
                 assessment = "**EXCELLENT** - Model shows strong translation quality"
             elif overall_quality > 0.6:
@@ -729,6 +881,147 @@ class Evaluator:
             summary += f"### Overall Assessment\n\n{assessment}\n\n"
         
         return summary
+    
+    def _generate_per_feature_iqr_analysis(self, results: dict) -> str:
+        """Generate per-feature IQR analysis section."""
+        section = "## Per-Feature IQR Analysis\n\n"
+        section += "*Detailed breakdown of IQR-normalized errors for each clinical feature*\n\n"
+        
+        comprehensive = results.get('comprehensive', {})
+        
+        # Get feature names from comprehensive evaluator
+        feature_names = None
+        if 'correlation_metrics' in results:
+            feature_names = results['correlation_metrics']['feature_name'].tolist()
+        
+        # Reconstruction per-feature
+        if comprehensive and 'eicu_reconstruction_errors' in comprehensive:
+            eicu_err = comprehensive['eicu_reconstruction_errors']
+            mimic_err = comprehensive['mimic_reconstruction_errors']
+            
+            if eicu_err and 'pct_within_iqr' in eicu_err and feature_names:
+                section += "### Reconstruction (A→A')\n\n"
+                
+                # Create per-feature table
+                section += "| Feature | eICU % in 0.5 IQR | eICU % in 1.0 IQR | MIMIC % in 0.5 IQR | MIMIC % in 1.0 IQR | eICU % < 0.05 abs | MIMIC % < 0.05 abs |\n"
+                section += "|---------|-------------------|-------------------|--------------------|--------------------|-----------------|------------------|\n"
+                
+                for i, feature in enumerate(feature_names):
+                    if i < len(eicu_err['pct_within_iqr']['within_0.5_iqr']):
+                        eicu_05 = eicu_err['pct_within_iqr']['within_0.5_iqr'][i]
+                        eicu_10 = eicu_err['pct_within_iqr']['within_1.0_iqr'][i]
+                        mimic_05 = mimic_err['pct_within_iqr']['within_0.5_iqr'][i]
+                        mimic_10 = mimic_err['pct_within_iqr']['within_1.0_iqr'][i]
+                        # Absolute tolerance display (use 0.05 if present)
+                        eicu_abs = None
+                        mimic_abs = None
+                        if 'pct_within_abs' in eicu_err and 'within_0.05_abs' in eicu_err['pct_within_abs']:
+                            eicu_abs = eicu_err['pct_within_abs']['within_0.05_abs'][i]
+                        if 'pct_within_abs' in mimic_err and 'within_0.05_abs' in mimic_err['pct_within_abs']:
+                            mimic_abs = mimic_err['pct_within_abs']['within_0.05_abs'][i]
+                        eicu_abs_str = f"{eicu_abs:.1f}%" if eicu_abs is not None else "-"
+                        mimic_abs_str = f"{mimic_abs:.1f}%" if mimic_abs is not None else "-"
+                        
+                        section += f"| {feature} | {eicu_05:.1f}% | {eicu_10:.1f}% | {mimic_05:.1f}% | {mimic_10:.1f}% | {eicu_abs_str} | {mimic_abs_str} |\n"
+                
+                section += "\n"
+                
+                # Identify best and worst performers
+                eicu_05_arr = eicu_err['pct_within_iqr']['within_0.5_iqr']
+                mimic_05_arr = mimic_err['pct_within_iqr']['within_0.5_iqr']
+                
+                # Best performers (highest % within 0.5 IQR)
+                eicu_sorted = sorted(enumerate(eicu_05_arr), key=lambda x: x[1], reverse=True)
+                mimic_sorted = sorted(enumerate(mimic_05_arr), key=lambda x: x[1], reverse=True)
+                
+                section += "**Best Performing Features (Reconstruction, % within 0.5 IQR):**\n\n"
+                section += "eICU:\n"
+                for idx, pct in eicu_sorted[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\nMIMIC:\n"
+                for idx, pct in mimic_sorted[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\n**Worst Performing Features (Reconstruction, % within 0.5 IQR):**\n\n"
+                section += "eICU:\n"
+                for idx, pct in list(reversed(eicu_sorted))[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\nMIMIC:\n"
+                for idx, pct in list(reversed(mimic_sorted))[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\n"
+        
+        # Cycle per-feature
+        if comprehensive and 'eicu_cycle_errors' in comprehensive:
+            eicu_cyc = comprehensive['eicu_cycle_errors']
+            mimic_cyc = comprehensive['mimic_cycle_errors']
+            
+            if eicu_cyc and 'pct_within_iqr' in eicu_cyc and feature_names:
+                section += "### Cycle Consistency (A→B'→A')\n\n"
+                
+                # Create per-feature table
+                section += "| Feature | eICU % in 0.5 IQR | eICU % in 1.0 IQR | MIMIC % in 0.5 IQR | MIMIC % in 1.0 IQR | eICU % < 0.05 abs | MIMIC % < 0.05 abs |\n"
+                section += "|---------|-------------------|-------------------|--------------------|--------------------|-----------------|------------------|\n"
+                
+                for i, feature in enumerate(feature_names):
+                    if i < len(eicu_cyc['pct_within_iqr']['within_0.5_iqr']):
+                        eicu_05 = eicu_cyc['pct_within_iqr']['within_0.5_iqr'][i]
+                        eicu_10 = eicu_cyc['pct_within_iqr']['within_1.0_iqr'][i]
+                        mimic_05 = mimic_cyc['pct_within_iqr']['within_0.5_iqr'][i]
+                        mimic_10 = mimic_cyc['pct_within_iqr']['within_1.0_iqr'][i]
+                        # Absolute tolerance display (use 0.05 if present)
+                        eicu_abs = None
+                        mimic_abs = None
+                        if 'pct_within_abs' in eicu_cyc and 'within_0.05_abs' in eicu_cyc['pct_within_abs']:
+                            eicu_abs = eicu_cyc['pct_within_abs']['within_0.05_abs'][i]
+                        if 'pct_within_abs' in mimic_cyc and 'within_0.05_abs' in mimic_cyc['pct_within_abs']:
+                            mimic_abs = mimic_cyc['pct_within_abs']['within_0.05_abs'][i]
+                        eicu_abs_str = f"{eicu_abs:.1f}%" if eicu_abs is not None else "-"
+                        mimic_abs_str = f"{mimic_abs:.1f}%" if mimic_abs is not None else "-"
+                        
+                        section += f"| {feature} | {eicu_05:.1f}% | {eicu_10:.1f}% | {mimic_05:.1f}% | {mimic_10:.1f}% | {eicu_abs_str} | {mimic_abs_str} |\n"
+                
+                section += "\n"
+                
+                # Identify best and worst performers for cycle
+                eicu_05_arr = eicu_cyc['pct_within_iqr']['within_0.5_iqr']
+                mimic_05_arr = mimic_cyc['pct_within_iqr']['within_0.5_iqr']
+                
+                eicu_sorted = sorted(enumerate(eicu_05_arr), key=lambda x: x[1], reverse=True)
+                mimic_sorted = sorted(enumerate(mimic_05_arr), key=lambda x: x[1], reverse=True)
+                
+                section += "**Best Performing Features (Cycle, % within 0.5 IQR):**\n\n"
+                section += "eICU:\n"
+                for idx, pct in eicu_sorted[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\nMIMIC:\n"
+                for idx, pct in mimic_sorted[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\n**Worst Performing Features (Cycle, % within 0.5 IQR):**\n\n"
+                section += "eICU:\n"
+                for idx, pct in list(reversed(eicu_sorted))[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\nMIMIC:\n"
+                for idx, pct in list(reversed(mimic_sorted))[:5]:
+                    if idx < len(feature_names):
+                        section += f"- {feature_names[idx]}: {pct:.1f}%\n"
+                
+                section += "\n"
+        
+        return section
     
     def _generate_feature_quality_analysis(self, results: dict) -> str:
         """Generate feature quality analysis."""
@@ -781,12 +1074,15 @@ class Evaluator:
         df = results['ks_analysis']
         
         analysis = "## Distribution Analysis\n\n"
+        analysis += "*KS statistic thresholds: <0.1=excellent, <0.2=good, <0.3=acceptable*\n\n"
         
-        # Features with good distribution matching
+        # Features with good distribution matching (KS<0.2)
         good_eicu = df[df['eicu_to_mimic_good']]['feature_name'].tolist()
         good_mimic = df[df['mimic_to_eicu_good']]['feature_name'].tolist()
+        excellent_eicu = df[df['eicu_to_mimic_excellent']]['feature_name'].tolist()
+        excellent_mimic = df[df['mimic_to_eicu_excellent']]['feature_name'].tolist()
         
-        analysis += f"### Features with Good Distribution Matching\n\n"
+        analysis += f"### Features with Good Distribution Matching (KS < 0.2)\n\n"
         analysis += f"- **eICU→MIMIC**: {len(good_eicu)} features\n"
         if good_eicu:
             analysis += f"  - {', '.join(good_eicu[:10])}"
@@ -801,11 +1097,11 @@ class Evaluator:
                 analysis += f" (and {len(good_mimic) - 10} more)"
             analysis += "\n"
         
-        # Features with poor distribution matching
-        poor_eicu = df[~df['eicu_to_mimic_good']]['feature_name'].tolist()
-        poor_mimic = df[~df['mimic_to_eicu_good']]['feature_name'].tolist()
+        # Features with poor distribution matching (KS>=0.3)
+        poor_eicu = df[~df['eicu_to_mimic_acceptable']]['feature_name'].tolist()
+        poor_mimic = df[~df['mimic_to_eicu_acceptable']]['feature_name'].tolist()
         
-        analysis += f"\n### Features with Poor Distribution Matching\n\n"
+        analysis += f"\n### Features with Poor Distribution Matching (KS ≥ 0.3)\n\n"
         analysis += f"- **eICU→MIMIC**: {len(poor_eicu)} features\n"
         if poor_eicu:
             analysis += f"  - {', '.join(poor_eicu[:10])}"
@@ -898,7 +1194,8 @@ class Evaluator:
         
         if 'ks_analysis' in results:
             df = results['ks_analysis']
-            poor_dist = df[~df['eicu_to_mimic_good'] & ~df['mimic_to_eicu_good']]['feature_name'].tolist()
+            # Poor = not acceptable (KS >= 0.3) in either direction
+            poor_dist = df[~df['eicu_to_mimic_acceptable'] & ~df['mimic_to_eicu_acceptable']]['feature_name'].tolist()
             
             if poor_dist:
                 recommendations += "### Distribution Matching Improvements\n\n"

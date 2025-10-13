@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 class Encoder(nn.Module):
     """Shared encoder for both domains"""
     
-    def __init__(self, input_dim: int, hidden_dims: list, latent_dim: int):
+    def __init__(self, input_dim: int, hidden_dims: list, latent_dim: int, 
+                 use_residual_blocks: bool = False, dropout_rate: float = 0.1):
         """
         Initialize encoder
         
@@ -30,8 +31,11 @@ class Encoder(nn.Module):
             input_dim: Input feature dimension
             hidden_dims: List of hidden layer dimensions
             latent_dim: Latent space dimension
+            use_residual_blocks: Use residual blocks (for medium architecture)
+            dropout_rate: Dropout rate
         """
         super().__init__()
+        self.use_residual_blocks = use_residual_blocks
         
         layers = []
         prev_dim = input_dim
@@ -41,8 +45,8 @@ class Encoder(nn.Module):
             layers.extend([
                 nn.Linear(prev_dim, hidden_dim),
                 nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(0.1)
+                nn.LeakyReLU(negative_slope=0.01),
+                nn.Dropout(dropout_rate)
             ])
             prev_dim = hidden_dim
         
@@ -52,7 +56,8 @@ class Encoder(nn.Module):
         self.fc_mu = nn.Linear(prev_dim, latent_dim)
         self.fc_logvar = nn.Linear(prev_dim, latent_dim)
         
-        logger.info(f"Created encoder: {input_dim} -> {hidden_dims} -> {latent_dim}")
+        logger.info(f"Created encoder: {input_dim} -> {hidden_dims} -> {latent_dim}, "
+                   f"residual_blocks={use_residual_blocks}")
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -91,10 +96,11 @@ class Encoder(nn.Module):
         return z
 
 class Decoder(nn.Module):
-    """IMPROVED: Domain-specific decoder with proper binary feature handling"""
+    """IMPROVED: Domain-specific decoder with proper binary feature handling and skip connections"""
     
     def __init__(self, latent_dim: int, hidden_dims: list, output_dim: int, use_heteroscedastic: bool = True, 
-                 numeric_dim: int = None, missing_dim: int = None):
+                 numeric_dim: int = None, missing_dim: int = None, use_residual_blocks: bool = False, 
+                 dropout_rate: float = 0.1):
         """
         Initialize decoder with optional heteroscedastic outputs and proper binary handling
         
@@ -105,11 +111,18 @@ class Decoder(nn.Module):
             use_heteroscedastic: If True, predict both mean and log-variance per feature
             numeric_dim: Number of numeric features (for identifying binary features)
             missing_dim: Number of missing indicator features (binary)
+            use_residual_blocks: Use residual blocks (for medium architecture)
+            dropout_rate: Dropout rate
         """
         super().__init__()
         self.use_heteroscedastic = use_heteroscedastic
         self.numeric_dim = numeric_dim if numeric_dim is not None else output_dim
         self.missing_dim = missing_dim if missing_dim is not None else 0
+        self.use_residual_blocks = use_residual_blocks
+        
+        # Learnable affine skip connection parameters
+        self.skip_scale = nn.Parameter(torch.ones(output_dim))   # a: start near identity
+        self.skip_bias = nn.Parameter(torch.zeros(output_dim))   # b: no shift initially
         
         layers = []
         prev_dim = latent_dim
@@ -119,8 +132,8 @@ class Decoder(nn.Module):
             layers.extend([
                 nn.Linear(prev_dim, hidden_dim),
                 nn.BatchNorm1d(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(0.1)
+                nn.LeakyReLU(negative_slope=0.01),
+                nn.Dropout(dropout_rate)
             ])
             prev_dim = hidden_dim
         
@@ -130,11 +143,13 @@ class Decoder(nn.Module):
             # Separate heads for mean and log-variance
             self.fc_mu = nn.Linear(prev_dim, output_dim)      # Mean prediction
             self.fc_logvar = nn.Linear(prev_dim, output_dim)  # Log-variance prediction
-            logger.info(f"Created heteroscedastic decoder: {latent_dim} -> {hidden_dims} -> {output_dim} (mu + logvar)")
+            logger.info(f"Created heteroscedastic decoder: {latent_dim} -> {hidden_dims} -> {output_dim} (mu + logvar), "
+                       f"residual_blocks={use_residual_blocks}")
         else:
             # Standard single output
             self.fc_out = nn.Linear(prev_dim, output_dim)
-            logger.info(f"Created standard decoder: {latent_dim} -> {hidden_dims} -> {output_dim}, numeric={numeric_dim}, binary={missing_dim}")
+            logger.info(f"Created standard decoder: {latent_dim} -> {hidden_dims} -> {output_dim}, numeric={numeric_dim}, binary={missing_dim}, "
+                       f"residual_blocks={use_residual_blocks}")
     
     def forward(self, z: torch.Tensor) -> torch.Tensor or tuple:
         """
@@ -176,11 +191,11 @@ class Decoder(nn.Module):
             return x_recon
 
 class CycleVAE(pl.LightningModule):
-    """IMPROVED: Cycle-VAE model for domain translation with advanced features"""
+    """SIMPLIFIED: Cycle-VAE model with only essential losses: reconstruction, cycle, and conditional 1-D Wasserstein"""
     
     def __init__(self, config: Dict, feature_spec: Dict):
         """
-        Initialize Cycle-VAE with enhanced preprocessing and evaluation
+        Initialize Cycle-VAE with simplified loss structure
         
         Args:
             config: Configuration dictionary
@@ -195,88 +210,90 @@ class CycleVAE(pl.LightningModule):
         self.missing_dim = len(feature_spec['missing_features'])
         self.input_dim = self.numeric_dim + self.missing_dim
         
+        # Identify clinical vs demographic features
+        self.demographic_features = feature_spec.get('demographic_features', ['Age', 'Gender'])
+        self.clinical_features = feature_spec.get('clinical_features', [])
+        
+        # Get indices for different feature types
+        self.demographic_indices = []
+        self.missing_flag_indices = list(range(self.numeric_dim, self.numeric_dim + self.missing_dim))
+        
+        # Find demographic feature indices in numeric features
+        for i, feature in enumerate(feature_spec['numeric_features']):
+            if any(demo in feature for demo in self.demographic_features):
+                self.demographic_indices.append(i)
+        
+        # Clinical feature indices (everything except demographics and missing flags)
+        self.clinical_indices = [i for i in range(self.numeric_dim) if i not in self.demographic_indices]
+        
+        logger.info(f"Feature indices - Clinical: {len(self.clinical_indices)}, Demographics: {len(self.demographic_indices)}, Missing flags: {len(self.missing_flag_indices)}")
+        
         # Removed model-side per-dataset normalization – rely on preprocessing only
         self.normalization_initialized = False
         
-        # Training parameters (ensure they are proper numeric types)
+        # SIMPLIFIED: Only three training parameters (ensure they are proper numeric types)
         self.lr = float(config['training']['lr'])
-        self.latent_dim = int(config['training']['latent_dim'])
-        self.kl_weight = float(config['training']['kl_weight'])
-        self.cycle_weight = float(config['training']['cycle_weight'])
-        self.rec_weight = float(config['training']['rec_weight'])
-        self.mmd_weight = float(config['training']['mmd_weight'])
-        self.cov_weight = float(config['training'].get('cov_weight', 0.1))  # New covariance loss weight
-        self.per_feature_mmd_weight = float(config['training'].get('per_feature_mmd_weight', 0.05))
-        self.wasserstein_weight = float(config['training'].get('wasserstein_weight', 0.0))  # Per-feature Wasserstein weight
-        self.feature_recon_weight = float(config['training'].get('feature_recon_weight', 0.5))  # Feature reconstruction weight
-        self.domain_adversarial_weight = float(config['training'].get('domain_adversarial_weight', 0.1))  # Domain adversarial weight
-        self.kl_warmup_epochs = int(config['training']['kl_warmup_epochs'])
+        
+        # Dynamic architecture based on input size
+        latent_dim_auto = config['training'].get('latent_dim_auto', True)
+        use_residual_blocks = config['training'].get('use_residual_blocks', False)
+        dropout_rate = float(config['training'].get('dropout_rate', 0.1))
+        
+        if latent_dim_auto:
+            if self.input_dim < 100:
+                # Small architecture for <100 features
+                self.latent_dim = 16
+                hidden_dims = [128, 64]
+                logger.info(f"Auto-selected SMALL architecture: input_dim={self.input_dim}, latent_dim={self.latent_dim}, hidden_dims={hidden_dims}")
+            else:
+                # Medium architecture for >=100 features
+                self.latent_dim = 32
+                hidden_dims = [512, 256, 128]
+                logger.info(f"Auto-selected MEDIUM architecture: input_dim={self.input_dim}, latent_dim={self.latent_dim}, hidden_dims={hidden_dims}")
+        else:
+            # Use config-specified latent_dim and determine hidden_dims based on input size
+            self.latent_dim = int(config['training']['latent_dim'])
+            if self.input_dim < 100:
+                hidden_dims = [128, 64]
+            else:
+                hidden_dims = [512, 256, 128]
+            logger.info(f"Using config-specified latent_dim={self.latent_dim} with hidden_dims={hidden_dims}")
+        
+        self.rec_weight = float(config['training'].get('rec_weight', 1.0))
+        self.cycle_weight = float(config['training'].get('cycle_weight', 1.0))
+        self.wasserstein_weight = float(config['training'].get('wasserstein_weight', 1.0))
+        
+        # Conditional Wasserstein parameters
+        self.wasserstein_compute_every_n_steps = int(config['training'].get('wasserstein_compute_every_n_steps', 5))
+        self.wasserstein_min_group_size = int(config['training'].get('wasserstein_min_group_size', 16))
+        self.wasserstein_worst_k = int(config['training'].get('wasserstein_worst_k', 10))
+        self.wasserstein_age_bucket_years = int(config['training'].get('wasserstein_age_bucket_years', 10))
+        self.wasserstein_update_worst_every_n_epochs = int(config['training'].get('wasserstein_update_worst_every_n_epochs', 1))
+        
+        # Track worst-performing features dynamically
+        self.worst_feature_indices = []
+        self.last_worst_update_epoch = -1
+        
+        # Other training parameters
+        self.kl_warmup_epochs = int(config['training'].get('kl_warmup_epochs', 20))
         self.weight_decay = float(config['training']['weight_decay'])
-        
-        # Track worst-performing features for targeted MMD
-        self.worst_features = config['training'].get('worst_features', [
-            'Temp_mean', 'Temp_min', 'Temp_max', 'Temp_std',
-            'HR_std', 'SpO2_std', 'MAP_std', 'Creat_mean'
-        ])
-        
-        # FIXED: Identify demographic features that need special handling (different scales)
-        self.demographic_indices = []
-        if hasattr(feature_spec, 'numeric_features'):
-            for i, feature in enumerate(feature_spec['numeric_features']):
-                if 'Age' in feature or 'Gender' in feature:
-                    self.demographic_indices.append(i)
-        
-        # Fallback if feature_spec doesn't have the expected structure
-        if len(self.demographic_indices) == 0:
-            # Assume last 2 features are Age, Gender based on typical structure
-            self.demographic_indices = [self.input_dim - self.missing_dim - 2, self.input_dim - self.missing_dim - 1]
-        
-        logger.info(f"Demographic feature indices: {self.demographic_indices}")
-        
-        # Safety flag to disable heteroscedastic for problematic features
-        self.use_safe_mode = config['training'].get('use_safe_mode', False)
-        
-        # Gradient clipping for numerical stability
         self.gradient_clip_val = config['training'].get('gradient_clip_val', 1.0)
         
-        # Covariance loss is now numerically stable - no need for disable mechanism
+        # For IQR-based relative error in evaluation
+        self.feature_iqr = None  # Will be computed from training data
         
         # Architecture parameters
-        hidden_dims = [256, 128, 64]  # Can be made configurable
-        self.use_heteroscedastic = config['training'].get('use_heteroscedastic', True)
+        self.use_heteroscedastic = False  # SIMPLIFIED: No heteroscedastic outputs
         
-        # Initialize networks
-        self.encoder = Encoder(self.input_dim, hidden_dims, self.latent_dim)
+        # Initialize networks with dynamic architecture
+        self.encoder = Encoder(self.input_dim, hidden_dims, self.latent_dim, 
+                              use_residual_blocks=use_residual_blocks, dropout_rate=dropout_rate)
         self.decoder_mimic = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic,
-                                      numeric_dim=self.numeric_dim, missing_dim=self.missing_dim)
+                                      numeric_dim=self.numeric_dim, missing_dim=self.missing_dim,
+                                      use_residual_blocks=use_residual_blocks, dropout_rate=dropout_rate)
         self.decoder_eicu = Decoder(self.latent_dim, hidden_dims[::-1], self.input_dim, self.use_heteroscedastic,
-                                     numeric_dim=self.numeric_dim, missing_dim=self.missing_dim)
-        
-        # IMPROVEMENT 4: Feature reconstruction head to prevent mode collapse
-        self.feature_reconstruction_head = nn.Sequential(
-            nn.Linear(self.latent_dim, hidden_dims[0]),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dims[0], self.input_dim)
-        )
-        
-        # IMPROVEMENT 5: STRONGER Adversarial domain classifier
-        self.domain_classifier = nn.Sequential(
-            nn.Linear(self.latent_dim, hidden_dims[0]),  # Same size as encoder's first layer
-            nn.ReLU(),
-            nn.Dropout(0.2),  # More dropout for regularization
-            nn.Linear(hidden_dims[0], hidden_dims[0] // 2),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_dims[0] // 2, 128),  # Larger intermediate layer
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 2)  # Binary classification: MIMIC vs eICU
-        )
-        
-        # IMPROVEMENT: Multi-kernel MMD parameters
-        self.mmd_sigmas = [0.1, 1.0, 10.0, 100.0]  # Multi-scale kernels
-        self.adaptive_sigma = True
+                                     numeric_dim=self.numeric_dim, missing_dim=self.missing_dim,
+                                     use_residual_blocks=use_residual_blocks, dropout_rate=dropout_rate)
         
         # Prior distribution
         self.prior = Normal(0, 1)
@@ -284,27 +301,50 @@ class CycleVAE(pl.LightningModule):
         # CRITICAL FIX: Initialize weights conservatively to prevent initial instability
         self._init_weights()
         
+        # Zero-initialize final decoder layers so residual starts at 0
+        self._zero_init_decoder_final_layers()
+        
         logger.info(f"Initialized Cycle-VAE with input_dim={self.input_dim}, latent_dim={self.latent_dim}")
     
     def _init_weights(self):
         """Initialize network weights conservatively for numerical stability"""
         for name, module in self.named_modules():
             if isinstance(module, nn.Linear):
-                # Different initialization for different components
-                if 'feature_reconstruction_head' in name:
-                    # Conservative for feature reconstruction
-                    nn.init.xavier_normal_(module.weight, gain=0.01)
-                elif 'domain_classifier' in name:
-                    # STRONGER initialization for domain classifier to compete with encoder
-                    nn.init.xavier_normal_(module.weight, gain=0.5)
-                else:
-                    # Standard conservative initialization for main networks
-                    nn.init.xavier_normal_(module.weight, gain=0.1)
+                # Conservative initialization for all networks
+                nn.init.xavier_normal_(module.weight, gain=0.1)
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
             elif isinstance(module, nn.BatchNorm1d):
                 nn.init.constant_(module.weight, 1.0)
                 nn.init.constant_(module.bias, 0.0)
+    
+    def _zero_init_decoder_final_layers(self):
+        """
+        Zero-initialize final decoder layers so residual starts at 0.
+        This makes the initial model behavior: output = skip_scale * input + skip_bias
+        Training gradually learns the residual correction.
+        """
+        if self.use_heteroscedastic:
+            # Zero-init mu and logvar heads for heteroscedastic outputs
+            self.decoder_mimic.fc_mu.weight.data.zero_()
+            self.decoder_mimic.fc_mu.bias.data.zero_()
+            self.decoder_mimic.fc_logvar.weight.data.zero_()
+            self.decoder_mimic.fc_logvar.bias.data.zero_()
+            
+            self.decoder_eicu.fc_mu.weight.data.zero_()
+            self.decoder_eicu.fc_mu.bias.data.zero_()
+            self.decoder_eicu.fc_logvar.weight.data.zero_()
+            self.decoder_eicu.fc_logvar.bias.data.zero_()
+            
+            logger.info("Zero-initialized final decoder layers (heteroscedastic mode: fc_mu and fc_logvar)")
+        else:
+            # Zero-init standard output
+            self.decoder_mimic.fc_out.weight.data.zero_()
+            self.decoder_mimic.fc_out.bias.data.zero_()
+            self.decoder_eicu.fc_out.weight.data.zero_()
+            self.decoder_eicu.fc_out.bias.data.zero_()
+            
+            logger.info("Zero-initialized final decoder layers (standard mode: fc_out)")
      
     def initialize_normalization(self, x_mimic: torch.Tensor, x_eicu: torch.Tensor):
         """No-op: model-side normalization removed; kept for backward compatibility."""
@@ -388,36 +428,74 @@ class CycleVAE(pl.LightningModule):
                 'x_recon': (x_recon_mu, x_recon_logvar)  # Tuple for heteroscedastic
             }
         else:
-            # Standard reconstruction
+            # Standard reconstruction with skip connections
             x_recon = torch.zeros_like(x)
             
             if mimic_mask.any():
-                x_recon_mimic = self.decoder_mimic(z[mimic_mask])
+                # Get decoder output
+                decoder_output_mimic = self.decoder_mimic(z[mimic_mask])
                 
-                # DIAGNOSTIC: Check for extreme decoder outputs
+                # Apply skip connection: output = decoder(z) + (skip_scale * input + skip_bias)
+                x_input_mimic = x[mimic_mask]
+                skip_contribution = self.decoder_mimic.skip_scale * x_input_mimic + self.decoder_mimic.skip_bias
+                x_recon_mimic = decoder_output_mimic + skip_contribution
+                
+                # DIAGNOSTIC: Check for extreme decoder outputs with detailed breakdown
                 if x_recon_mimic.abs().max() > 20:
-                    logger.warning(f"LARGE DECODER OUTPUT (MIMIC): min={x_recon_mimic.min().item():.4f}, "
-                                 f"max={x_recon_mimic.max().item():.4f}, mean={x_recon_mimic.mean().item():.4f}")
-                    logger.warning(f"  Input z stats: min={z[mimic_mask].min().item():.4f}, "
-                                 f"max={z[mimic_mask].max().item():.4f}, mean={z[mimic_mask].mean().item():.4f}")
+                    logger.warning(f"⚠️  LARGE DECODER OUTPUT (MIMIC) - DETAILED BREAKDOWN:")
+                    logger.warning(f"  Final output: min={x_recon_mimic.min().item():.4f}, max={x_recon_mimic.max().item():.4f}, mean={x_recon_mimic.mean().item():.4f}")
+                    logger.warning(f"  Decoder output (before skip): min={decoder_output_mimic.min().item():.4f}, max={decoder_output_mimic.max().item():.4f}, mean={decoder_output_mimic.mean().item():.4f}")
+                    logger.warning(f"  Skip contribution: min={skip_contribution.min().item():.4f}, max={skip_contribution.max().item():.4f}, mean={skip_contribution.mean().item():.4f}")
+                    logger.warning(f"  Input x: min={x_input_mimic.min().item():.4f}, max={x_input_mimic.max().item():.4f}, mean={x_input_mimic.mean().item():.4f}")
+                    logger.warning(f"  Latent z: min={z[mimic_mask].min().item():.4f}, max={z[mimic_mask].max().item():.4f}, mean={z[mimic_mask].mean().item():.4f}")
+                    logger.warning(f"  Skip params - scale: min={self.decoder_mimic.skip_scale.min().item():.4f}, max={self.decoder_mimic.skip_scale.max().item():.4f}, mean={self.decoder_mimic.skip_scale.mean().item():.4f}")
+                    logger.warning(f"  Skip params - bias: min={self.decoder_mimic.skip_bias.min().item():.4f}, max={self.decoder_mimic.skip_bias.max().item():.4f}, mean={self.decoder_mimic.skip_bias.mean().item():.4f}")
+                    
+                    # Find which features have extreme values
+                    extreme_mask = x_recon_mimic.abs() > 20
+                    if extreme_mask.any():
+                        extreme_indices = torch.where(extreme_mask)
+                        logger.warning(f"  Extreme values found at {extreme_mask.sum().item()} locations")
+                        # Log first few extreme feature indices
+                        unique_features = torch.unique(extreme_indices[1][:10])
+                        logger.warning(f"  Feature indices with extreme values (first 10): {unique_features.tolist()}")
                 
                 x_recon[mimic_mask] = x_recon_mimic.to(x_recon.dtype)
             
             if eicu_mask.any():
-                x_recon_eicu = self.decoder_eicu(z[eicu_mask])
+                # Get decoder output
+                decoder_output_eicu = self.decoder_eicu(z[eicu_mask])
                 
-                # DIAGNOSTIC: Check for extreme decoder outputs
+                # Apply skip connection: output = decoder(z) + (skip_scale * input + skip_bias)
+                x_input_eicu = x[eicu_mask]
+                skip_contribution = self.decoder_eicu.skip_scale * x_input_eicu + self.decoder_eicu.skip_bias
+                x_recon_eicu = decoder_output_eicu + skip_contribution
+                
+                # DIAGNOSTIC: Check for extreme decoder outputs with detailed breakdown
                 if x_recon_eicu.abs().max() > 20:
-                    logger.warning(f"LARGE DECODER OUTPUT (eICU): min={x_recon_eicu.min().item():.4f}, "
-                                 f"max={x_recon_eicu.max().item():.4f}, mean={x_recon_eicu.mean().item():.4f}")
-                    logger.warning(f"  Input z stats: min={z[eicu_mask].min().item():.4f}, "
-                                 f"max={z[eicu_mask].max().item():.4f}, mean={z[eicu_mask].mean().item():.4f}")
+                    logger.warning(f"⚠️  LARGE DECODER OUTPUT (eICU) - DETAILED BREAKDOWN:")
+                    logger.warning(f"  Final output: min={x_recon_eicu.min().item():.4f}, max={x_recon_eicu.max().item():.4f}, mean={x_recon_eicu.mean().item():.4f}")
+                    logger.warning(f"  Decoder output (before skip): min={decoder_output_eicu.min().item():.4f}, max={decoder_output_eicu.max().item():.4f}, mean={decoder_output_eicu.mean().item():.4f}")
+                    logger.warning(f"  Skip contribution: min={skip_contribution.min().item():.4f}, max={skip_contribution.max().item():.4f}, mean={skip_contribution.mean().item():.4f}")
+                    logger.warning(f"  Input x: min={x_input_eicu.min().item():.4f}, max={x_input_eicu.max().item():.4f}, mean={x_input_eicu.mean().item():.4f}")
+                    logger.warning(f"  Latent z: min={z[eicu_mask].min().item():.4f}, max={z[eicu_mask].max().item():.4f}, mean={z[eicu_mask].mean().item():.4f}")
+                    logger.warning(f"  Skip params - scale: min={self.decoder_eicu.skip_scale.min().item():.4f}, max={self.decoder_eicu.skip_scale.max().item():.4f}, mean={self.decoder_eicu.skip_scale.mean().item():.4f}")
+                    logger.warning(f"  Skip params - bias: min={self.decoder_eicu.skip_bias.min().item():.4f}, max={self.decoder_eicu.skip_bias.max().item():.4f}, mean={self.decoder_eicu.skip_bias.mean().item():.4f}")
+                    
+                    # Find which features have extreme values
+                    extreme_mask = x_recon_eicu.abs() > 20
+                    if extreme_mask.any():
+                        extreme_indices = torch.where(extreme_mask)
+                        logger.warning(f"  Extreme values found at {extreme_mask.sum().item()} locations")
+                        # Log first few extreme feature indices
+                        unique_features = torch.unique(extreme_indices[1][:10])
+                        logger.warning(f"  Feature indices with extreme values (first 10): {unique_features.tolist()}")
                 
                 x_recon[eicu_mask] = x_recon_eicu.to(x_recon.dtype)
             
-            # IMPROVEMENT: Bypass latent bottleneck for demographics (Age, Gender)
+            # KEEP: Bypass latent bottleneck for demographics (Age, Gender)
             # Copy Age and Gender directly from input to reconstruction
-            # Assuming Age is at index numeric_dim-2 and Gender is at numeric_dim-1
+            # This is applied AFTER skip connection to ensure demographics are always preserved
             if len(self.demographic_indices) > 0:
                 for demo_idx in self.demographic_indices:
                     x_recon[:, demo_idx] = x[:, demo_idx]
@@ -432,7 +510,7 @@ class CycleVAE(pl.LightningModule):
     
     def cycle_forward(self, x: torch.Tensor, source_domain: int, target_domain: int) -> Dict:
         """
-        IMPROVED: Cycle forward pass supporting heteroscedastic outputs
+        IMPROVED: Cycle forward pass with skip connections
         
         Args:
             x: Input features
@@ -446,22 +524,26 @@ class CycleVAE(pl.LightningModule):
         mu, logvar = self.encoder(x)
         z = self.encoder.reparameterize(mu, logvar)
         
-        # Decode to target domain
+        # Decode to target domain with skip connection
         if target_domain == 1:  # MIMIC
             decoder_output = self.decoder_mimic(z)
+            target_decoder = self.decoder_mimic
         else:  # eICU
             decoder_output = self.decoder_eicu(z)
+            target_decoder = self.decoder_eicu
         
-        # Extract mean for next encoding step
+        # Extract mean and apply skip connection for first translation
         if self.use_heteroscedastic:
             x_translated_mu, x_translated_logvar = decoder_output
+            # Apply skip connection: output = decoder(z) + (a * input + b)
+            x_translated = x_translated_mu + (target_decoder.skip_scale * x + target_decoder.skip_bias)
             # CRITICAL FIX: Tight constraints for NORMALIZED features in cycle
-            x_translated_mu = torch.clamp(x_translated_mu, min=-10, max=10)  # NORMALIZED range!
-            if torch.isnan(x_translated_mu).any() or torch.isinf(x_translated_mu).any():
-                x_translated_mu = torch.zeros_like(x_translated_mu)
-            x_translated = x_translated_mu  # Use mean for next step
+            x_translated = torch.clamp(x_translated, min=-10, max=10)  # NORMALIZED range!
+            if torch.isnan(x_translated).any() or torch.isinf(x_translated).any():
+                x_translated = torch.zeros_like(x_translated)
         else:
-            x_translated = decoder_output
+            # Apply skip connection: output = decoder(z) + (a * input + b)
+            x_translated = decoder_output + (target_decoder.skip_scale * x + target_decoder.skip_bias)
             # Safety check for non-heteroscedastic too - NORMALIZED features!
             x_translated = torch.clamp(x_translated, min=-10, max=10)  # NORMALIZED range!
             if torch.isnan(x_translated).any() or torch.isinf(x_translated).any():
@@ -471,22 +553,27 @@ class CycleVAE(pl.LightningModule):
         mu_cycle, logvar_cycle = self.encoder(x_translated)
         z_cycle = self.encoder.reparameterize(mu_cycle, logvar_cycle)
         
-        # Decode back to source domain
+        # Decode back to source domain with skip connection
         if source_domain == 1:  # MIMIC
             cycle_decoder_output = self.decoder_mimic(z_cycle)
+            source_decoder = self.decoder_mimic
         else:  # eICU
             cycle_decoder_output = self.decoder_eicu(z_cycle)
+            source_decoder = self.decoder_eicu
         
-        # Extract cycle reconstruction
+        # Extract cycle reconstruction and apply skip connection
         if self.use_heteroscedastic:
             x_cycle_mu, x_cycle_logvar = cycle_decoder_output
+            # Apply skip connection: output = decoder(z) + (a * input + b)
+            # Here input is x_translated (what we're encoding for the cycle back)
+            x_cycle = x_cycle_mu + (source_decoder.skip_scale * x_translated + source_decoder.skip_bias)
             # CRITICAL FIX: Tight constraints for NORMALIZED features in cycle  
-            x_cycle_mu = torch.clamp(x_cycle_mu, min=-10, max=10)  # NORMALIZED range!  
-            if torch.isnan(x_cycle_mu).any() or torch.isinf(x_cycle_mu).any():
-                x_cycle_mu = torch.zeros_like(x_cycle_mu)
-            x_cycle = x_cycle_mu  # Use mean for cycle consistency
+            x_cycle = torch.clamp(x_cycle, min=-10, max=10)  # NORMALIZED range!  
+            if torch.isnan(x_cycle).any() or torch.isinf(x_cycle).any():
+                x_cycle = torch.zeros_like(x_cycle)
         else:
-            x_cycle = cycle_decoder_output
+            # Apply skip connection: output = decoder(z) + (a * input + b)
+            x_cycle = cycle_decoder_output + (source_decoder.skip_scale * x_translated + source_decoder.skip_bias)
             # Safety check for non-heteroscedastic too  
             x_cycle = torch.clamp(x_cycle, min=-10, max=10)  # NORMALIZED range!
             if torch.isnan(x_cycle).any() or torch.isinf(x_cycle).any():
@@ -499,775 +586,568 @@ class CycleVAE(pl.LightningModule):
             'z_cycle': z_cycle
         }
     
-    def compute_kl_loss(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """Compute KL divergence loss with numerical stability"""
-        # CRITICAL FIX: Clamp logvar to prevent explosion in exp()
-        logvar_clamped = torch.clamp(logvar, min=-5, max=3)  # Same range as encoder
-        # MAJOR FIX: Use mean instead of sum to normalize by batch size!
-        kl_loss = -0.5 * torch.mean(1 + logvar_clamped - mu.pow(2) - logvar_clamped.exp())
-        return kl_loss
-    
-    def compute_heteroscedastic_nll(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
+    def _apply_missing_mask(self, x_target: torch.Tensor, x_missing: torch.Tensor) -> torch.Tensor:
         """
-        FIXED: Numerically stable heteroscedastic negative log-likelihood loss
+        Override numeric targets using missing flags
+        When missing_flag[i] == 1, set the corresponding numeric features (min, max, mean, std) to 0
         
         Args:
-            x: True features [batch_size, n_features]
-            mu: Predicted mean [batch_size, n_features]  
-            logvar: Predicted log-variance [batch_size, n_features]
+            x_target: Target numeric features [batch_size, numeric_dim]
+            x_missing: Missing flags [batch_size, missing_dim]
             
         Returns:
-            NLL loss
+            Masked target with 0s where data is missing
         """
-        # CRITICAL FIX: Tighter clamping for numerical stability
-        logvar_clamped = torch.clamp(logvar, min=-5, max=3)  # Much safer range: exp(-(-5)) = exp(5) ≈ 148
+        x_target_masked = x_target.clone()
         
-        # Check for any invalid values
-        if torch.isnan(logvar_clamped).any() or torch.isinf(logvar_clamped).any():
-            logger.warning("NaN or Inf detected in logvar - using fallback MSE")
-            return F.mse_loss(mu, x, reduction='mean')
+        # Assuming each clinical feature has 4 values (min, max, mean, std) and 1 missing flag
+        # E.g., for 6 clinical features: indices 0-3 (HR), 4-7 (RR), 8-11 (SpO2), etc.
+        n_clinical_features = self.missing_dim
+        features_per_clinical = 4  # min, max, mean, std
         
-        if torch.isnan(mu).any() or torch.isinf(mu).any():
-            logger.warning("NaN or Inf detected in mu - using fallback MSE")
-            return F.mse_loss(torch.zeros_like(x), x, reduction='mean')
+        for i in range(n_clinical_features):
+            # Get missing flag for this clinical feature
+            missing_flag = x_missing[:, i]  # [batch_size]
+            
+            # Zero out all 4 statistics when missing
+            start_idx = i * features_per_clinical
+            end_idx = start_idx + features_per_clinical
+            
+            # Use broadcasting to set values to 0 where missing_flag == 1
+            if end_idx <= x_target.shape[1]:  # Safety check
+                x_target_masked[:, start_idx:end_idx] = x_target_masked[:, start_idx:end_idx] * (1 - missing_flag.unsqueeze(1))
         
-        # Compute NLL with numerical stability
-        inv_var = torch.exp(-logvar_clamped)  # Max exp(5) ≈ 148, manageable
-        mse_term = (x - mu) ** 2 * inv_var
-        
-        # Check for explosion in MSE term
-        if torch.isnan(mse_term).any() or torch.isinf(mse_term).any():
-            logger.warning("MSE term explosion - using fallback MSE")
-            return F.mse_loss(mu, x, reduction='mean')
-        
-        nll = 0.5 * (logvar_clamped + mse_term)
-        
-        # STRENGTHENED: Stronger regularization to prevent variance collapse/explosion  
-        logvar_penalty = 0.5 * torch.mean(logvar_clamped ** 2)  # Increased from 0.1 to 0.5
-        
-        total_nll = torch.mean(nll) + logvar_penalty
-        
-        # Final safety check
-        if torch.isnan(total_nll) or torch.isinf(total_nll):
-            logger.error("Total NLL explosion detected! Using MSE fallback")
-            return F.mse_loss(mu, x, reduction='mean')
-        
-        return total_nll
+        return x_target_masked
     
-    def compute_reconstruction_loss(self, x: torch.Tensor, decoder_output) -> torch.Tensor:
-        """EMERGENCY FIX: Special handling for binary missing indicator features"""
-        if self.use_heteroscedastic and not self.use_safe_mode:
-            # decoder_output is (mu, logvar) tuple
-            mu, logvar = decoder_output
-            return self.compute_safe_heteroscedastic_nll(x, mu, logvar)
+    def compute_reconstruction_loss(self, x_numeric: torch.Tensor, x_missing: torch.Tensor, x_recon: torch.Tensor) -> torch.Tensor:
+        """
+        SIMPLIFIED: Compute reconstruction loss only on clinical features (not demographics or missing flags)
+        Apply missing mask to override targets to 0 when features are missing
+        
+        Args:
+            x_numeric: Original numeric features [batch_size, numeric_dim]
+            x_missing: Missing flags [batch_size, missing_dim]
+            x_recon: Reconstructed features [batch_size, input_dim] (numeric + missing)
+            
+        Returns:
+            Reconstruction loss (MSE on clinical features only)
+        """
+        # Extract reconstructed numeric features (ignore reconstructed missing flags)
+        x_recon_numeric = x_recon[:, :self.numeric_dim]
+        
+        # Apply missing mask to target
+        x_numeric_masked = self._apply_missing_mask(x_numeric, x_missing)
+        
+        # Compute loss only on clinical features (exclude demographics)
+        if len(self.clinical_indices) > 0:
+            x_clinical = x_numeric_masked[:, self.clinical_indices]
+            x_recon_clinical = x_recon_numeric[:, self.clinical_indices]
+            loss = F.mse_loss(x_recon_clinical, x_clinical, reduction='mean')
         else:
-            # decoder_output is x_recon tensor  
-            x_recon = decoder_output
-            
-            # CRITICAL FIX: Calculate indices dynamically based on actual dimensions
-            # numeric_dim includes all continuous features (clinical + demographic)
-            # missing_dim includes all binary missing indicators
-            continuous_indices = list(range(self.numeric_dim))  # All numeric features
-            binary_indices = list(range(self.numeric_dim, self.numeric_dim + self.missing_dim))  # All missing indicators
-            
-            total_loss = torch.tensor(0.0, device=x.device)
-            
-            # Handle continuous features with MSE
-            if len(continuous_indices) > 0:
-                x_cont = x[:, continuous_indices] 
-                x_recon_cont = x_recon[:, continuous_indices]
-                cont_loss = F.mse_loss(x_cont, x_recon_cont, reduction='mean')
-                
-                # DIAGNOSTIC: Log if continuous loss is very high
-                if cont_loss > 100:
-                    logger.error(f"VERY HIGH CONTINUOUS RECONSTRUCTION LOSS: {cont_loss.item():.6f}")
-                    # Find worst features
-                    per_feature_loss = ((x_cont - x_recon_cont) ** 2).mean(dim=0)
-                    worst_idx = per_feature_loss.argmax().item()
-                    logger.error(f"  Worst feature index: {worst_idx}, loss: {per_feature_loss[worst_idx].item():.6f}")
-                    logger.error(f"  Feature {worst_idx} - x range: [{x_cont[:, worst_idx].min().item():.4f}, {x_cont[:, worst_idx].max().item():.4f}]")
-                    logger.error(f"  Feature {worst_idx} - x_recon range: [{x_recon_cont[:, worst_idx].min().item():.4f}, {x_recon_cont[:, worst_idx].max().item():.4f}]")
-                    logger.error(f"  Top 5 worst features: {per_feature_loss.topk(5).indices.tolist()}")
-                    logger.error(f"  Their losses: {per_feature_loss.topk(5).values.tolist()}")
-                
-                total_loss += cont_loss
-            
-            # CRITICAL FIX: Handle binary features with BCE loss (safe for autocast)
-            if len(binary_indices) > 0:
-                x_bin = x[:, binary_indices]  # True binary values (0 or 1)
-                x_recon_bin_logits = x_recon[:, binary_indices]  # Raw logits from decoder
-                
-                # Use BCE with logits loss (safer for mixed precision and more numerically stable!)
-                binary_loss = F.binary_cross_entropy_with_logits(x_recon_bin_logits, x_bin, reduction='mean')
-                total_loss += binary_loss * 0.1  # Scale down binary loss contribution
-                
-                # OPTIMIZED: Log worst performing features less frequently for speed
-                if self.training and torch.rand(1).item() < 0.005:  # 0.5% of batches
-                    # Calculate per-feature MSE for logging
-                    with torch.no_grad():
-                        cont_mse = F.mse_loss(x_cont, x_recon_cont, reduction='none').mean(0) if len(continuous_indices) > 0 else torch.tensor([])
-                        # For binary features, convert logits to probabilities for MSE calculation
-                        x_recon_bin_prob = torch.sigmoid(x_recon_bin_logits)
-                        bin_mse = F.mse_loss(x_bin, x_recon_bin_prob, reduction='none').mean(0) if len(binary_indices) > 0 else torch.tensor([])
-                        
-                        # Combine for logging
-                        all_mse = torch.zeros(x.size(1), device=x.device)
-                        if len(continuous_indices) > 0:
-                            all_mse[continuous_indices] = cont_mse
-                        if len(binary_indices) > 0:
-                            all_mse[binary_indices] = bin_mse
-                        
-                        worst_features = torch.topk(all_mse, k=min(5, len(all_mse))).indices
-                        logger.info(f"Worst reconstruction features: {worst_features.tolist()}, MSE: {all_mse[worst_features].tolist()}")
-            
-            return total_loss
+            loss = torch.tensor(0.0, device=x_numeric.device)
+        
+        return loss
     
-    def compute_safe_heteroscedastic_nll(self, x: torch.Tensor, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
-        """FIXED: Safe heteroscedastic NLL with demographic feature protection"""
-        # Handle demographic features with standard MSE (they have very different scales)
-        if len(self.demographic_indices) > 0:
-            clinical_indices = [i for i in range(x.shape[1]) if i not in self.demographic_indices]
+    def compute_cycle_loss(self, x_numeric: torch.Tensor, x_missing: torch.Tensor, x_cycle: torch.Tensor) -> torch.Tensor:
+        """
+        SIMPLIFIED: Compute cycle consistency loss only on clinical features
+        Apply missing mask to override targets to 0 when features are missing
+        
+        Args:
+            x_numeric: Original numeric features [batch_size, numeric_dim]
+            x_missing: Missing flags [batch_size, missing_dim]
+            x_cycle: Cycled features [batch_size, input_dim] (numeric + missing)
             
-            total_loss = 0.0
-            
-            # Clinical features: use heteroscedastic NLL
-            if len(clinical_indices) > 0:
-                clinical_indices = torch.tensor(clinical_indices, device=x.device)
-                x_clinical = x[:, clinical_indices]
-                mu_clinical = mu[:, clinical_indices]
-                logvar_clinical = logvar[:, clinical_indices]
-                
-                clinical_loss = self.compute_heteroscedastic_nll(x_clinical, mu_clinical, logvar_clinical)
-                total_loss += clinical_loss * (len(clinical_indices) / x.shape[1])  # Weight by proportion
-            
-            # Demographic features: use standard MSE (safer)
-            demographic_indices = torch.tensor(self.demographic_indices, device=x.device)
-            x_demo = x[:, demographic_indices]
-            mu_demo = mu[:, demographic_indices]
-            
-            demo_loss = F.mse_loss(mu_demo, x_demo, reduction='mean')
-            total_loss += demo_loss * (len(self.demographic_indices) / x.shape[1])  # Weight by proportion
-            
-            return total_loss
+        Returns:
+            Cycle consistency loss (MSE on clinical features only)
+        """
+        # Extract cycled numeric features (ignore cycled missing flags)
+        x_cycle_numeric = x_cycle[:, :self.numeric_dim]
+        
+        # Apply missing mask to target
+        x_numeric_masked = self._apply_missing_mask(x_numeric, x_missing)
+        
+        # Compute loss only on clinical features (exclude demographics)
+        if len(self.clinical_indices) > 0:
+            x_clinical = x_numeric_masked[:, self.clinical_indices]
+            x_cycle_clinical = x_cycle_numeric[:, self.clinical_indices]
+            loss = F.mse_loss(x_cycle_clinical, x_clinical, reduction='mean')
         else:
-            # No demographic features identified, use full heteroscedastic
-            return self.compute_heteroscedastic_nll(x, mu, logvar)
+            loss = torch.tensor(0.0, device=x_numeric.device)
+        
+        return loss
     
-    def compute_cycle_loss(self, x: torch.Tensor, x_cycle: torch.Tensor) -> torch.Tensor:
-        """IMPROVED: Per-feature standardized cycle consistency loss (works with heteroscedastic)"""
-        # Note: x_cycle is already the mean (mu) from cycle_forward when using heteroscedastic
-        if not self.use_heteroscedastic:
-            # MAJOR FIX: Just use simple MSE - feature standardization was causing explosion!
-            # The original approach of dividing by feature_std was unstable when std is tiny
-            return F.mse_loss(x_cycle, x, reduction='mean')
-        else:
-            # Heteroscedastic case - use MSE directly since we're comparing against original data
-            # MAJOR FIX: Don't multiply by n_features - just use standard MSE 
-            return F.mse_loss(x_cycle, x, reduction='mean')
+    def _get_demographic_groups(self, age: torch.Tensor, gender: torch.Tensor) -> torch.Tensor:
+        """
+        Partition samples into coarse demographic groups based on age buckets and gender
+        
+        Args:
+            age: Age values [batch_size]
+            gender: Gender values [batch_size] (0 or 1)
+            
+        Returns:
+            Group IDs [batch_size] - unique ID for each demographic group
+        """
+        # Create age buckets (e.g., 10-year intervals)
+        age_buckets = (age / self.wasserstein_age_bucket_years).long()
+        
+        # Combine age bucket and gender into a single group ID
+        # group_id = age_bucket * 2 + gender
+        group_ids = age_buckets * 2 + gender.long()
+        
+        return group_ids
     
-    def compute_covariance_loss(self, x_translated: torch.Tensor, x_target: torch.Tensor) -> torch.Tensor:
-        """FIXED: Numerically stable covariance matching loss"""
-        def compute_stable_cov_matrix(x):
-            # x: (N, F) - center the features
-            if x.shape[0] < 2:
-                return torch.eye(x.shape[1], device=x.device, dtype=x.dtype) * 1e-6
+    def _update_worst_features(self, x_translated: torch.Tensor, x_target: torch.Tensor):
+        """
+        Update worst-performing features based on current 1-D Wasserstein distances
+        This is called periodically (every N epochs) to adapt to training progress
+        
+        Args:
+            x_translated: Translated features
+            x_target: Target features
+        """
+        # Only compute clinical features (exclude demographics)
+        if len(self.clinical_indices) == 0:
+            return
+        
+        x_trans_clinical = x_translated[:, self.clinical_indices]
+        x_target_clinical = x_target[:, self.clinical_indices]
+        
+        # Compute 1-D Wasserstein for each clinical feature
+        feature_wasserstein = []
+        for i in range(x_trans_clinical.shape[1]):
+            x_trans_i = x_trans_clinical[:, i]
+            x_target_i = x_target_clinical[:, i]
             
-            x_centered = x - x.mean(dim=0, keepdim=True)
-            
-            # Add numerical stability
-            if torch.isnan(x_centered).any() or torch.isinf(x_centered).any():
-                return torch.eye(x.shape[1], device=x.device, dtype=x.dtype) * 1e-6
-            
-            # Use more stable covariance computation
-            n_samples = x.shape[0]
-            cov = (x_centered.t() @ x_centered) / max(n_samples - 1, 1)
-            
-            # Add regularization to prevent singular matrices
-            cov = cov + torch.eye(cov.shape[0], device=cov.device, dtype=cov.dtype) * 1e-6
-            
-            # Clamp to prevent extreme values
-            cov = torch.clamp(cov, min=-1e6, max=1e6)
-            
-            return cov
-        
-        if x_translated.shape[0] < 2 or x_target.shape[0] < 2:
-            return torch.tensor(0.0, device=self.device)
-        
-        # Ensure tensors are finite
-        if torch.isnan(x_translated).any() or torch.isinf(x_translated).any():
-            return torch.tensor(0.0, device=self.device)
-        if torch.isnan(x_target).any() or torch.isinf(x_target).any():
-            return torch.tensor(0.0, device=self.device)
-        
-        cov_translated = compute_stable_cov_matrix(x_translated)
-        cov_target = compute_stable_cov_matrix(x_target)
-        
-        # Frobenius norm of covariance difference with clipping
-        cov_diff = cov_translated - cov_target
-        
-        if torch.isnan(cov_diff).any() or torch.isinf(cov_diff).any():
-            return torch.tensor(0.0, device=self.device)
-        
-        cov_loss = torch.norm(cov_diff, p='fro')
-        
-        # MAJOR FIX: Normalize by matrix size to prevent scale domination  
-        n_features = cov_diff.shape[0]
-        cov_loss = cov_loss / n_features  # Scale down by feature count
-        
-        # Final safety clamp (adjusted for normalized scale)
-        cov_loss = torch.clamp(cov_loss, min=0, max=10)
-        
-        if torch.isnan(cov_loss) or torch.isinf(cov_loss):
-            return torch.tensor(0.0, device=self.device)
-        
-        return cov_loss
-    
-    def compute_mmd_loss(self, z_mimic: torch.Tensor, z_eicu: torch.Tensor) -> torch.Tensor:
-        """FIXED: Compute Maximum Mean Discrepancy loss with numerical stability"""
-        if z_mimic.size(0) == 0 or z_eicu.size(0) == 0:
-            return torch.tensor(0.0, device=self.device)
-        
-        # FIXED: Use stable sigma computation
-        if not hasattr(self, 'mmd_sigma') or self.mmd_sigma is None:
-            # Initialize sigma based on data statistics (once)
-            with torch.no_grad():
-                # Use median of pairwise distances but with stability
-                sample_size = min(100, z_mimic.size(0), z_eicu.size(0))
-                distances = torch.cdist(z_mimic[:sample_size], z_eicu[:sample_size])
-                self.mmd_sigma = torch.median(distances).item()
-                
-                # Ensure sigma is reasonable
-                if self.mmd_sigma < 1e-6:
-                    self.mmd_sigma = 1.0
-                    
-                logger.info(f"MMD sigma initialized to: {self.mmd_sigma:.6f}")
-        
-        # MMD computation with fixed sigma
-        mmd = self._rbf_mmd(z_mimic, z_eicu, self.mmd_sigma)
-        
-        # FIXED: Clamp to prevent explosion
-        mmd = torch.clamp(mmd, min=0, max=10.0)
-        
-        return mmd
-    
-    def _rbf_mmd(self, x: torch.Tensor, y: torch.Tensor, sigma: float) -> torch.Tensor:
-        """FIXED: Compute RBF MMD with memory optimization and numerical stability"""
-        # Sample if tensors are too large (memory optimization)
-        max_samples = 500
-        if x.size(0) > max_samples:
-            idx_x = torch.randperm(x.size(0), device=x.device)[:max_samples]
-            x_sample = x[idx_x]
-        else:
-            x_sample = x
-            
-        if y.size(0) > max_samples:
-            idx_y = torch.randperm(y.size(0), device=y.device)[:max_samples]
-            y_sample = y[idx_y]
-        else:
-            y_sample = y
-        
-        # Compute kernel matrices with numerical stability
-        gamma = 1.0 / (2 * sigma**2)
-        
-        xx_dist = torch.cdist(x_sample, x_sample)
-        yy_dist = torch.cdist(y_sample, y_sample)
-        xy_dist = torch.cdist(x_sample, y_sample)
-        
-        # RBF kernels
-        K_xx = torch.exp(-gamma * xx_dist)
-        K_yy = torch.exp(-gamma * yy_dist)
-        K_xy = torch.exp(-gamma * xy_dist)
-        
-        # Remove diagonal for unbiased estimation
-        m, n = K_xx.size(0), K_yy.size(0)
-        if m > 1:
-            K_xx = K_xx - torch.diag(torch.diag(K_xx))
-            xx_term = K_xx.sum() / (m * (m - 1))
-        else:
-            xx_term = K_xx.mean()
-            
-        if n > 1:
-            K_yy = K_yy - torch.diag(torch.diag(K_yy))
-            yy_term = K_yy.sum() / (n * (n - 1))
-        else:
-            yy_term = K_yy.mean()
-        
-        xy_term = K_xy.mean()
-        
-        mmd = xx_term + yy_term - 2 * xy_term
-        return mmd
-    
-    def compute_wasserstein_loss(self, x_translated: torch.Tensor, x_target: torch.Tensor) -> torch.Tensor:
-        """Compute per-feature 1-Wasserstein distance (Earth Mover's Distance) - stronger than MMD"""
-        if x_translated.shape[0] == 0 or x_target.shape[0] == 0:
-            return torch.tensor(0.0, device=self.device)
-        
-        total_wasserstein = 0.0
-        n_features = x_translated.shape[1]
-        
-        for i in range(n_features):
-            # Extract individual feature
-            x_trans_i = x_translated[:, i]
-            x_target_i = x_target[:, i]
-            
-            # Sort both distributions - Wasserstein distance is the L1 distance between CDFs
+            # Sort both distributions
             x_trans_sorted, _ = torch.sort(x_trans_i)
             x_target_sorted, _ = torch.sort(x_target_i)
             
-            # Handle different sample sizes by interpolation/resampling
+            # Handle different sample sizes
             if len(x_trans_sorted) != len(x_target_sorted):
                 min_len = min(len(x_trans_sorted), len(x_target_sorted))
                 if len(x_trans_sorted) > min_len:
-                    indices = torch.linspace(0, len(x_trans_sorted) - 1, min_len, dtype=torch.long, device=self.device)
+                    indices = torch.linspace(0, len(x_trans_sorted) - 1, min_len, dtype=torch.long, device=x_translated.device)
                     x_trans_sorted = x_trans_sorted[indices]
                 else:
-                    indices = torch.linspace(0, len(x_target_sorted) - 1, min_len, dtype=torch.long, device=self.device)
+                    indices = torch.linspace(0, len(x_target_sorted) - 1, min_len, dtype=torch.long, device=x_translated.device)
                     x_target_sorted = x_target_sorted[indices]
             
-            # 1-Wasserstein distance is L1 norm of sorted samples
+            # 1-D Wasserstein distance
             wasserstein_i = torch.mean(torch.abs(x_trans_sorted - x_target_sorted))
-            total_wasserstein += wasserstein_i
+            feature_wasserstein.append(wasserstein_i.item())
         
-        return total_wasserstein / n_features  # Average across features
+        # Get worst-K features
+        feature_wasserstein_tensor = torch.tensor(feature_wasserstein, device=x_translated.device)
+        worst_k = min(self.wasserstein_worst_k, len(feature_wasserstein))
+        worst_indices = torch.topk(feature_wasserstein_tensor, k=worst_k).indices
+        
+        # Convert to global indices (clinical_indices)
+        self.worst_feature_indices = [self.clinical_indices[i] for i in worst_indices.cpu().numpy()]
+        
+        logger.info(f"Updated worst-{worst_k} features: indices={self.worst_feature_indices}, "
+                   f"Wasserstein distances={[feature_wasserstein[i] for i in worst_indices.cpu().numpy()]}")
     
-    def compute_per_feature_mmd(self, x_mimic: torch.Tensor, x_eicu: torch.Tensor, 
-                               feature_indices: list = None) -> torch.Tensor:
+    def compute_conditional_wasserstein_loss(self, x_translated: torch.Tensor, x_target: torch.Tensor,
+                                            age_translated: torch.Tensor, gender_translated: torch.Tensor,
+                                            age_target: torch.Tensor, gender_target: torch.Tensor,
+                                            batch_idx: int) -> torch.Tensor:
         """
-        Compute MMD loss for specific features to target problematic ones
+        Compute conditional 1-D Wasserstein loss partitioned by demographics (age buckets × gender)
+        Only computed every N steps and only on worst-K features
         
         Args:
-            x_mimic: MIMIC data [batch_size, n_features]
-            x_eicu: eICU data [batch_size, n_features] 
-            feature_indices: List of feature indices to compute MMD for
+            x_translated: Translated features [batch_size, numeric_dim]
+            x_target: Target features [batch_size, numeric_dim]
+            age_translated: Age values for translated samples [batch_size]
+            gender_translated: Gender values for translated samples [batch_size]
+            age_target: Age values for target samples [batch_size]
+            gender_target: Gender values for target samples [batch_size]
+            batch_idx: Current batch index (to determine if we should compute this step)
             
         Returns:
-            Summed MMD loss for specified features
+            Conditional Wasserstein loss
         """
-        if x_mimic.size(0) == 0 or x_eicu.size(0) == 0:
-            return torch.tensor(0.0, device=self.device)
+        # Only compute every N steps
+        if batch_idx % self.wasserstein_compute_every_n_steps != 0:
+            return torch.tensor(0.0, device=x_translated.device)
         
-        if feature_indices is None:
-            # Default to all features
-            feature_indices = list(range(x_mimic.shape[1]))
+        # Check if we have worst features identified
+        if len(self.worst_feature_indices) == 0:
+            # First time - use all clinical features
+            self.worst_feature_indices = self.clinical_indices[:self.wasserstein_worst_k]
         
-        # Limit to available features
-        max_features = min(x_mimic.shape[1], x_eicu.shape[1])
-        feature_indices = [idx for idx in feature_indices if idx < max_features]
+        # Get demographic groups
+        groups_translated = self._get_demographic_groups(age_translated, gender_translated)
+        groups_target = self._get_demographic_groups(age_target, gender_target)
         
-        if len(feature_indices) == 0:
-            return torch.tensor(0.0, device=self.device)
+        # Find common groups with sufficient samples
+        unique_groups_translated = torch.unique(groups_translated)
+        unique_groups_target = torch.unique(groups_target)
+        common_groups = set(unique_groups_translated.cpu().numpy()) & set(unique_groups_target.cpu().numpy())
         
-        total_mmd = 0.0
-        sigma = 1.0  # Fixed sigma for per-feature MMD
+        if len(common_groups) == 0:
+            return torch.tensor(0.0, device=x_translated.device)
         
-        for feat_idx in feature_indices:
-            # Extract single feature [batch_size, 1]
-            mimic_feat = x_mimic[:, feat_idx:feat_idx+1]
-            eicu_feat = x_eicu[:, feat_idx:feat_idx+1]
+        total_loss = 0.0
+        n_groups_processed = 0
+        
+        # For each common group
+        for group_id in common_groups:
+            # Get samples in this group
+            mask_translated = (groups_translated == group_id)
+            mask_target = (groups_target == group_id)
             
-            # Compute single-feature MMD
-            feat_mmd = self._rbf_mmd_single_feature(mimic_feat, eicu_feat, sigma)
-            total_mmd += feat_mmd
+            n_trans = mask_translated.sum().item()
+            n_target = mask_target.sum().item()
             
-        return total_mmd / len(feature_indices)  # Average over features
-    
-    def compute_feature_reconstruction_loss(self, z: torch.Tensor, x_orig: torch.Tensor) -> torch.Tensor:
-        """IMPROVEMENT 4: Feature reconstruction loss to prevent mode collapse"""
-        x_recon_from_z = self.feature_reconstruction_head(z)
-        
-        # CRITICAL FIX: Constrain feature reconstruction head output to prevent explosion
-        x_recon_from_z = torch.clamp(x_recon_from_z, min=-10, max=10)  # Reasonable range for normalized features
-        
-        # Additional safety check for NaN/Inf
-        if torch.isnan(x_recon_from_z).any() or torch.isinf(x_recon_from_z).any():
-            logger.warning("NaN/Inf detected in feature reconstruction - using zeros")
-            x_recon_from_z = torch.zeros_like(x_orig)
-        
-        return F.mse_loss(x_recon_from_z, x_orig, reduction='mean')
-    
-    def compute_domain_adversarial_loss(self, z: torch.Tensor, domain: torch.Tensor) -> torch.Tensor:
-        """IMPROVEMENT 5: Domain adversarial loss for domain-invariant features"""
-        # MAJOR FIX: Don't over-constrain - domain classifier needs to see actual differences!
-        # Only apply minimal safety checks, keep the latent space information
-        z_safe = torch.clamp(z, min=-20, max=20)  # Much wider range to preserve domain differences
-        
-        # Forward pass through domain classifier
-        domain_pred = self.domain_classifier(z_safe)
-        
-        # Additional safety check for domain classifier output
-        if torch.isnan(domain_pred).any() or torch.isinf(domain_pred).any():
-            logger.warning("NaN/Inf detected in domain classifier - using fallback loss")
-            return torch.tensor(0.0, device=z.device, requires_grad=True)
-        
-        # Binary cross-entropy loss
-        domain_loss = F.cross_entropy(domain_pred, domain)
-        
-        # DIAGNOSTIC: Log domain classifier accuracy to debug adversarial training
-        with torch.no_grad():
-            domain_pred_probs = F.softmax(domain_pred, dim=1)
-            predicted_domains = torch.argmax(domain_pred_probs, dim=1)
-            accuracy = (predicted_domains == domain).float().mean().item()
+            # Skip groups with insufficient samples
+            if n_trans < self.wasserstein_min_group_size or n_target < self.wasserstein_min_group_size:
+                continue
             
-            # Log accuracy occasionally to monitor adversarial balance
-            if torch.rand(1).item() < 0.01:  # 1% of batches
-                mimic_count = (domain == 1).sum().item()
-                eicu_count = (domain == 0).sum().item()
-                logger.info(f"Domain classifier accuracy: {accuracy:.3f} (should start high, then decrease as encoder improves)")
+            # Extract group samples
+            x_trans_group = x_translated[mask_translated]
+            x_target_group = x_target[mask_target]
+            
+            # Compute 1-D Wasserstein for worst-K features
+            group_loss = 0.0
+            for feat_idx in self.worst_feature_indices:
+                x_trans_feat = x_trans_group[:, feat_idx]
+                x_target_feat = x_target_group[:, feat_idx]
                 
-                # Only warn about imbalance if it's significant (>10% difference)
-                imbalance = abs(mimic_count - eicu_count)
-                expected_each = (mimic_count + eicu_count) / 2
-                imbalance_pct = (imbalance / expected_each) * 100 if expected_each > 0 else 0
+                # Sort both distributions
+                x_trans_sorted, _ = torch.sort(x_trans_feat)
+                x_target_sorted, _ = torch.sort(x_target_feat)
                 
-                if imbalance_pct > 15:  # Warn if >15% imbalance (e.g., 55 vs 73 in batch of 128)
-                    logger.warning(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (imbalance {imbalance_pct:.1f}% could cause ln(2) stagnation)")
-                else:
-                    logger.info(f"Batch domain balance: MIMIC={mimic_count}, eICU={eicu_count} (balanced ✓)")
-        
-        # FIXED: Return positive loss - adversarial training handled by gradient reversal in optimizer
-        return domain_loss
-    
-    def _rbf_mmd_single_feature(self, x: torch.Tensor, y: torch.Tensor, sigma: float) -> torch.Tensor:
-        """
-        Compute RBF MMD for a single feature
-        
-        Args:
-            x, y: Single feature tensors [batch_size, 1]
-            sigma: RBF kernel bandwidth
+                # Handle different sample sizes
+                if len(x_trans_sorted) != len(x_target_sorted):
+                    min_len = min(len(x_trans_sorted), len(x_target_sorted))
+                    if len(x_trans_sorted) > min_len:
+                        indices = torch.linspace(0, len(x_trans_sorted) - 1, min_len, dtype=torch.long, device=x_translated.device)
+                        x_trans_sorted = x_trans_sorted[indices]
+                    else:
+                        indices = torch.linspace(0, len(x_target_sorted) - 1, min_len, dtype=torch.long, device=x_translated.device)
+                        x_target_sorted = x_target_sorted[indices]
+                
+                # 1-D Wasserstein distance
+                wasserstein_feat = torch.mean(torch.abs(x_trans_sorted - x_target_sorted))
+                group_loss += wasserstein_feat
             
-        Returns:
-            MMD value for the feature
-        """
-        # Sample if too large (memory optimization)
-        max_samples = 200
-        if x.size(0) > max_samples:
-            idx_x = torch.randperm(x.size(0), device=x.device)[:max_samples]
-            x_sample = x[idx_x]
+            # Average over features
+            total_loss += group_loss / len(self.worst_feature_indices)
+            n_groups_processed += 1
+        
+        # Average over groups
+        if n_groups_processed > 0:
+            return total_loss / n_groups_processed
         else:
-            x_sample = x
-            
-        if y.size(0) > max_samples:
-            idx_y = torch.randperm(y.size(0), device=y.device)[:max_samples]
-            y_sample = y[idx_y]
-        else:
-            y_sample = y
-        
-        # Compute pairwise distances 
-        gamma = 1.0 / (2 * sigma**2)
-        
-        xx_dist = torch.cdist(x_sample, x_sample, p=2)  
-        yy_dist = torch.cdist(y_sample, y_sample, p=2)
-        xy_dist = torch.cdist(x_sample, y_sample, p=2)
-        
-        # RBF kernels
-        K_xx = torch.exp(-gamma * xx_dist**2)
-        K_yy = torch.exp(-gamma * yy_dist**2)
-        K_xy = torch.exp(-gamma * xy_dist**2)
-        
-        # MMD computation
-        m, n = K_xx.size(0), K_yy.size(0)
-        if m > 1:
-            K_xx_diag_removed = K_xx - torch.diag(torch.diag(K_xx))
-            xx_term = K_xx_diag_removed.sum() / (m * (m - 1))
-        else:
-            xx_term = K_xx.mean()
-            
-        if n > 1:
-            K_yy_diag_removed = K_yy - torch.diag(torch.diag(K_yy))
-            yy_term = K_yy_diag_removed.sum() / (n * (n - 1))
-        else:
-            yy_term = K_yy.mean()
-        
-        xy_term = K_xy.mean()
-        
-        mmd = xx_term + yy_term - 2 * xy_term
-        return torch.clamp(mmd, min=0, max=5.0)  # Prevent explosion
-    
-    def get_kl_weight(self) -> float:
-        """Get KL weight with warmup"""
-        if self.current_epoch < self.kl_warmup_epochs:
-            return self.kl_weight * (self.current_epoch + 1) / self.kl_warmup_epochs
-        return self.kl_weight
+            return torch.tensor(0.0, device=x_translated.device)
     
     def training_step(self, batch: Dict, batch_idx: int) -> torch.Tensor:
-        """IMPROVED: Training step with per-dataset normalization and new losses"""
+        """SIMPLIFIED: Training step with only three losses: reconstruction, cycle, and conditional Wasserstein"""
         # Extract data
-        x_numeric = batch['numeric']
-        x_missing = batch['missing']
-        domain = batch['domain']
+        x_numeric = batch['numeric']  # [batch_size, numeric_dim]
+        x_missing = batch['missing']  # [batch_size, missing_dim]
+        domain = batch['domain']  # [batch_size]
         
-        # Combine features
+        # Combine features for model input
         x = torch.cat([x_numeric, x_missing], dim=1)
-        
-        # CRITICAL VALIDATION: Check for extreme values that would cause explosion
-        if torch.abs(x).max() > 1000:
-            logger.error(f"EXTREME VALUES DETECTED in batch {batch_idx}!")
-            logger.error(f"  x range: [{x.min().item():.2f}, {x.max().item():.2f}]")
-            logger.error(f"  x_numeric range: [{x_numeric.min().item():.2f}, {x_numeric.max().item():.2f}]")
-            # Clip as emergency fallback
-            x = torch.clamp(x, min=-100, max=100)
-            logger.error(f"  Emergency clipping applied: [{x.min().item():.2f}, {x.max().item():.2f}]")
         
         # Separate by domain
         mimic_mask = (domain == 1)
         eicu_mask = (domain == 0)
         
-        # Model-side normalization removed – use inputs as provided by preprocessing
-        x_normalized = x
+        # Update worst features dynamically if it's time
+        if (self.current_epoch != self.last_worst_update_epoch and 
+            self.current_epoch % self.wasserstein_update_worst_every_n_epochs == 0 and
+            mimic_mask.any() and eicu_mask.any()):
+            with torch.no_grad():
+                # Get translations for worst feature analysis
+                x_eicu = x[eicu_mask]
+                mu_eicu, _ = self.encoder(x_eicu)
+                x_eicu_to_mimic = self.decoder_mimic(mu_eicu)
+                x_mimic_real = x[mimic_mask]
+                
+                # Update worst features based on current Wasserstein distances
+                self._update_worst_features(
+                    x_eicu_to_mimic[:, :self.numeric_dim], 
+                    x_mimic_real[:, :self.numeric_dim]
+                )
+                self.last_worst_update_epoch = self.current_epoch
         
-        # Forward pass with normalized features
-        outputs = self.forward(x_normalized, domain)
+        # Forward pass
+        outputs = self.forward(x, domain)
         z, mu, logvar, x_recon = outputs['z'], outputs['mu'], outputs['logvar'], outputs['x_recon']
         
-        # CRITICAL FIX: Compare normalized inputs with normalized reconstructions!
-        rec_loss = self.compute_reconstruction_loss(x_normalized, x_recon)
-        kl_loss = self.compute_kl_loss(mu, logvar)
+        # === LOSS 1: Reconstruction Loss ===
+        # Only on clinical features, with missing mask applied
+        rec_loss = self.compute_reconstruction_loss(x_numeric, x_missing, x_recon)
         
-        # Cycle consistency loss
+        # === LOSS 2: Cycle Consistency Loss ===
         cycle_loss = torch.tensor(0.0, device=self.device)
         if mimic_mask.any() and eicu_mask.any():
-            # CRITICAL FIX: Use normalized features for cycle consistency too!
             # eICU -> MIMIC -> eICU
             if eicu_mask.any():
-                x_eicu_norm = x_normalized[eicu_mask]
-                cycle_out_eicu = self.cycle_forward(x_eicu_norm, 0, 1)
-                cycle_loss += self.compute_cycle_loss(x_eicu_norm, cycle_out_eicu['x_cycle'])
+                x_eicu = x[eicu_mask]
+                x_eicu_numeric = x_numeric[eicu_mask]
+                x_eicu_missing = x_missing[eicu_mask]
+                cycle_out_eicu = self.cycle_forward(x_eicu, 0, 1)
+                cycle_loss += self.compute_cycle_loss(x_eicu_numeric, x_eicu_missing, cycle_out_eicu['x_cycle'])
             
             # MIMIC -> eICU -> MIMIC
             if mimic_mask.any():
-                x_mimic_norm = x_normalized[mimic_mask]
-                cycle_out_mimic = self.cycle_forward(x_mimic_norm, 1, 0)
-                cycle_loss += self.compute_cycle_loss(x_mimic_norm, cycle_out_mimic['x_cycle'])
+                x_mimic = x[mimic_mask]
+                x_mimic_numeric = x_numeric[mimic_mask]
+                x_mimic_missing = x_missing[mimic_mask]
+                cycle_out_mimic = self.cycle_forward(x_mimic, 1, 0)
+                cycle_loss += self.compute_cycle_loss(x_mimic_numeric, x_mimic_missing, cycle_out_mimic['x_cycle'])
         
-        # MMD loss
-        mmd_loss = torch.tensor(0.0, device=self.device)
-        if mimic_mask.any() and eicu_mask.any():
-            z_mimic = z[mimic_mask]
-            z_eicu = z[eicu_mask]
-            mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
-        
-        # IMPROVEMENT 4: Feature reconstruction loss (already using normalized features - correct!)
-        feature_recon_loss = torch.tensor(0.0, device=self.device)
-        if self.feature_recon_weight > 0:
-            feature_recon_loss = self.compute_feature_reconstruction_loss(z, x_normalized)
-        
-        # IMPROVEMENT 5: Domain adversarial loss
-        domain_adv_loss = torch.tensor(0.0, device=self.device)
-        if self.domain_adversarial_weight > 0:
-            domain_adv_loss = self.compute_domain_adversarial_loss(z, domain)
-        
-        # IMPROVED: Covariance loss (now numerically stable) - FIXED: Use normalized data!
-        cov_loss = torch.tensor(0.0, device=self.device)
-        if mimic_mask.any() and eicu_mask.any():
-            # Translate eICU to MIMIC style and compare covariance with real MIMIC (NORMALIZED!)
-            x_eicu_norm = x_normalized[eicu_mask]
-            z_eicu_only = z[eicu_mask]
-            decoder_output_mimic = self.decoder_mimic(z_eicu_only)
-            x_mimic_real_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
-            
-            # Extract mean if using heteroscedastic
-            if self.use_heteroscedastic:
-                x_eicu_to_mimic, _ = decoder_output_mimic  # Use mean, ignore logvar
-            else:
-                x_eicu_to_mimic = decoder_output_mimic
-            
-            cov_loss += self.compute_covariance_loss(x_eicu_to_mimic, x_mimic_real_norm)  # FIXED!
-            
-            # Translate MIMIC to eICU style and compare covariance with real eICU (NORMALIZED!)
-            x_mimic_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
-            z_mimic_only = z[mimic_mask]
-            decoder_output_eicu = self.decoder_eicu(z_mimic_only)
-            
-            # Extract mean if using heteroscedastic  
-            if self.use_heteroscedastic:
-                x_mimic_to_eicu, _ = decoder_output_eicu  # Use mean, ignore logvar
-            else:
-                x_mimic_to_eicu = decoder_output_eicu
-            
-            x_eicu_real_norm = x_normalized[eicu_mask]  # CRITICAL FIX: Use normalized!
-            cov_loss += self.compute_covariance_loss(x_mimic_to_eicu, x_eicu_real_norm)  # FIXED!
-            
-            # Covariance loss is now numerically stable, but keep one safety check
-            if torch.isnan(cov_loss) or torch.isinf(cov_loss):
-                logger.warning(f"Covariance instability detected at batch {batch_idx} - using zero")
-                cov_loss = torch.tensor(0.0, device=self.device)
-            
-            # IMPROVED: Per-feature MMD loss for worst-performing features
-            per_feature_mmd_loss = torch.tensor(0.0, device=self.device)
-            if self.per_feature_mmd_weight > 0:
-                # Target specific problematic feature indices (Temperature, HR_std, etc.)
-                worst_feature_indices = list(range(min(20, x.shape[1])))  # First 20 features as proxy
-                
-                # Compare translated eICU→MIMIC with real MIMIC (FIXED: Use normalized!)
-                per_feature_mmd_loss += self.compute_per_feature_mmd(
-                    x_eicu_to_mimic, x_mimic_real_norm, worst_feature_indices)  # FIXED!
-                
-                # Compare translated MIMIC→eICU with real eICU (FIXED: Use normalized!)
-                per_feature_mmd_loss += self.compute_per_feature_mmd(
-                    x_mimic_to_eicu, x_eicu_real_norm, worst_feature_indices)  # FIXED!
-        else:
-            per_feature_mmd_loss = torch.tensor(0.0, device=self.device)
-        
-        # NEW: Wasserstein loss for stronger distributional alignment
+        # === LOSS 3: Conditional Wasserstein Loss ===
         wasserstein_loss = torch.tensor(0.0, device=self.device)
         if mimic_mask.any() and eicu_mask.any() and self.wasserstein_weight > 0:
-            # Only compute if we have translations (reuse from above)
-            if hasattr(self, '_cached_translations'):
-                x_eicu_to_mimic, x_mimic_to_eicu, x_mimic_real, x_eicu_real = self._cached_translations
-                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic_real_norm)  # FIXED!
-                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu_real_norm)  # FIXED!
-            else:
-                # Recompute translations for Wasserstein (fallback) - FIXED: Use normalized data!
-                x_eicu_norm = x_normalized[eicu_mask]  # CRITICAL FIX: Use normalized!
-                x_mimic_norm = x_normalized[mimic_mask]  # CRITICAL FIX: Use normalized!
-                z_eicu_only = z[eicu_mask]
-                z_mimic_only = z[mimic_mask]
-                
-                decoder_output_mimic = self.decoder_mimic(z_eicu_only)
-                x_eicu_to_mimic = decoder_output_mimic[0] if self.use_heteroscedastic else decoder_output_mimic
-                
-                decoder_output_eicu = self.decoder_eicu(z_mimic_only)
-                x_mimic_to_eicu = decoder_output_eicu[0] if self.use_heteroscedastic else decoder_output_eicu
-                
-                wasserstein_loss += self.compute_wasserstein_loss(x_eicu_to_mimic, x_mimic_norm)  # FIXED!
-                wasserstein_loss += self.compute_wasserstein_loss(x_mimic_to_eicu, x_eicu_norm)  # FIXED!
+            # Get demographic feature indices (Age and Gender)
+            age_idx = self.demographic_indices[0] if len(self.demographic_indices) > 0 else self.numeric_dim - 2
+            gender_idx = self.demographic_indices[1] if len(self.demographic_indices) > 1 else self.numeric_dim - 1
+            
+            # Translate eICU -> MIMIC
+            x_eicu = x[eicu_mask]
+            mu_eicu, _ = self.encoder(x_eicu)
+            x_eicu_to_mimic = self.decoder_mimic(mu_eicu)
+            x_eicu_to_mimic_numeric = x_eicu_to_mimic[:, :self.numeric_dim]
+            
+            # Translate MIMIC -> eICU
+            x_mimic = x[mimic_mask]
+            mu_mimic, _ = self.encoder(x_mimic)
+            x_mimic_to_eicu = self.decoder_eicu(mu_mimic)
+            x_mimic_to_eicu_numeric = x_mimic_to_eicu[:, :self.numeric_dim]
+            
+            # Real samples
+            x_mimic_real_numeric = x_numeric[mimic_mask]
+            x_eicu_real_numeric = x_numeric[eicu_mask]
+            
+            # Compute conditional Wasserstein: eICU->MIMIC vs real MIMIC
+            wasserstein_loss += self.compute_conditional_wasserstein_loss(
+                x_eicu_to_mimic_numeric, x_mimic_real_numeric,
+                x_eicu_to_mimic_numeric[:, age_idx], x_eicu_to_mimic_numeric[:, gender_idx],
+                x_mimic_real_numeric[:, age_idx], x_mimic_real_numeric[:, gender_idx],
+                batch_idx
+            )
+            
+            # Compute conditional Wasserstein: MIMIC->eICU vs real eICU
+            wasserstein_loss += self.compute_conditional_wasserstein_loss(
+                x_mimic_to_eicu_numeric, x_eicu_real_numeric,
+                x_mimic_to_eicu_numeric[:, age_idx], x_mimic_to_eicu_numeric[:, gender_idx],
+                x_eicu_real_numeric[:, age_idx], x_eicu_real_numeric[:, gender_idx],
+                batch_idx
+            )
         
-        # Total loss with all components INCLUDING NEW IMPROVEMENTS
-        kl_weight = self.get_kl_weight()
+        # === Total Loss ===
         total_loss = (
             self.rec_weight * rec_loss +
-            kl_weight * kl_loss +
             self.cycle_weight * cycle_loss +
-            self.mmd_weight * mmd_loss +
-            self.cov_weight * cov_loss +
-            self.per_feature_mmd_weight * per_feature_mmd_loss +
-            self.wasserstein_weight * wasserstein_loss +
-            self.feature_recon_weight * feature_recon_loss +
-            self.domain_adversarial_weight * domain_adv_loss
+            self.wasserstein_weight * wasserstein_loss
         )
         
-        # Comprehensive logging
+        # Logging
         self.log('train_loss', total_loss, prog_bar=True)
         self.log('train_rec_loss', rec_loss)
-        self.log('train_kl_loss', kl_loss)
         self.log('train_cycle_loss', cycle_loss)
-        self.log('train_mmd_loss', mmd_loss)
-        self.log('train_cov_loss', cov_loss)
-        self.log('train_per_feature_mmd_loss', per_feature_mmd_loss)
         self.log('train_wasserstein_loss', wasserstein_loss)
-        self.log('train_feature_recon_loss', feature_recon_loss)
-        self.log('train_domain_adv_loss', domain_adv_loss)
-        self.log('kl_weight', kl_weight)
         
-        # OPTIMIZED: Less frequent detailed monitoring for faster training (every 100 batches)
-        if batch_idx % 100 == 0 and mimic_mask.any() and eicu_mask.any():
-            self._log_detailed_feature_metrics(x, outputs, domain, mimic_mask, eicu_mask)
+        # Detailed logging every N batches
+        if batch_idx % 50 == 0:
+            logger.info(f"Epoch {self.current_epoch}, Batch {batch_idx}: "
+                       f"total={total_loss.item():.4f}, rec={rec_loss.item():.4f}, "
+                       f"cycle={cycle_loss.item():.4f}, wasserstein={wasserstein_loss.item():.4f}")
         
-        # CRITICAL: DETAILED LOGGING to find explosion source - LOWERED THRESHOLD
-        # Log first batch of each epoch, every 50 batches, and any concerning losses
-        should_log = (batch_idx == 0 or 
-                     batch_idx % 50 == 0 or 
-                     total_loss > 1e3 or  # LOWERED from 1e10 to 1e3 to catch issues earlier
-                     rec_loss > 1e3 or 
-                     cycle_loss > 1e3 or
-                     feature_recon_loss > 1e3)
-        
-        if should_log:
-            logger.info(f"=" * 80)
-            logger.info(f"DETAILED LOSS BREAKDOWN (epoch {self.current_epoch}, batch {batch_idx}):")
-            logger.info(f"  rec_loss: {rec_loss.item():.6f} (weight: {self.rec_weight})")
-            logger.info(f"  kl_loss: {kl_loss.item():.6f} (weight: {kl_weight:.6f})")
-            logger.info(f"  cycle_loss: {cycle_loss.item():.6f} (weight: {self.cycle_weight})")
-            logger.info(f"  mmd_loss: {mmd_loss.item():.6f} (weight: {self.mmd_weight})")
-            logger.info(f"  cov_loss: {cov_loss.item():.6f} (weight: {self.cov_weight})")
-            logger.info(f"  per_feature_mmd_loss: {per_feature_mmd_loss.item():.6f} (weight: {self.per_feature_mmd_weight})")
-            logger.info(f"  wasserstein_loss: {wasserstein_loss.item():.6f} (weight: {self.wasserstein_weight})")
-            logger.info(f"  feature_recon_loss: {feature_recon_loss.item():.6f} (weight: {self.feature_recon_weight})")
-            logger.info(f"  domain_adv_loss: {domain_adv_loss.item():.6f} (weight: {self.domain_adversarial_weight})")
-            logger.info(f"  TOTAL: {total_loss.item():.6f}")
-            
-            # Add decoder output statistics when loss is concerning
-            if total_loss > 100 or rec_loss > 100:
-                logger.warning(f"CONCERNING LOSS DETECTED - Adding decoder output statistics:")
-                if self.use_heteroscedastic:
-                    x_recon_mu, x_recon_logvar = x_recon
-                    logger.warning(f"  x_recon_mu: min={x_recon_mu.min().item():.4f}, max={x_recon_mu.max().item():.4f}, "
-                                 f"mean={x_recon_mu.mean().item():.4f}, std={x_recon_mu.std().item():.4f}")
-                    logger.warning(f"  x_recon_logvar: min={x_recon_logvar.min().item():.4f}, max={x_recon_logvar.max().item():.4f}, "
-                                 f"mean={x_recon_logvar.mean().item():.4f}")
-                else:
-                    logger.warning(f"  x_recon: min={x_recon.min().item():.4f}, max={x_recon.max().item():.4f}, "
-                                 f"mean={x_recon.mean().item():.4f}, std={x_recon.std().item():.4f}")
-                logger.warning(f"  x_input: min={x.min().item():.4f}, max={x.max().item():.4f}, "
-                             f"mean={x.mean().item():.4f}, std={x.std().item():.4f}")
-                logger.warning(f"  z: min={z.min().item():.4f}, max={z.max().item():.4f}, "
-                             f"mean={z.mean().item():.4f}, std={z.std().item():.4f}")
-            logger.info(f"=" * 80)
-        
-        # CRITICAL: Final safety check to prevent training crashes
+        # Safety check
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            logger.error(f"Training explosion detected at batch {batch_idx}! Loss components:")
-            logger.error(f"  rec_loss: {rec_loss.item():.6f}")
-            logger.error(f"  kl_loss: {kl_loss.item():.6f}")
-            logger.error(f"  cycle_loss: {cycle_loss.item():.6f}")
-            logger.error(f"  mmd_loss: {mmd_loss.item():.6f}")
-            logger.error(f"  cov_loss: {cov_loss.item():.6f}")
-            logger.error(f"  per_feature_mmd_loss: {per_feature_mmd_loss.item():.6f}")
-            
-            # Return a safe fallback loss to prevent training crash
-            fallback_loss = F.mse_loss(outputs['x_recon'], x, reduction='mean') if not self.use_heteroscedastic else F.mse_loss(outputs['x_recon'][0], x, reduction='mean')
-            logger.error(f"Using fallback MSE loss: {fallback_loss.item():.6f}")
-            return fallback_loss
+            logger.error(f"Loss explosion at batch {batch_idx}!")
+            logger.error(f"  rec_loss: {rec_loss.item():.6f}, cycle_loss: {cycle_loss.item():.6f}, "
+                        f"wasserstein_loss: {wasserstein_loss.item():.6f}")
+            # Return a safe fallback
+            return F.mse_loss(x_recon[:, :self.numeric_dim], x_numeric, reduction='mean')
+
+        # Capture last batch stats for diagnostics
+        try:
+            xr = x_recon[:, :self.numeric_dim]
+            self._last_batch_stats = {
+                'x_min': float(x_numeric.min().item()),
+                'x_max': float(x_numeric.max().item()),
+                'z_min': float(z.min().item()),
+                'z_max': float(z.max().item()),
+                'xr_min': float(xr.min().item()),
+                'xr_max': float(xr.max().item()),
+                'rec_loss': float(rec_loss.item()),
+                'cycle_loss': float(cycle_loss.item() if torch.isfinite(cycle_loss) else 0.0),
+                'wass_loss': float(wasserstein_loss.item() if torch.isfinite(wasserstein_loss) else 0.0),
+            }
+        except Exception:
+            pass
         
         return total_loss
-    
-    def _log_detailed_feature_metrics(self, x: torch.Tensor, outputs: Dict, domain: torch.Tensor,
-                                    mimic_mask: torch.Tensor, eicu_mask: torch.Tensor):
+
+    def on_train_epoch_end(self):
         """
-        IMPROVED: Log detailed per-feature metrics for monitoring
+        Compute per-feature KS and Wasserstein statistics at the end of each training epoch.
+        This helps track distribution matching progress during training.
+        Also log skip connection parameters to monitor for explosion.
         """
-        with torch.no_grad():
-            if self.use_heteroscedastic:
-                x_recon_mu, x_recon_logvar = outputs['x_recon']
-                x_recon = x_recon_mu  # Use mean for metrics
+        # Log skip connection parameters to monitor for divergence
+        logger.info("=" * 80)
+        logger.info(f"EPOCH {self.current_epoch} - Skip Connection Parameters:")
+        logger.info(f"  MIMIC Decoder:")
+        logger.info(f"    skip_scale: min={self.decoder_mimic.skip_scale.min().item():.4f}, max={self.decoder_mimic.skip_scale.max().item():.4f}, mean={self.decoder_mimic.skip_scale.mean().item():.4f}, std={self.decoder_mimic.skip_scale.std().item():.4f}")
+        logger.info(f"    skip_bias:  min={self.decoder_mimic.skip_bias.min().item():.4f}, max={self.decoder_mimic.skip_bias.max().item():.4f}, mean={self.decoder_mimic.skip_bias.mean().item():.4f}, std={self.decoder_mimic.skip_bias.std().item():.4f}")
+        logger.info(f"  eICU Decoder:")
+        logger.info(f"    skip_scale: min={self.decoder_eicu.skip_scale.min().item():.4f}, max={self.decoder_eicu.skip_scale.max().item():.4f}, mean={self.decoder_eicu.skip_scale.mean().item():.4f}, std={self.decoder_eicu.skip_scale.std().item():.4f}")
+        logger.info(f"    skip_bias:  min={self.decoder_eicu.skip_bias.min().item():.4f}, max={self.decoder_eicu.skip_bias.max().item():.4f}, mean={self.decoder_eicu.skip_bias.mean().item():.4f}, std={self.decoder_eicu.skip_bias.std().item():.4f}")
+        logger.info("=" * 80)
+        
+        # Log to tensorboard/wandb if available
+        self.log('skip_scale_mimic_mean', self.decoder_mimic.skip_scale.mean(), on_epoch=True, prog_bar=False)
+        self.log('skip_scale_mimic_max', self.decoder_mimic.skip_scale.max(), on_epoch=True, prog_bar=False)
+        self.log('skip_bias_mimic_max_abs', self.decoder_mimic.skip_bias.abs().max(), on_epoch=True, prog_bar=False)
+        self.log('skip_scale_eicu_mean', self.decoder_eicu.skip_scale.mean(), on_epoch=True, prog_bar=False)
+        self.log('skip_scale_eicu_max', self.decoder_eicu.skip_scale.max(), on_epoch=True, prog_bar=False)
+        self.log('skip_bias_eicu_max_abs', self.decoder_eicu.skip_bias.abs().max(), on_epoch=True, prog_bar=False)
+        
+        # Skip if not yet initialized or no datamodule
+        if not hasattr(self, 'trainer') or self.trainer is None:
+            return
+        if not hasattr(self.trainer, 'datamodule') or self.trainer.datamodule is None:
+            return
+        
+        try:
+            # Get validation dataloaders
+            val_dataloaders = self.trainer.datamodule.val_dataloader()
+            if val_dataloaders is None:
+                return
+            
+            # Handle both single dataloader and list of dataloaders
+            if not isinstance(val_dataloaders, list):
+                val_dataloaders = [val_dataloaders]
+            
+            # Collect data from validation set
+            x_eicu_list, x_mimic_list = [], []
+            x_eicu_to_mimic_list, x_mimic_to_eicu_list = [], []
+            
+            self.eval()
+            with torch.no_grad():
+                for val_loader in val_dataloaders:
+                    for batch in val_loader:
+                        x_numeric = batch['numeric'].to(self.device)
+                        x_missing = batch['missing'].to(self.device)
+                        domain = batch['domain'].to(self.device)
+                        
+                        x = torch.cat([x_numeric, x_missing], dim=1)
+                        
+                        # Separate by domain
+                        mimic_mask = (domain == 1)
+                        eicu_mask = (domain == 0)
+                        
+                        if eicu_mask.any():
+                            x_eicu = x[eicu_mask]
+                            x_eicu_list.append(x_eicu.cpu())
+                            # Translate eICU -> MIMIC
+                            x_eicu_to_mimic = self.translate_eicu_to_mimic_deterministic(x_eicu)
+                            x_eicu_to_mimic_list.append(x_eicu_to_mimic.cpu())
+                        
+                        if mimic_mask.any():
+                            x_mimic = x[mimic_mask]
+                            x_mimic_list.append(x_mimic.cpu())
+                            # Translate MIMIC -> eICU
+                            x_mimic_to_eicu = self.translate_mimic_to_eicu_deterministic(x_mimic)
+                            x_mimic_to_eicu_list.append(x_mimic_to_eicu.cpu())
+                        
+                        # Limit samples to avoid memory issues
+                        if len(x_eicu_list) > 50 or len(x_mimic_list) > 50:
+                            break
+                    if len(x_eicu_list) > 50 or len(x_mimic_list) > 50:
+                        break
+            
+            self.train()
+            
+            # Check if we have data
+            if not x_eicu_list or not x_mimic_list:
+                return
+            
+            # Concatenate data
+            x_eicu = torch.cat(x_eicu_list, dim=0).numpy()
+            x_mimic = torch.cat(x_mimic_list, dim=0).numpy()
+            x_eicu_to_mimic = torch.cat(x_eicu_to_mimic_list, dim=0).numpy()
+            x_mimic_to_eicu = torch.cat(x_mimic_to_eicu_list, dim=0).numpy()
+            
+            # Get clinical feature indices (exclude demographics)
+            demographic_features = ['Age', 'Gender']
+            all_features = self.feature_spec.get('numeric_features', []) + self.feature_spec.get('missing_features', [])
+            clinical_features = [f for f in self.feature_spec.get('numeric_features', []) if f not in demographic_features]
+            clinical_indices = [i for i, f in enumerate(all_features) if f in clinical_features]
+            
+            # Extract clinical features only
+            x_eicu_clinical = x_eicu[:, clinical_indices]
+            x_mimic_clinical = x_mimic[:, clinical_indices]
+            x_eicu_to_mimic_clinical = x_eicu_to_mimic[:, clinical_indices]
+            x_mimic_to_eicu_clinical = x_mimic_to_eicu[:, clinical_indices]
+            
+            # Compute per-feature metrics
+            ks_eicu_to_mimic_list = []
+            ks_mimic_to_eicu_list = []
+            wass_eicu_to_mimic_list = []
+            wass_mimic_to_eicu_list = []
+            
+            for i, feat_name in enumerate(clinical_features):
+                # KS statistics
+                ks_e2m, _ = stats.ks_2samp(x_eicu_to_mimic_clinical[:, i], x_mimic_clinical[:, i])
+                ks_m2e, _ = stats.ks_2samp(x_mimic_to_eicu_clinical[:, i], x_eicu_clinical[:, i])
+                ks_eicu_to_mimic_list.append(ks_e2m)
+                ks_mimic_to_eicu_list.append(ks_m2e)
                 
-                # Log uncertainty statistics
-                mean_uncertainty = torch.mean(torch.exp(0.5 * x_recon_logvar))
-                self.log('mean_predicted_uncertainty', mean_uncertainty, prog_bar=False)
-            else:
-                x_recon = outputs['x_recon']
+                # Wasserstein distance
+                wass_e2m = stats.wasserstein_distance(x_eicu_to_mimic_clinical[:, i], x_mimic_clinical[:, i])
+                wass_m2e = stats.wasserstein_distance(x_mimic_to_eicu_clinical[:, i], x_eicu_clinical[:, i])
+                wass_eicu_to_mimic_list.append(wass_e2m)
+                wass_mimic_to_eicu_list.append(wass_m2e)
             
-            # Per-feature reconstruction error
-            per_feature_mse = torch.mean((x - x_recon) ** 2, dim=0)  # [n_features]
+            # Log average metrics
+            mean_ks_e2m = np.mean(ks_eicu_to_mimic_list)
+            mean_ks_m2e = np.mean(ks_mimic_to_eicu_list)
+            mean_wass_e2m = np.mean(wass_eicu_to_mimic_list)
+            mean_wass_m2e = np.mean(wass_mimic_to_eicu_list)
             
-            # Log statistics of per-feature performance
-            self.log('worst_feature_mse', torch.max(per_feature_mse), prog_bar=False)
-            self.log('best_feature_mse', torch.min(per_feature_mse), prog_bar=False) 
-            self.log('median_feature_mse', torch.median(per_feature_mse), prog_bar=False)
-            self.log('feature_mse_std', torch.std(per_feature_mse), prog_bar=False)
+            self.log('val_mean_ks_eicu_to_mimic', mean_ks_e2m, prog_bar=True)
+            self.log('val_mean_ks_mimic_to_eicu', mean_ks_m2e)
+            self.log('val_mean_wass_eicu_to_mimic', mean_wass_e2m, prog_bar=True)
+            self.log('val_mean_wass_mimic_to_eicu', mean_wass_m2e)
             
-            # Domain-specific metrics
-            if mimic_mask.any():
-                mimic_mse = torch.mean((x[mimic_mask] - x_recon[mimic_mask]) ** 2)
-                self.log('mimic_domain_mse', mimic_mse, prog_bar=False)
+            # Log detailed info
+            logger.info(f"\n{'='*80}")
+            logger.info(f"Epoch {self.current_epoch} - Distribution Matching Metrics:")
+            logger.info(f"  Mean KS (eICU→MIMIC): {mean_ks_e2m:.6f}")
+            logger.info(f"  Mean KS (MIMIC→eICU): {mean_ks_m2e:.6f}")
+            logger.info(f"  Mean Wasserstein (eICU→MIMIC): {mean_wass_e2m:.6f}")
+            logger.info(f"  Mean Wasserstein (MIMIC→eICU): {mean_wass_m2e:.6f}")
             
-            if eicu_mask.any():
-                eicu_mse = torch.mean((x[eicu_mask] - x_recon[eicu_mask]) ** 2)
-                self.log('eicu_domain_mse', eicu_mse, prog_bar=False)
+            # Log worst 5 features for each metric
+            ks_e2m_worst_idx = np.argsort(ks_eicu_to_mimic_list)[-5:][::-1]
+            wass_e2m_worst_idx = np.argsort(wass_eicu_to_mimic_list)[-5:][::-1]
             
-            # Log top 5 worst and best performing feature indices (for debugging)
-            if per_feature_mse.numel() >= 5:
-                worst_indices = torch.topk(per_feature_mse, k=5).indices.cpu().numpy()
-                best_indices = torch.topk(per_feature_mse, k=5, largest=False).indices.cpu().numpy()
-                
-                # OPTIMIZED: Log even less frequently to speed up training
-                if torch.rand(1).item() < 0.05:  # 5% chance (half as often)
-                    logger.info(f"Worst features (indices): {worst_indices.tolist()}, MSE: {per_feature_mse[worst_indices].cpu().numpy()}")
-                    logger.info(f"Best features (indices): {best_indices.tolist()}, MSE: {per_feature_mse[best_indices].cpu().numpy()}")
-    
-    # REMOVED: No validation step needed for train/test only pipeline
-    def _validation_step_removed(self, batch: Dict, batch_idx: int) -> torch.Tensor:
-        """Validation step"""
+            logger.info(f"\n  Worst 5 features by KS (eICU→MIMIC):")
+            for idx in ks_e2m_worst_idx:
+                logger.info(f"    {clinical_features[idx]:12s}: {ks_eicu_to_mimic_list[idx]:.6f}")
+            
+            logger.info(f"\n  Worst 5 features by Wasserstein (eICU→MIMIC):")
+            for idx in wass_e2m_worst_idx:
+                logger.info(f"    {clinical_features[idx]:12s}: {wass_eicu_to_mimic_list[idx]:.6f}")
+            logger.info(f"{'='*80}\n")
+            
+        except Exception as e:
+            logger.warning(f"Failed to compute epoch-end metrics: {e}")
+            # Don't fail training if metrics computation fails
+            pass
+
+    def test_step(self, batch, batch_idx):
+        """SIMPLIFIED: Test step with all three losses computed"""
         # Extract data
         x_numeric = batch['numeric']
         x_missing = batch['missing']
@@ -1276,118 +1156,92 @@ class CycleVAE(pl.LightningModule):
         # Combine features
         x = torch.cat([x_numeric, x_missing], dim=1)
         
+        # Separate by domain
+        mimic_mask = (domain == 1)
+        eicu_mask = (domain == 0)
+        
         # Forward pass
         outputs = self.forward(x, domain)
         z, mu, logvar, x_recon = outputs['z'], outputs['mu'], outputs['logvar'], outputs['x_recon']
         
-        # Compute losses
-        rec_loss = self.compute_reconstruction_loss(x, x_recon)
-        kl_loss = self.compute_kl_loss(mu, logvar)
+        # === LOSS 1: Reconstruction Loss ===
+        rec_loss = self.compute_reconstruction_loss(x_numeric, x_missing, x_recon)
         
-        # Cycle consistency loss
+        # === LOSS 2: Cycle Consistency Loss ===
         cycle_loss = torch.tensor(0.0, device=self.device)
-        mimic_mask = (domain == 1)
-        eicu_mask = (domain == 0)
-        
         if mimic_mask.any() and eicu_mask.any():
+            # eICU -> MIMIC -> eICU
             if eicu_mask.any():
                 x_eicu = x[eicu_mask]
+                x_eicu_numeric = x_numeric[eicu_mask]
+                x_eicu_missing = x_missing[eicu_mask]
                 cycle_out_eicu = self.cycle_forward(x_eicu, 0, 1)
-                cycle_loss += self.compute_cycle_loss(x_eicu, cycle_out_eicu['x_cycle'])
+                cycle_loss += self.compute_cycle_loss(x_eicu_numeric, x_eicu_missing, cycle_out_eicu['x_cycle'])
             
+            # MIMIC -> eICU -> MIMIC
             if mimic_mask.any():
                 x_mimic = x[mimic_mask]
+                x_mimic_numeric = x_numeric[mimic_mask]
+                x_mimic_missing = x_missing[mimic_mask]
                 cycle_out_mimic = self.cycle_forward(x_mimic, 1, 0)
-                cycle_loss += self.compute_cycle_loss(x_mimic, cycle_out_mimic['x_cycle'])
+                cycle_loss += self.compute_cycle_loss(x_mimic_numeric, x_mimic_missing, cycle_out_mimic['x_cycle'])
         
-        # MMD loss
-        mmd_loss = torch.tensor(0.0, device=self.device)
-        if mimic_mask.any() and eicu_mask.any():
-            z_mimic = z[mimic_mask]
-            z_eicu = z[eicu_mask]
-            mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
-        
-        # Total loss
-        kl_weight = self.get_kl_weight()
-        total_loss = (
-            self.rec_weight * rec_loss +
-            kl_weight * kl_loss +
-            self.cycle_weight * cycle_loss +
-            self.mmd_weight * mmd_loss
-        )
-        
-        # Logging
-        self.log('val_loss', total_loss, prog_bar=True)
-        self.log('val_rec_loss', rec_loss)
-        self.log('val_kl_loss', kl_loss)
-        self.log('val_cycle_loss', cycle_loss)
-        self.log('val_mmd_loss', mmd_loss)
-        
-        return total_loss
-    
-    def test_step(self, batch, batch_idx):
-        """Test step with proper handling for single-domain mode"""
-        x = torch.cat([batch['numeric'], batch['missing']], dim=1)
-        domain = batch['domain']
-        
-        # Forward pass
-        outputs = self.forward(x, domain)
-        
-        # Compute losses with safety checks
-        rec_loss = self.compute_reconstruction_loss(x, outputs['x_recon'])
-        
-        # Safety check for rec_loss
-        if torch.isnan(rec_loss) or torch.isinf(rec_loss):
-            logger.warning(f"Invalid rec_loss detected in test_step batch {batch_idx}: {rec_loss}")
-            rec_loss = torch.tensor(0.0, device=self.device)
-        
-        kl_loss = self.compute_kl_loss(outputs['mu'], outputs['logvar'])
-        
-        # Cycle consistency loss
-        cycle_loss = torch.tensor(0.0, device=self.device)
-        mimic_mask = (domain == 1)
-        eicu_mask = (domain == 0)
-        
-        if mimic_mask.any() and eicu_mask.any():
-            if eicu_mask.any():
-                x_eicu = x[eicu_mask]
-                cycle_out_eicu = self.cycle_forward(x_eicu, 0, 1)
-                cycle_loss += self.compute_cycle_loss(x_eicu, cycle_out_eicu['x_cycle'])
+        # === LOSS 3: Conditional Wasserstein Loss ===
+        # Note: For test, we compute it every batch (not every N steps like training)
+        wasserstein_loss = torch.tensor(0.0, device=self.device)
+        if mimic_mask.any() and eicu_mask.any() and self.wasserstein_weight > 0:
+            # Get demographic feature indices
+            age_idx = self.demographic_indices[0] if len(self.demographic_indices) > 0 else self.numeric_dim - 2
+            gender_idx = self.demographic_indices[1] if len(self.demographic_indices) > 1 else self.numeric_dim - 1
             
-            if mimic_mask.any():
-                x_mimic = x[mimic_mask]
-                cycle_out_mimic = self.cycle_forward(x_mimic, 1, 0)
-                cycle_loss += self.compute_cycle_loss(x_mimic, cycle_out_mimic['x_cycle'])
-        
-        # MMD loss
-        mmd_loss = torch.tensor(0.0, device=self.device)
-        if mimic_mask.any() and eicu_mask.any():
-            z_mimic = outputs['z'][mimic_mask]
-            z_eicu = outputs['z'][eicu_mask]
-            mmd_loss = self.compute_mmd_loss(z_mimic, z_eicu)
-        
-        # KL annealing weight
-        kl_weight = self.get_kl_weight()
+            # Translate eICU -> MIMIC
+            x_eicu = x[eicu_mask]
+            mu_eicu, _ = self.encoder(x_eicu)
+            x_eicu_to_mimic = self.decoder_mimic(mu_eicu)
+            x_eicu_to_mimic_numeric = x_eicu_to_mimic[:, :self.numeric_dim]
+            
+            # Translate MIMIC -> eICU
+            x_mimic = x[mimic_mask]
+            mu_mimic, _ = self.encoder(x_mimic)
+            x_mimic_to_eicu = self.decoder_eicu(mu_mimic)
+            x_mimic_to_eicu_numeric = x_mimic_to_eicu[:, :self.numeric_dim]
+            
+            # Real samples
+            x_mimic_real_numeric = x_numeric[mimic_mask]
+            x_eicu_real_numeric = x_numeric[eicu_mask]
+            
+            # Compute conditional Wasserstein (force computation by passing batch_idx=0)
+            wasserstein_loss += self.compute_conditional_wasserstein_loss(
+                x_eicu_to_mimic_numeric, x_mimic_real_numeric,
+                x_eicu_to_mimic_numeric[:, age_idx], x_eicu_to_mimic_numeric[:, gender_idx],
+                x_mimic_real_numeric[:, age_idx], x_mimic_real_numeric[:, gender_idx],
+                0  # Force computation
+            )
+            
+            wasserstein_loss += self.compute_conditional_wasserstein_loss(
+                x_mimic_to_eicu_numeric, x_eicu_real_numeric,
+                x_mimic_to_eicu_numeric[:, age_idx], x_mimic_to_eicu_numeric[:, gender_idx],
+                x_eicu_real_numeric[:, age_idx], x_eicu_real_numeric[:, gender_idx],
+                0  # Force computation
+            )
         
         # Total loss
         total_loss = (
             self.rec_weight * rec_loss +
-            kl_weight * kl_loss +
             self.cycle_weight * cycle_loss +
-            self.mmd_weight * mmd_loss
+            self.wasserstein_weight * wasserstein_loss
         )
         
-        # Safety check for total_loss
+        # Safety check
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            logger.warning(f"Invalid total_loss in test_step batch {batch_idx}, using rec_loss only")
-            total_loss = rec_loss
+            logger.warning(f"Invalid total_loss in test_step batch {batch_idx}")
+            total_loss = rec_loss if not torch.isnan(rec_loss) else torch.tensor(0.0, device=self.device)
         
         # Logging with on_epoch=True to aggregate properly
         self.log('test_loss', total_loss, prog_bar=True, on_step=False, on_epoch=True)
         self.log('test_rec_loss', rec_loss, on_step=False, on_epoch=True)
-        self.log('test_kl_loss', kl_loss, on_step=False, on_epoch=True)
         self.log('test_cycle_loss', cycle_loss, on_step=False, on_epoch=True)
-        self.log('test_mmd_loss', mmd_loss, on_step=False, on_epoch=True)
+        self.log('test_wasserstein_loss', wasserstein_loss, on_step=False, on_epoch=True)
         
         return total_loss
     
@@ -1419,8 +1273,8 @@ class CycleVAE(pl.LightningModule):
         }
     
     def on_before_optimizer_step(self, optimizer):
-        """DIAGNOSTIC: Log gradient norms to detect explosions"""
-        # Compute gradient norm
+        """DIAGNOSTIC: Log gradient norms to detect explosions, especially in skip connection parameters"""
+        # Compute total gradient norm
         total_norm = 0.0
         max_grad = 0.0
         min_grad = float('inf')
@@ -1438,9 +1292,27 @@ class CycleVAE(pl.LightningModule):
         self.log('grad_norm', total_norm, prog_bar=False)
         self.log('grad_max', max_grad, prog_bar=False)
         
+        # Log skip connection parameter gradients (always, to track evolution)
+        if self.decoder_mimic.skip_scale.grad is not None:
+            skip_scale_grad_mimic = self.decoder_mimic.skip_scale.grad.abs().max().item()
+            skip_bias_grad_mimic = self.decoder_mimic.skip_bias.grad.abs().max().item()
+            self.log('grad_skip_scale_mimic', skip_scale_grad_mimic, prog_bar=False)
+            self.log('grad_skip_bias_mimic', skip_bias_grad_mimic, prog_bar=False)
+        
+        if self.decoder_eicu.skip_scale.grad is not None:
+            skip_scale_grad_eicu = self.decoder_eicu.skip_scale.grad.abs().max().item()
+            skip_bias_grad_eicu = self.decoder_eicu.skip_bias.grad.abs().max().item()
+            self.log('grad_skip_scale_eicu', skip_scale_grad_eicu, prog_bar=False)
+            self.log('grad_skip_bias_eicu', skip_bias_grad_eicu, prog_bar=False)
+        
         # Warning for concerning gradient norms
         if total_norm > 10.0:
             logger.warning(f"HIGH GRADIENT NORM DETECTED: {total_norm:.4f} (max_grad: {max_grad:.4f})")
+            # Log skip connection grads when gradient norm is high
+            if self.decoder_mimic.skip_scale.grad is not None:
+                logger.warning(f"  MIMIC skip_scale grad: {skip_scale_grad_mimic:.4f}, skip_bias grad: {skip_bias_grad_mimic:.4f}")
+            if self.decoder_eicu.skip_scale.grad is not None:
+                logger.warning(f"  eICU skip_scale grad: {skip_scale_grad_eicu:.4f}, skip_bias grad: {skip_bias_grad_eicu:.4f}")
         
         if total_norm > 100.0:
             logger.error(f"GRADIENT EXPLOSION! Norm: {total_norm:.4f}, Max: {max_grad:.4f}, Min: {min_grad:.8f}")
@@ -1458,9 +1330,29 @@ class CycleVAE(pl.LightningModule):
                 logger.error(f"  Parameters with large gradients:")
                 for name, grad_val in sorted(large_grad_params, key=lambda x: x[1], reverse=True)[:5]:
                     logger.error(f"    {name}: {grad_val:.4f}")
+
+        # Diagnostics: if non-finite gradients, print offending parameters and LR
+        if not torch.isfinite(torch.tensor(total_norm)) or not torch.isfinite(torch.tensor(max_grad)):
+            try:
+                # Log LR from the first param group
+                for i, pg in enumerate(optimizer.param_groups):
+                    logger.error(f"  LR (param_group {i}): {pg.get('lr', 'unknown')}")
+                    break
+            except Exception:
+                pass
+            # Log non-finite parameter gradients
+            for name, p in self.named_parameters():
+                if p.grad is not None:
+                    g = p.grad.data
+                    if torch.isnan(g).any() or torch.isinf(g).any():
+                        logger.error(f"  Non-finite grad in: {name} | max={g.abs().max().item() if torch.isfinite(g.abs().max()) else 'inf'} shape={tuple(g.shape)}")
+            # Log last batch stats if available
+            if hasattr(self, '_last_batch_stats'):
+                s = self._last_batch_stats
+                logger.error(f"  Last batch stats: x[min,max]=({s.get('x_min'):.4f},{s.get('x_max'):.4f}), z[min,max]=({s.get('z_min'):.4f},{s.get('z_max'):.4f}), x_recon[min,max]=({s.get('xr_min'):.4f},{s.get('xr_max'):.4f}), rec={s.get('rec_loss'):.6f}, cycle={s.get('cycle_loss'):.6f}, wass={s.get('wass_loss'):.6f}")
     
     def translate_eicu_to_mimic(self, x_eicu: torch.Tensor) -> torch.Tensor:
-        """IMPROVED: Translate eICU data to MIMIC format (supports heteroscedastic)"""
+        """IMPROVED: Translate eICU data to MIMIC format with skip connections"""
         self.eval()
         with torch.no_grad():
             # Encode
@@ -1478,14 +1370,17 @@ class CycleVAE(pl.LightningModule):
             decoder_output = self.decoder_mimic(z)
             
             if self.use_heteroscedastic:
-                x_mimic, logvar_out = decoder_output
+                x_mimic_mu, logvar_out = decoder_output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_mimic = x_mimic_mu + (self.decoder_mimic.skip_scale * x_eicu + self.decoder_mimic.skip_bias)
                 # CRITICAL FIX: More intelligent safety checks - don't destroy Age feature
                 # Only clamp extreme outliers, preserve normal data ranges
                 x_mimic = torch.clamp(x_mimic, min=-50, max=100)  # Allow Age 0-100, other features -50 to 100
                 if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
                     x_mimic = torch.zeros_like(x_mimic)
             else:
-                x_mimic = decoder_output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_mimic = decoder_output + (self.decoder_mimic.skip_scale * x_eicu + self.decoder_mimic.skip_bias)
                 # Safety check for non-heteroscedastic too
                 x_mimic = torch.clamp(x_mimic, min=-50, max=100)  # Same wider range
                 if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
@@ -1494,7 +1389,7 @@ class CycleVAE(pl.LightningModule):
         return x_mimic
     
     def translate_mimic_to_eicu(self, x_mimic: torch.Tensor) -> torch.Tensor:
-        """IMPROVED: Translate MIMIC data to eICU format (supports heteroscedastic)"""
+        """IMPROVED: Translate MIMIC data to eICU format with skip connections"""
         self.eval()
         with torch.no_grad():
             # Encode
@@ -1512,15 +1407,106 @@ class CycleVAE(pl.LightningModule):
             decoder_output = self.decoder_eicu(z)
             
             if self.use_heteroscedastic:
-                x_eicu, logvar_out = decoder_output
+                x_eicu_mu, logvar_out = decoder_output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_eicu = x_eicu_mu + (self.decoder_eicu.skip_scale * x_mimic + self.decoder_eicu.skip_bias)
                 # CRITICAL FIX: More intelligent safety checks - don't destroy Age feature
                 x_eicu = torch.clamp(x_eicu, min=-50, max=100)  # Allow Age 0-100, other features -50 to 100
                 if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
                     x_eicu = torch.zeros_like(x_eicu)
             else:
-                x_eicu = decoder_output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_eicu = decoder_output + (self.decoder_eicu.skip_scale * x_mimic + self.decoder_eicu.skip_bias)
                 # Safety check for non-heteroscedastic too
                 x_eicu = torch.clamp(x_eicu, min=-50, max=100)  # Same wider range
+                if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
+                    x_eicu = torch.zeros_like(x_eicu)
+            
+        return x_eicu
+    
+    def translate_eicu_to_mimic_deterministic(self, x_eicu: torch.Tensor) -> torch.Tensor:
+        """
+        DETERMINISTIC translation for evaluation (no stochasticity).
+        Uses encoder mean (mu) directly without reparameterization sampling.
+        This gives reproducible, noise-free translations for evaluation metrics.
+        
+        Args:
+            x_eicu: eICU features [batch_size, input_dim]
+            
+        Returns:
+            x_mimic: Translated MIMIC features [batch_size, input_dim]
+        """
+        self.eval()
+        with torch.no_grad():
+            # Encode - get mu only, ignore logvar
+            mu, _ = self.encoder(x_eicu)
+            
+            # Safety checks for encoder output
+            mu = torch.clamp(mu, min=-20, max=20)
+            if torch.isnan(mu).any() or torch.isinf(mu).any():
+                mu = torch.zeros_like(mu)
+            
+            # Use mu directly (deterministic, no sampling)
+            z = mu
+            
+            # Decode to MIMIC
+            decoder_output = self.decoder_mimic(z)
+            
+            if self.use_heteroscedastic:
+                x_mimic_mu, _ = decoder_output  # Ignore logvar output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_mimic = x_mimic_mu + (self.decoder_mimic.skip_scale * x_eicu + self.decoder_mimic.skip_bias)
+                x_mimic = torch.clamp(x_mimic, min=-50, max=100)
+                if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
+                    x_mimic = torch.zeros_like(x_mimic)
+            else:
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_mimic = decoder_output + (self.decoder_mimic.skip_scale * x_eicu + self.decoder_mimic.skip_bias)
+                x_mimic = torch.clamp(x_mimic, min=-50, max=100)
+                if torch.isnan(x_mimic).any() or torch.isinf(x_mimic).any():
+                    x_mimic = torch.zeros_like(x_mimic)
+            
+        return x_mimic
+    
+    def translate_mimic_to_eicu_deterministic(self, x_mimic: torch.Tensor) -> torch.Tensor:
+        """
+        DETERMINISTIC translation for evaluation (no stochasticity).
+        Uses encoder mean (mu) directly without reparameterization sampling.
+        This gives reproducible, noise-free translations for evaluation metrics.
+        
+        Args:
+            x_mimic: MIMIC features [batch_size, input_dim]
+            
+        Returns:
+            x_eicu: Translated eICU features [batch_size, input_dim]
+        """
+        self.eval()
+        with torch.no_grad():
+            # Encode - get mu only, ignore logvar
+            mu, _ = self.encoder(x_mimic)
+            
+            # Safety checks for encoder output
+            mu = torch.clamp(mu, min=-20, max=20)
+            if torch.isnan(mu).any() or torch.isinf(mu).any():
+                mu = torch.zeros_like(mu)
+            
+            # Use mu directly (deterministic, no sampling)
+            z = mu
+            
+            # Decode to eICU
+            decoder_output = self.decoder_eicu(z)
+            
+            if self.use_heteroscedastic:
+                x_eicu_mu, _ = decoder_output  # Ignore logvar output
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_eicu = x_eicu_mu + (self.decoder_eicu.skip_scale * x_mimic + self.decoder_eicu.skip_bias)
+                x_eicu = torch.clamp(x_eicu, min=-50, max=100)
+                if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
+                    x_eicu = torch.zeros_like(x_eicu)
+            else:
+                # Apply skip connection: output = decoder(z) + (a * input + b)
+                x_eicu = decoder_output + (self.decoder_eicu.skip_scale * x_mimic + self.decoder_eicu.skip_bias)
+                x_eicu = torch.clamp(x_eicu, min=-50, max=100)
                 if torch.isnan(x_eicu).any() or torch.isinf(x_eicu).any():
                     x_eicu = torch.zeros_like(x_eicu)
             
@@ -1800,6 +1786,241 @@ class CycleVAE(pl.LightningModule):
             return [self._convert_tensors_for_json(item) for item in obj]
         else:
             return obj
+
+    def compute_feature_iqr(self, x_train: torch.Tensor) -> torch.Tensor:
+        """
+        Compute IQR for each feature from training data
+        Used for IQR-normalized relative error in evaluation
+        
+        Args:
+            x_train: Training data [n_samples, n_features]
+            
+        Returns:
+            IQR per feature [n_features]
+        """
+        with torch.no_grad():
+            q75 = torch.quantile(x_train, 0.75, dim=0)
+            q25 = torch.quantile(x_train, 0.25, dim=0)
+            iqr = q75 - q25
+            # Avoid division by zero: use small epsilon where IQR is tiny
+            iqr = torch.where(iqr < 1e-6, torch.ones_like(iqr), iqr)
+            return iqr
+    
+    def compute_per_feature_percentage_errors(self, x_true: torch.Tensor, x_pred: torch.Tensor,
+                                             x_missing: torch.Tensor = None,
+                                             mode: str = 'reconstruction') -> Dict:
+        """
+        Compute per-feature percentage errors with hybrid relative error approach
+        
+        Args:
+            x_true: True values [batch_size, numeric_dim]
+            x_pred: Predicted values [batch_size, numeric_dim] (from reconstruction or cycle)
+            x_missing: Missing flags [batch_size, missing_dim] (optional)
+            mode: 'reconstruction' or 'cycle' for logging
+            
+        Returns:
+            Dictionary with percentage error metrics
+        """
+        with torch.no_grad():
+            # Apply missing mask if provided
+            if x_missing is not None:
+                x_true = self._apply_missing_mask(x_true, x_missing)
+            
+            # Only compute on clinical features (exclude demographics)
+            if len(self.clinical_indices) == 0:
+                return {}
+            
+            x_true_clinical = x_true[:, self.clinical_indices]
+            x_pred_clinical = x_pred[:, self.clinical_indices]
+            
+            # Absolute error
+            abs_error = torch.abs(x_pred_clinical - x_true_clinical)
+            
+            # Method 1: Relative to true value (for non-zero values)
+            # Use safe denominator to avoid division by zero
+            min_abs_thresh = 0.01 * torch.abs(x_true_clinical).median(dim=0)[0]  # 1% of median
+            min_abs_thresh = torch.clamp(min_abs_thresh, min=1e-6)
+            
+            # Relative error = abs(pred - true) / max(|true|, min_abs_thresh)
+            safe_denominator = torch.maximum(torch.abs(x_true_clinical), min_abs_thresh)
+            rel_error_to_true = abs_error / safe_denominator
+            
+            # Method 2: IQR-normalized relative error (for all values)
+            if self.feature_iqr is None:
+                # Use IQR from current batch as fallback
+                iqr = self.compute_feature_iqr(x_true_clinical)
+                iqr_clinical = iqr
+            else:
+                iqr_clinical = self.feature_iqr[self.clinical_indices]
+
+            # Robustness for ceiling-effect features: if >95% mass at boundary, enforce IQR floor
+            # Detect boundary-heavy features on current batch
+            batch_min = torch.min(x_true_clinical, dim=0)[0]
+            batch_max = torch.max(x_true_clinical, dim=0)[0]
+            at_min = (x_true_clinical == batch_min.unsqueeze(0)).float().mean(dim=0)
+            at_max = (x_true_clinical == batch_max.unsqueeze(0)).float().mean(dim=0)
+            boundary_frac = torch.maximum(at_min, at_max)
+            boundary_threshold = float(self.config.get('evaluation', {}).get('boundary_mass_threshold', 0.95))
+            boundary_heavy_mask = boundary_frac >= boundary_threshold
+
+            # Enforce a minimum IQR epsilon for boundary-heavy features
+            iqr_floor = float(self.config.get('evaluation', {}).get('iqr_min_epsilon_ceiling', 0.05))
+            effective_iqr = iqr_clinical.clone()
+            if boundary_heavy_mask.any():
+                floor_tensor = torch.full_like(effective_iqr, iqr_floor)
+                effective_iqr[boundary_heavy_mask] = torch.maximum(effective_iqr[boundary_heavy_mask], floor_tensor[boundary_heavy_mask])
+
+            rel_error_iqr = abs_error / effective_iqr.unsqueeze(0)
+            
+            # Compute percentage within thresholds
+            thresholds = [0.05, 0.10, 0.20, 0.30]
+            pct_within_thresholds = {}
+            
+            for thresh in thresholds:
+                # Count samples within threshold
+                within_thresh = (rel_error_to_true < thresh).float()
+                pct_within = within_thresh.mean(dim=0) * 100  # Percentage per feature
+                pct_within_thresholds[f'within_{int(thresh*100)}pct'] = pct_within
+            
+            # IQR-based thresholds (0.1, 0.5, 1.0 IQR)
+            iqr_thresholds = [0.1, 0.5, 1.0]
+            pct_within_iqr = {}
+            
+            for thresh in iqr_thresholds:
+                within_thresh = (rel_error_iqr < thresh).float()
+                pct_within = within_thresh.mean(dim=0) * 100
+                pct_within_iqr[f'within_{thresh}_iqr'] = pct_within
+
+            # Absolute tolerance thresholds (normalized units) for robustness on ceiling features
+            abs_thresholds = self.config.get('evaluation', {}).get('absolute_tolerance_thresholds', [0.02, 0.05, 0.10])
+            pct_within_abs = {}
+            for thresh in abs_thresholds:
+                thresh_val = float(thresh)
+                within_abs = (abs_error < thresh_val).float()
+                pct_within_abs[f'within_{thresh_val}_abs'] = within_abs.mean(dim=0) * 100
+            
+            # Compute statistics
+            mae = abs_error.mean(dim=0)  # Per feature
+            median_abs_error = abs_error.median(dim=0)[0]
+            
+            # Percentiles of error
+            percentile_75 = torch.quantile(abs_error, 0.75, dim=0)
+            percentile_90 = torch.quantile(abs_error, 0.90, dim=0)
+            
+            results = {
+                'mae': mae,  # [n_clinical_features]
+                'median_abs_error': median_abs_error,
+                'percentile_75_error': percentile_75,
+                'percentile_90_error': percentile_90,
+                'rel_error_to_true': rel_error_to_true,  # [batch_size, n_clinical_features]
+                'rel_error_iqr': rel_error_iqr,
+                'pct_within_thresholds': pct_within_thresholds,  # Dict with per-feature percentages
+                'pct_within_iqr': pct_within_iqr,
+                'pct_within_abs': pct_within_abs,
+                'boundary_heavy_mask': boundary_heavy_mask,
+                'effective_iqr': effective_iqr,
+                'mode': mode
+            }
+            
+            return results
+    
+    def compute_latent_distance(self, z1: torch.Tensor, z2: torch.Tensor) -> Dict:
+        """
+        Compute distance metrics between latent representations
+        
+        Args:
+            z1: First set of latent vectors [n_samples1, latent_dim]
+            z2: Second set of latent vectors [n_samples2, latent_dim]
+            
+        Returns:
+            Dictionary with distance metrics
+        """
+        with torch.no_grad():
+            # Mean and std of latent representations
+            z1_mean = z1.mean(dim=0)
+            z2_mean = z2.mean(dim=0)
+            z1_std = z1.std(dim=0)
+            z2_std = z2.std(dim=0)
+            
+            # Euclidean distance between means
+            mean_distance = torch.norm(z1_mean - z2_mean, p=2).item()
+            
+            # Cosine similarity between means
+            cosine_sim = F.cosine_similarity(z1_mean.unsqueeze(0), z2_mean.unsqueeze(0)).item()
+            
+            # KL divergence (assuming Gaussian distributions)
+            # KL(p||q) = log(σ2/σ1) + (σ1^2 + (μ1-μ2)^2) / (2σ2^2) - 1/2
+            kl_div = torch.log(z2_std / (z1_std + 1e-8)) + \
+                     (z1_std**2 + (z1_mean - z2_mean)**2) / (2 * z2_std**2 + 1e-8) - 0.5
+            kl_div = kl_div.sum().item()
+            
+            results = {
+                'mean_euclidean_distance': mean_distance,
+                'cosine_similarity': cosine_sim,
+                'kl_divergence': kl_div,
+                'z1_mean_norm': torch.norm(z1_mean, p=2).item(),
+                'z2_mean_norm': torch.norm(z2_mean, p=2).item()
+            }
+            
+            return results
+    
+    def compute_per_feature_distribution_distance(self, x1: torch.Tensor, x2: torch.Tensor) -> Dict:
+        """
+        Compute distribution distance for each feature
+        
+        Args:
+            x1: First set of features [n_samples1, n_features]
+            x2: Second set of features [n_samples2, n_features]
+            
+        Returns:
+            Dictionary with per-feature distance metrics
+        """
+        with torch.no_grad():
+            n_features = x1.shape[1]
+            
+            # Per-feature Wasserstein distance (1-D)
+            wasserstein_distances = []
+            ks_statistics = []
+            mean_differences = []
+            std_differences = []
+            
+            for i in range(n_features):
+                # Wasserstein-1 distance
+                x1_feat_sorted, _ = torch.sort(x1[:, i])
+                x2_feat_sorted, _ = torch.sort(x2[:, i])
+                
+                # Handle different sample sizes
+                if len(x1_feat_sorted) != len(x2_feat_sorted):
+                    min_len = min(len(x1_feat_sorted), len(x2_feat_sorted))
+                    if len(x1_feat_sorted) > min_len:
+                        indices = torch.linspace(0, len(x1_feat_sorted) - 1, min_len, dtype=torch.long, device=x1.device)
+                        x1_feat_sorted = x1_feat_sorted[indices]
+                    else:
+                        indices = torch.linspace(0, len(x2_feat_sorted) - 1, min_len, dtype=torch.long, device=x2.device)
+                        x2_feat_sorted = x2_feat_sorted[indices]
+                
+                wasserstein_dist = torch.mean(torch.abs(x1_feat_sorted - x2_feat_sorted)).item()
+                wasserstein_distances.append(wasserstein_dist)
+                
+                # KS statistic (approximation using sorted samples)
+                # True KS would use scipy, but we can approximate
+                ks_stat = torch.max(torch.abs(x1_feat_sorted - x2_feat_sorted)).item()
+                ks_statistics.append(ks_stat)
+                
+                # Mean and std differences
+                mean_diff = torch.abs(x1[:, i].mean() - x2[:, i].mean()).item()
+                std_diff = torch.abs(x1[:, i].std() - x2[:, i].std()).item()
+                mean_differences.append(mean_diff)
+                std_differences.append(std_diff)
+            
+            results = {
+                'wasserstein_distances': torch.tensor(wasserstein_distances),  # [n_features]
+                'ks_statistics': torch.tensor(ks_statistics),
+                'mean_differences': torch.tensor(mean_differences),
+                'std_differences': torch.tensor(std_differences)
+            }
+            
+            return results
 
 def test_model():
     """Test model functionality"""

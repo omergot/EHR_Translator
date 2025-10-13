@@ -13,46 +13,41 @@ paths:
   tmp_sql_dir: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/sql"
   analyze_features_path: "/bigdata/omerg/RatchetEHR/analyze_features.py"
 
-# IMPROVED TRAINING CONFIGURATION - Addresses LLM analysis recommendations
-# ✅ Per-dataset normalization (fixes feature 32 outlier issue)
-# ✅ Multi-kernel MMD (adaptive bandwidth) 
-# ✅ Per-feature loss weighting (prevents feature domination)
-# ✅ Feature reconstruction head (prevents mode collapse)
-# ✅ Adversarial domain classifier (domain-invariant features)
-# ✅ Comprehensive evaluation (per-feature metrics)
+# SIMPLIFIED TRAINING CONFIGURATION
+# Three core losses: reconstruction, cycle, conditional Wasserstein
+# Missing flags and demographics are input-only (no loss)
+# Worst features identified dynamically
 training:
-  epochs: 10   # VALIDATION: Short test run to verify fixes
-  batch_size: 128  # REVERTED: Back to stable batch size
+  epochs: 30   # Short test run to verify simplified model
+  batch_size: 128
   
-  lr: 1e-3  # Increased LR for effective optimization after fixes
-  latent_dim: 256
+  lr: 1e-3
   
-  # CRITICAL: Much more conservative weights for numerical stability
-  kl_weight: 1e-5  # Keep low for stability
-  cycle_weight: 0.3  # REBALANCED: Increased for better cycle consistency
-  rec_weight: 5.0   # PRIMARY: Focus on reconstruction first
-  mmd_weight: 0.5   # REBALANCED: Increased for proper distribution matching
+  # Architecture control
+  latent_dim_auto: true           # Auto-select latent_dim based on input size (<100: 16, >=100: 32)
+  latent_dim: 256                 # Used only if latent_dim_auto: false
+  use_residual_blocks: false      # Enable residual blocks for medium arch (>=100 features)
+  dropout_rate: 0.1               # Dropout rate for residual blocks (if enabled)
   
-  # EMERGENCY: Disable heteroscedastic again - still causing instability
-  use_heteroscedastic: false  # DISABLE - persistent explosion even with fixes  
-  use_safe_mode: false  # Keep safety systems but don't restrict
-  cov_weight: 0.01   # REDUCED: Prevent covariance loss from dominating (was causing 50-60% of total loss)
-  per_feature_mmd_weight: 0.2  # REBALANCED: Increased for per-feature distribution matching
-  wasserstein_weight: 0.1  # REBALANCED: Increased for stronger distributional alignment
+  # SIMPLIFIED: Only three loss weights
+  rec_weight: 0.2           # Reconstruction loss on clinical features
+  cycle_weight: 0.2         # Cycle consistency on clinical features
+  wasserstein_weight: 1   # Conditional Wasserstein on worst-K features
   
-  # REBALANCED: Moderate weights for additional loss components
-  feature_recon_weight: 0.2  # REBALANCED: Increased to prevent mode collapse
-  domain_adversarial_weight: 0.2   # INCREASED: Give domain classifier more influence to break ln(2) stagnation
-  
-  # Identify problematic features for special handling
-  worst_features: ["Temp_mean", "Temp_std", "HR_std", "SpO2_std", "Age", "Creat_mean"]
+  # Conditional Wasserstein parameters
+  wasserstein_compute_every_n_steps: 1        # Compute every N steps to save compute
+  wasserstein_min_group_size: 32              # Minimum samples per demographic group
+  wasserstein_worst_k: 5                     # Number of worst features to target
+  wasserstein_age_bucket_years: 10            # Age bucket size (e.g., 10-year intervals)
+  wasserstein_update_worst_every_n_epochs: 1  # Update worst features every N epochs
   
   # Gradient clipping for numerical stability
-  gradient_clip_val: 1.0  # Clip gradients to prevent explosion
+  gradient_clip_val: 10.0
   
-  kl_warmup_epochs: 20  # Increased warmup for more stable training
-  early_stop_patience: 15  # Slightly reduced patience
-  weight_decay: 1e-4  # Regularization
+  # Other parameters
+  kl_warmup_epochs: 20  # Not used but kept for compatibility
+  early_stop_patience: 15
+  weight_decay: 1e-4
 
 # OPTIMIZED GPU Configuration for Speed
 gpu:
@@ -76,10 +71,11 @@ logging:
   project: "poc_translator_optimized"
   log_every_n_steps: 50  # OPTIMIZED: Less frequent logging for speed
 
-# SIMPLIFIED: Train/Test only (no validation)
+# Data splits: Train/Val/Test
 data:
-  train_split: 0.8
-  test_split: 0.2
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
   random_seed: 42
 
 # Preprocessing configuration

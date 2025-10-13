@@ -1,39 +1,39 @@
 {
   "round_trip": {
-    "eicu_mean_mse": 0.1538114845752716,
-    "eicu_mean_mae": 0.24768683314323425,
-    "mimic_mean_mse": 0.10331527888774872,
-    "mimic_mean_mae": 0.20827744901180267,
-    "overall_mean_mse": 0.12856337428092957,
-    "overall_mean_mae": 0.22798213362693787
+    "eicu_mean_mse": 0.18877607583999634,
+    "eicu_mean_mae": 0.24533694982528687,
+    "mimic_mean_mse": 0.17252019047737122,
+    "mimic_mean_mae": 0.23589277267456055,
+    "overall_mean_mse": 0.18064813315868378,
+    "overall_mean_mae": 0.2406148612499237
   },
   "distributional": {
-    "mmd_eicu_to_mimic": 0.010654568672180176,
-    "mmd_mimic_to_eicu": 0.024721741676330566,
-    "mean_ks_statistic": 0.2082748603971734,
-    "significant_features_pct": 100.0
+    "mmd_eicu_to_mimic": 0.05614614486694336,
+    "mmd_mimic_to_eicu": 0.04077136516571045,
+    "mean_ks_statistic": 0.1854054432701135,
+    "significant_features_pct": 96.15384615384616
   },
   "downstream": {
     "mimic_test": {
-      "auc": 0.49973077560564094,
-      "average_precision": 0.19913182961352965,
-      "brier_score": 0.1599839768601834
+      "auc": 0.49982139235180423,
+      "average_precision": 0.2023625275634411,
+      "brier_score": 0.16296932155280608
     },
     "eicu_test_raw": {
-      "auc": 0.49172834630626255,
-      "average_precision": 0.19529559030629123,
-      "brier_score": 0.16203934255070826
+      "auc": 0.4962867533982687,
+      "average_precision": 0.19435423513841008,
+      "brier_score": 0.16173828262691162
     },
     "eicu_test_translated": {
-      "auc": 0.48959828101614034,
-      "average_precision": 0.19433879497522671,
-      "brier_score": 0.1609464040587434
+      "auc": 0.5013342685870491,
+      "average_precision": 0.1981819713916441,
+      "brier_score": 0.16051291539780677
     },
     "improvement": {
-      "auc_improvement": -0.0021300652901222183,
-      "ap_improvement": -0.0009567953310645194,
-      "brier_improvement": 0.0010929384919648732
+      "auc_improvement": 0.005047515188780383,
+      "ap_improvement": 0.0038277362532340153,
+      "brier_improvement": 0.0012253672291048512
     }
   },
-  "evaluation_timestamp": "2025-10-06T15:20:32.584727"
+  "evaluation_timestamp": "2025-10-13T13:00:58.470034"
 }

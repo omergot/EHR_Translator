@@ -198,15 +198,20 @@ class Preprocessor:
             logger.info(f"[{domain_label}] No min/mean/max monotonicity violations found")
         return data, num_bad
     
-    def plot_feature_distributions(self, mimic_data, eicu_data):
+    def plot_feature_distributions(self, mimic_data, eicu_data, plot_suffix=""):
         """
         Plot feature distributions for MIMIC vs EICU by gender and age groups.
         Creates one PNG per feature variant (e.g., wbc_min, wbc_max, etc.) with:
         - 4 columns: MIMIC Gender-0, MIMIC Gender-1, EICU Gender-0, EICU Gender-1
         - Multiple rows: one per age group (10-year increments)
+        
+        Args:
+            mimic_data: MIMIC dataset
+            eicu_data: eICU dataset
+            suffix: Optional suffix to append to plot filenames (e.g., "_post_preprocessing")
         """
         logger.info("=" * 80)
-        logger.info("STEP 0.8: Plotting feature distributions by dataset, gender, and age group...")
+        logger.info("Plotting feature distributions by dataset, gender, and age group...")
         logger.info("=" * 80)
         
         # Create directory for distribution plots
@@ -238,13 +243,19 @@ class Preprocessor:
         mimic_data['dataset'] = 'MIMIC'
         eicu_data['dataset'] = 'EICU'
         
+        # Determine which Age/Gender columns to use (original if available, otherwise scaled)
+        age_col = 'Age_original' if 'Age_original' in mimic_data.columns else 'Age'
+        gender_col = 'Gender_original' if 'Gender_original' in mimic_data.columns else 'Gender'
+        
         # Ensure Gender and Age columns exist
-        if 'Gender' not in mimic_data.columns or 'Age' not in mimic_data.columns:
-            logger.warning("Gender or Age columns missing in MIMIC data - skipping distribution plots")
+        if gender_col not in mimic_data.columns or age_col not in mimic_data.columns:
+            logger.warning(f"{gender_col} or {age_col} columns missing in MIMIC data - skipping distribution plots")
             return
-        if 'Gender' not in eicu_data.columns or 'Age' not in eicu_data.columns:
-            logger.warning("Gender or Age columns missing in EICU data - skipping distribution plots")
+        if gender_col not in eicu_data.columns or age_col not in eicu_data.columns:
+            logger.warning(f"{gender_col} or {age_col} columns missing in EICU data - skipping distribution plots")
             return
+        
+        logger.info(f"Using {age_col} and {gender_col} for stratification")
         
         # Plot each feature variant
         for feature_col in feature_variants:
@@ -264,10 +275,10 @@ class Preprocessor:
             for row_idx, (age_min, age_max) in enumerate(age_groups):
                 # Filter data for this age group
                 mimic_age_group = mimic_data[
-                    (mimic_data['Age'] >= age_min) & (mimic_data['Age'] < age_max)
+                    (mimic_data[age_col] >= age_min) & (mimic_data[age_col] < age_max)
                 ]
                 eicu_age_group = eicu_data[
-                    (eicu_data['Age'] >= age_min) & (eicu_data['Age'] < age_max)
+                    (eicu_data[age_col] >= age_min) & (eicu_data[age_col] < age_max)
                 ]
                 
                 # Plot for each combination of dataset and gender (columns)
@@ -282,7 +293,7 @@ class Preprocessor:
                     ax = axes[row_idx, col_idx]
                     
                     # Filter by gender
-                    gender_data = data_subset[data_subset['Gender'] == gender]
+                    gender_data = data_subset[data_subset[gender_col] == gender]
                     
                     # Get feature values (drop NaN)
                     values = gender_data[feature_col].dropna()
@@ -332,7 +343,7 @@ class Preprocessor:
             plt.tight_layout(rect=[0, 0, 1, 0.99])
             
             # Save plot
-            plot_path = plots_dir / f"{feature_col}_distribution.png"
+            plot_path = plots_dir / f"{feature_col}_distribution{plot_suffix}.png"
             plt.savefig(plot_path, dpi=100, bbox_inches='tight')
             plt.close(fig)
             
@@ -726,6 +737,10 @@ class Preprocessor:
         """Transform data using unified RobustScaler that preserves min<=mean<=max ordering"""
         logger.info(f"Transforming {domain} data with unified RobustScaler...")
         
+        # Save original Age and Gender for plotting (before scaling)
+        original_age = data['Age'].copy() if 'Age' in data.columns else None
+        original_gender = data['Gender'].copy() if 'Gender' in data.columns else None
+        
         # Prepare features with advanced analysis
         data_prepared, scalable_cols, missing_cols, feature_analysis = self.prepare_features(data, domain)
         
@@ -788,6 +803,12 @@ class Preprocessor:
         
         logger.info(f"Filled NaN values with 0 AFTER scaling (preserves monotonicity)")
         
+        # Add back original Age and Gender for distribution plotting purposes
+        if original_age is not None:
+            data_scaled['Age_original'] = original_age
+        if original_gender is not None:
+            data_scaled['Gender_original'] = original_gender
+        
         return data_scaled, scalable_cols, missing_cols
     
     def split_data(self, data, domain='mimic'):
@@ -797,50 +818,72 @@ class Preprocessor:
         # Use patient-level split (icu_stay_id)
         patient_ids = data['icu_stay_id'].unique()
         
-        # SIMPLIFIED: Split patient IDs into train/test only
-        train_ids, test_ids = train_test_split(
+        # Get split ratios from config
+        train_split = self.config['data']['train_split']
+        val_split = self.config['data']['val_split']
+        test_split = self.config['data']['test_split']
+        random_seed = self.config['data']['random_seed']
+        
+        # First split: separate test set
+        train_val_ids, test_ids = train_test_split(
             patient_ids, 
-            test_size=self.config['data']['test_split'],
-            random_state=self.config['data']['random_seed']
+            test_size=test_split,
+            random_state=random_seed
         )
         
-        # SIMPLIFIED: Create train/test splits only
+        # Second split: separate train and validation from remaining data
+        # Calculate validation ratio from remaining data
+        val_ratio_from_train_val = val_split / (train_split + val_split)
+        train_ids, val_ids = train_test_split(
+            train_val_ids,
+            test_size=val_ratio_from_train_val,
+            random_state=random_seed
+        )
+        
+        # Create train/val/test splits
         train_data = data[data['icu_stay_id'].isin(train_ids)]
+        val_data = data[data['icu_stay_id'].isin(val_ids)]
         test_data = data[data['icu_stay_id'].isin(test_ids)]
         
-        logger.info(f"{domain} splits - Train: {len(train_data)}, Test: {len(test_data)}")
+        logger.info(f"{domain} splits - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
         
-        return train_data, test_data
+        return train_data, val_data, test_data
     
     def save_splits(self, mimic_splits, eicu_splits):
-        """SIMPLIFIED: Save train/test splits only"""
+        """Save train/val/test splits"""
         logger.info("Saving data splits...")
         
         data_dir = self.output_dir / "data"
         data_dir.mkdir(parents=True, exist_ok=True)
         
         # Save MIMIC splits
-        train_mimic, test_mimic = mimic_splits
+        train_mimic, val_mimic, test_mimic = mimic_splits
         train_mimic.to_csv(data_dir / "train_mimic_preprocessed.csv", index=False)
+        val_mimic.to_csv(data_dir / "val_mimic_preprocessed.csv", index=False)
         test_mimic.to_csv(data_dir / "test_mimic_preprocessed.csv", index=False)
         
         # Save eICU splits
-        train_eicu, test_eicu = eicu_splits
+        train_eicu, val_eicu, test_eicu = eicu_splits
         train_eicu.to_csv(data_dir / "train_eicu_preprocessed.csv", index=False)
+        val_eicu.to_csv(data_dir / "val_eicu_preprocessed.csv", index=False)
         test_eicu.to_csv(data_dir / "test_eicu_preprocessed.csv", index=False)
         
-        # SIMPLIFIED: Save split information (train/test only)
+        # Save split information (train/val/test)
         split_info = {
             'mimic': {
                 'train_size': len(train_mimic),
+                'val_size': len(val_mimic),
                 'test_size': len(test_mimic),
                 'train_patients': len(train_mimic['icu_stay_id'].unique()),
+                'val_patients': len(val_mimic['icu_stay_id'].unique()),
                 'test_patients': len(test_mimic['icu_stay_id'].unique())
             },
             'eicu': {
                 'train_size': len(train_eicu),
+                'val_size': len(val_eicu),
                 'test_size': len(test_eicu),
                 'train_patients': len(train_eicu['icu_stay_id'].unique()),
+                'val_patients': len(val_eicu['icu_stay_id'].unique()),
                 'test_patients': len(test_eicu['icu_stay_id'].unique())
             }
         }
@@ -848,7 +891,7 @@ class Preprocessor:
         with open(data_dir / "split_info.json", 'w') as f:
             json.dump(split_info, f, indent=2)
         
-        logger.info("Data splits saved")
+        logger.info("Data splits saved (train/val/test)")
     
     def create_feature_spec(self, mimic_data, eicu_data):
         """Create feature specification for the model"""
@@ -939,24 +982,28 @@ class Preprocessor:
         eicu_data, e_bad = self.drop_monotonicity_violations(eicu_data, domain_label="RAW-eICU")
         
         # STEP 0.8: Plot feature distributions by dataset, gender, and age group (optional)
-        if plot_distributions:
-            self.plot_feature_distributions(mimic_data, eicu_data)
+        # if plot_distributions:
+        #     self.plot_feature_distributions(mimic_data, eicu_data)
         
         # STEP 1: Split data FIRST (before any preprocessing)
-        logger.info("Splitting data into train/test sets...")
+        logger.info("Splitting data into train/val/test sets...")
         mimic_splits = self.split_data(mimic_data, 'mimic')
         eicu_splits = self.split_data(eicu_data, 'eicu')
         
-        mimic_train_raw, mimic_test_raw = mimic_splits
-        eicu_train_raw, eicu_test_raw = eicu_splits
+        mimic_train_raw, mimic_val_raw, mimic_test_raw = mimic_splits
+        eicu_train_raw, eicu_val_raw, eicu_test_raw = eicu_splits
         
         # STEP 2: Fit scalers ONLY on training data
         self.fit_scalers(mimic_train_raw, eicu_train_raw)
         
-        # STEP 3: Transform both train and test data using fitted scalers
+        # STEP 3: Transform train, val, and test data using fitted scalers
         logger.info("Transforming training data...")
         mimic_train_transformed, mimic_scalable, mimic_missing = self.transform_data(mimic_train_raw, "mimic")
         eicu_train_transformed, eicu_scalable, eicu_missing = self.transform_data(eicu_train_raw, "eicu")
+        
+        logger.info("Transforming validation data...")
+        mimic_val_transformed, _, _ = self.transform_data(mimic_val_raw, "mimic")
+        eicu_val_transformed, _, _ = self.transform_data(eicu_val_raw, "eicu")
         
         logger.info("Transforming test data...")
         mimic_test_transformed, _, _ = self.transform_data(mimic_test_raw, "mimic")
@@ -964,8 +1011,8 @@ class Preprocessor:
         
         # STEP 3.5: Verify monotonicity is preserved after group-based scaling
         # Group-based scaling with same (median,IQR) per {min,mean,max} MUST preserve ordering
-        for label, df in [("MIMIC-TRAIN", mimic_train_transformed), ("MIMIC-TEST", mimic_test_transformed),
-                          ("eICU-TRAIN", eicu_train_transformed), ("eICU-TEST", eicu_test_transformed)]:
+        for label, df in [("MIMIC-TRAIN", mimic_train_transformed), ("MIMIC-VAL", mimic_val_transformed), ("MIMIC-TEST", mimic_test_transformed),
+                          ("eICU-TRAIN", eicu_train_transformed), ("eICU-VAL", eicu_val_transformed), ("eICU-TEST", eicu_test_transformed)]:
             post_mask = self._monotonic_violation_mask(df, tolerance=1e-6)
             violations = int(post_mask.sum())
             if violations > 0:
@@ -986,14 +1033,22 @@ class Preprocessor:
                 logger.info(f"✓ Monotonicity verified for {label} ({len(df)} rows, min≤mean≤max preserved)")
         
         # STEP 4: Create final splits (already split, just reorganize)
-        mimic_final_splits = (mimic_train_transformed, mimic_test_transformed)
-        eicu_final_splits = (eicu_train_transformed, eicu_test_transformed)
+        mimic_final_splits = (mimic_train_transformed, mimic_val_transformed, mimic_test_transformed)
+        eicu_final_splits = (eicu_train_transformed, eicu_val_transformed, eicu_test_transformed)
         
         # Save splits
         self.save_splits(mimic_final_splits, eicu_final_splits)
         
         # Create feature specification
         feature_spec = self.create_feature_spec(mimic_train_transformed, eicu_train_transformed)
+        
+        # STEP 5: Plot feature distributions after preprocessing (optional)
+        if plot_distributions:
+            logger.info("Plotting feature distributions after preprocessing...")
+            # Combine train, val, and test for each dataset to show full distribution
+            mimic_full = pd.concat([mimic_train_transformed, mimic_val_transformed, mimic_test_transformed], ignore_index=True)
+            eicu_full = pd.concat([eicu_train_transformed, eicu_val_transformed, eicu_test_transformed], ignore_index=True)
+            self.plot_feature_distributions(mimic_full, eicu_full, plot_suffix="_post_preprocessing")
         
         logger.info("Preprocessing completed successfully!")
         return feature_spec

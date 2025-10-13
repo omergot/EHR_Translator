@@ -150,7 +150,6 @@ cython_debug/
 *.bin
 
 # Training logs and tensorboard logs
-logs/
 log/
 runs/
 lightning_logs/

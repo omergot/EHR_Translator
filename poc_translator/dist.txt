@@ -1,0 +1,248 @@
+================================================================================
+DISTRIBUTION MATCHING COMPARISON: Trained vs Untrained
+================================================================================
+
+This compares the REAL test: Does translation match target distribution?
+Using REAL eICU and REAL MIMIC test data with different distributions.
+(Reconstruction is trivial with skip connections, so we focus on translation)
+
+Loading test data...
+  eICU test samples: 19781
+  MIMIC test samples: 8597
+  MIMIC samples: 8597
+  eICU samples: 19781
+
+================================================================================
+1. TRAINED MODEL - Translation Quality
+================================================================================
+
+Evaluating eICU→MIMIC translation...
+
+KS Statistics (eICU→MIMIC):
+  Mean KS (source vs target):      0.170783
+  Mean KS (translated vs target):  0.163125
+  KS Improvement:                   0.007658
+  Features matching distribution:   16/24
+
+Wasserstein Distance (eICU→MIMIC):
+  Mean Wass (source vs target):    0.129164
+  Mean Wass (translated vs target): 0.129035
+  Wass Improvement:                 0.000129
+
+Distribution Distance:
+  Mean error (source):              0.099622
+  Mean error (translated):          0.108676
+  Std error (source):               0.078918
+  Std error (translated):           0.081498
+
+================================================================================
+2. UNTRAINED MODEL - Translation Quality
+================================================================================
+
+Evaluating eICU→MIMIC translation...
+
+KS Statistics (eICU→MIMIC):
+  Mean KS (source vs target):      0.170783
+  Mean KS (translated vs target):  0.170783
+  KS Improvement:                   0.000000
+  Features matching distribution:   15/24
+
+Wasserstein Distance (eICU→MIMIC):
+  Mean Wass (source vs target):    0.129164
+  Mean Wass (translated vs target): 0.129164
+  Wass Improvement:                 0.000000
+
+Distribution Distance:
+  Mean error (source):              0.099622
+  Mean error (translated):          0.099622
+  Std error (source):               0.078918
+  Std error (translated):           0.078918
+
+================================================================================
+COMPARISON: Distribution Matching Quality
+================================================================================
+
+                                 Metric  Trained Untrained
+         Mean KS (translated vs target) 0.163125  0.170783
+        Mean KS improvement over source 0.007658  0.000000
+Mean Wasserstein (translated vs target) 0.129035  0.129164
+           Mean Wasserstein improvement 0.000129  0.000000
+  Features matching target distribution    16/24     15/24
+            Mean absolute error (means) 0.108676  0.099622
+             Mean absolute error (stds) 0.081498  0.078918
+
+================================================================================
+VERDICT
+================================================================================
+
+Trained model improvements over untrained:
+  KS distance reduction:        0.007658 (4.5%)
+  Wasserstein reduction:        0.000129 (0.1%)
+  Mean error reduction:         -0.009054 (-9.1%)
+  Additional features matching: +1
+
+✅ GOOD: Training improved distribution matching.
+
+✓ Detailed results saved to: evaluation_comparison/distribution_comparison.csv
+
+================================================================================
+DETAILED PER-FEATURE ANALYSIS
+================================================================================
+
+📊 ALL FEATURES - Sorted by KS Improvement (Best to Worst):
+--------------------------------------------------------------------------------
+  ✓ Creat_std   : KS +0.051691 (+10.9%) [✗]
+                  Trained: 0.421963 | Untrained: 0.473654
+  ✓ RR_min      : KS +0.051005 (+33.9%) [✓]
+                  Trained: 0.099542 | Untrained: 0.150548
+  ✓ Na_max      : KS +0.039634 (+23.6%) [✗]
+                  Trained: 0.128643 | Untrained: 0.168276
+  ✓ Na_mean     : KS +0.033931 (+35.5%) [✓]
+                  Trained: 0.061772 | Untrained: 0.095703
+  ✓ RR_max      : KS +0.030768 (+24.2%) [✓]
+                  Trained: 0.096125 | Untrained: 0.126893
+  ✓ RR_mean     : KS +0.015358 (+24.0%) [✓]
+                  Trained: 0.048532 | Untrained: 0.063890
+  ✓ HR_min      : KS +0.015129 (+24.9%) [✓]
+                  Trained: 0.045512 | Untrained: 0.060641
+  ✓ Creat_max   : KS +0.012386 (+11.2%) [✓]
+                  Trained: 0.097837 | Untrained: 0.110222
+  ✓ WBC_std     : KS +0.008187 (+1.7%) [✗]
+                  Trained: 0.465350 | Untrained: 0.473537
+  ✓ SpO2_std    : KS +0.006693 (+32.5%) [✓]
+                  Trained: 0.013896 | Untrained: 0.020589
+  ✓ WBC_mean    : KS +0.002953 (+5.0%) [✓]
+                  Trained: 0.056175 | Untrained: 0.059128
+  ✓ SpO2_mean   : KS +0.002919 (+4.3%) [✓]
+                  Trained: 0.064215 | Untrained: 0.067134
+  ✓ Na_std      : KS +0.002053 (+0.5%) [✗]
+                  Trained: 0.417163 | Untrained: 0.419216
+  ✓ WBC_min     : KS +0.000402 (+0.4%) [✓]
+                  Trained: 0.097009 | Untrained: 0.097411
+  = SpO2_max    : KS +0.000000 (+0.0%) [✗]
+                  Trained: 0.998837 | Untrained: 0.998837
+  ✗ WBC_max     : KS -0.000802 (-0.8%) [✓]
+                  Trained: 0.099413 | Untrained: 0.098611
+  ✗ HR_mean     : KS -0.003708 (-9.2%) [✓]
+                  Trained: 0.044152 | Untrained: 0.040445
+  ✗ HR_std      : KS -0.004110 (-29.5%) [✓]
+                  Trained: 0.018054 | Untrained: 0.013944
+  ✗ RR_std      : KS -0.004940 (-9.8%) [✓]
+                  Trained: 0.055407 | Untrained: 0.050467
+  ✗ SpO2_min    : KS -0.006319 (-2.9%) [✗]
+                  Trained: 0.222230 | Untrained: 0.215911
+  ✗ Creat_mean  : KS -0.014258 (-19.8%) [✓]
+                  Trained: 0.086128 | Untrained: 0.071870
+  ✗ HR_max      : KS -0.014846 (-28.7%) [✓]
+                  Trained: 0.066516 | Untrained: 0.051670
+  ✗ Na_min      : KS -0.018705 (-22.4%) [✗]
+                  Trained: 0.102264 | Untrained: 0.083559
+  ✗ Creat_min   : KS -0.021637 (-25.0%) [✗]
+                  Trained: 0.108274 | Untrained: 0.086637
+
+📊 ALL FEATURES - Sorted by Wasserstein Improvement (Best to Worst):
+--------------------------------------------------------------------------------
+  ✓ Na_min      : Wass +0.026439 (+23.5%) [✗]
+                  Trained: 0.085965 | Untrained: 0.112404
+  ✓ Creat_std   : Wass +0.019856 (+4.5%) [✗]
+                  Trained: 0.425703 | Untrained: 0.445559
+  ✓ RR_min      : Wass +0.015481 (+21.1%) [✓]
+                  Trained: 0.057718 | Untrained: 0.073199
+  ✓ WBC_std     : Wass +0.012272 (+2.5%) [✗]
+                  Trained: 0.487689 | Untrained: 0.499960
+  ✓ Na_mean     : Wass +0.011420 (+24.1%) [✓]
+                  Trained: 0.035955 | Untrained: 0.047375
+  ✓ HR_min      : Wass +0.010691 (+27.0%) [✓]
+                  Trained: 0.028879 | Untrained: 0.039570
+  ✓ WBC_mean    : Wass +0.006125 (+10.7%) [✓]
+                  Trained: 0.051029 | Untrained: 0.057154
+  ✓ SpO2_std    : Wass +0.004934 (+15.5%) [✓]
+                  Trained: 0.026831 | Untrained: 0.031765
+  ✓ WBC_max     : Wass +0.003970 (+3.2%) [✓]
+                  Trained: 0.119858 | Untrained: 0.123827
+  ✓ RR_mean     : Wass +0.003965 (+15.1%) [✓]
+                  Trained: 0.022288 | Untrained: 0.026253
+  ✓ Na_std      : Wass +0.003036 (+0.8%) [✗]
+                  Trained: 0.376906 | Untrained: 0.379943
+  ✓ SpO2_mean   : Wass +0.000674 (+1.3%) [✓]
+                  Trained: 0.049704 | Untrained: 0.050378
+  ✓ SpO2_max    : Wass +0.000298 (+0.4%) [✗]
+                  Trained: 0.083023 | Untrained: 0.083321
+  ✗ Creat_min   : Wass -0.000206 (-0.4%) [✗]
+                  Trained: 0.054736 | Untrained: 0.054531
+  ✗ Creat_max   : Wass -0.002006 (-2.0%) [✓]
+                  Trained: 0.101768 | Untrained: 0.099762
+  ✗ WBC_min     : Wass -0.002316 (-2.6%) [✓]
+                  Trained: 0.090977 | Untrained: 0.088662
+  ✗ HR_mean     : Wass -0.002892 (-6.1%) [✓]
+                  Trained: 0.050044 | Untrained: 0.047152
+  ✗ RR_max      : Wass -0.002915 (-1.9%) [✓]
+                  Trained: 0.154845 | Untrained: 0.151931
+  ✗ RR_std      : Wass -0.003140 (-3.7%) [✓]
+                  Trained: 0.088545 | Untrained: 0.085405
+  ✗ HR_std      : Wass -0.003460 (-17.5%) [✓]
+                  Trained: 0.023198 | Untrained: 0.019738
+  ✗ Na_max      : Wass -0.009842 (-9.7%) [✗]
+                  Trained: 0.111228 | Untrained: 0.101386
+  ✗ Creat_mean  : Wass -0.019949 (-30.2%) [✓]
+                  Trained: 0.085925 | Untrained: 0.065976
+  ✗ HR_max      : Wass -0.027031 (-55.3%) [✓]
+                  Trained: 0.075914 | Untrained: 0.048882
+  ✗ SpO2_min    : Wass -0.042315 (-11.6%) [✗]
+                  Trained: 0.408124 | Untrained: 0.365809
+
+================================================================================
+SUMMARY STATISTICS
+================================================================================
+
+KS Statistic:
+  ✓ Improved:   14/24 (58.3%)
+  ✗ Regressed:  9/24 (37.5%)
+  = Unchanged:  1/24 (4.2%)
+  Mean improvement: 0.007658
+  Median improvement: 0.002486
+  Std improvement: 0.020456
+
+Wasserstein Distance:
+  ✓ Improved:   13/24 (54.2%)
+  ✗ Regressed:  11/24 (45.8%)
+  = Unchanged:  0/24 (0.0%)
+  Mean improvement: 0.000129
+  Median improvement: 0.000486
+  Std improvement: 0.014589
+
+📈 Correlation between KS and Wasserstein improvements: 0.3725
+   → Moderate agreement: Metrics somewhat aligned
+
+🔀 4 features with CONFLICTING improvements (KS↑ but Wass↓):
+   RR_max      : KS +0.030768, Wass -0.002915
+   WBC_min     : KS +0.000402, Wass -0.002316
+   Na_max      : KS +0.039634, Wass -0.009842
+   Creat_max   : KS +0.012386, Wass -0.002006
+
+🔀 2 features with CONFLICTING improvements (KS↓ but Wass↑):
+   WBC_max     : KS -0.000802, Wass +0.003970
+   Na_min      : KS -0.018705, Wass +0.026439
+
+✨ 3 features NOW match distribution (after training):
+   RR_min      : KS 0.1505 → 0.0995
+   RR_max      : KS 0.1269 → 0.0961
+   Creat_max   : KS 0.1102 → 0.0978
+
+💔 2 features LOST distribution match (after training):
+   Na_min      : KS 0.0836 → 0.1023
+   Creat_min   : KS 0.0866 → 0.1083
+
+================================================================================
+FINAL ASSESSMENT
+================================================================================
+
+Overall Training Impact:
+  KS Distance:        ✓ Improved by 0.007658
+  Wasserstein:        ✓ Improved by 0.000129
+  Features improved:  14/24 (KS), 13/24 (Wass)
+
+⚠️  MIXED: Training showed limited overall improvement.
+   Consider: higher Wasserstein weight, more epochs, or architecture changes.
+
+================================================================================

@@ -132,9 +132,11 @@ class CombinedDataModule(pl.LightningDataModule):
         # Data paths
         self.data_dir = self.output_dir / "data"
         
-        # SIMPLIFIED: Initialize datasets (train/test only)
+        # Initialize datasets (train/val/test)
         self.train_mimic_dataset = None
         self.train_eicu_dataset = None
+        self.val_mimic_dataset = None
+        self.val_eicu_dataset = None
         self.test_mimic_dataset = None
         self.test_eicu_dataset = None
         
@@ -150,20 +152,30 @@ class CombinedDataModule(pl.LightningDataModule):
         if stage == 'fit' or stage is None:
             # Load training data
             train_mimic_data = pd.read_csv(self.data_dir / "train_mimic_preprocessed.csv")
+            val_mimic_data = pd.read_csv(self.data_dir / "val_mimic_preprocessed.csv")
             
             if self.mimic_only:
                 # MIMIC-only mode: Split MIMIC data into alternating domains for cycle testing
                 self.train_mimic_dataset = FeatureDataset(
                     train_mimic_data, 'mimic', self.feature_spec, split_for_cycle=True
                 )
+                self.val_mimic_dataset = FeatureDataset(
+                    val_mimic_data, 'mimic', self.feature_spec, split_for_cycle=True
+                )
                 self.train_eicu_dataset = None
+                self.val_eicu_dataset = None
                 logger.info(f"Training dataset (MIMIC-only with cycle split) - MIMIC: {len(self.train_mimic_dataset)}")
+                logger.info(f"Validation dataset (MIMIC-only with cycle split) - MIMIC: {len(self.val_mimic_dataset)}")
             else:
                 # Standard mode: Load both MIMIC and eICU
                 self.train_mimic_dataset = FeatureDataset(train_mimic_data, 'mimic', self.feature_spec)
+                self.val_mimic_dataset = FeatureDataset(val_mimic_data, 'mimic', self.feature_spec)
                 train_eicu_data = pd.read_csv(self.data_dir / "train_eicu_preprocessed.csv")
+                val_eicu_data = pd.read_csv(self.data_dir / "val_eicu_preprocessed.csv")
                 self.train_eicu_dataset = FeatureDataset(train_eicu_data, 'eicu', self.feature_spec)
+                self.val_eicu_dataset = FeatureDataset(val_eicu_data, 'eicu', self.feature_spec)
                 logger.info(f"Training datasets - MIMIC: {len(self.train_mimic_dataset)}, eICU: {len(self.train_eicu_dataset)}")
+                logger.info(f"Validation datasets - MIMIC: {len(self.val_mimic_dataset)}, eICU: {len(self.val_eicu_dataset)}")
             
         if stage == 'test' or stage is None:
             # Load test data
@@ -198,7 +210,20 @@ class CombinedDataModule(pl.LightningDataModule):
             mimic_only=self.mimic_only  # Pass MIMIC-only flag
         )
     
-    # REMOVED: No validation dataloader needed
+    def val_dataloader(self):
+        """Create validation dataloader"""
+        gpu_config = self.config.get('gpu', {})
+        num_workers = gpu_config.get('num_workers', 4)
+        
+        return CombinedDataLoader(
+            mimic_dataset=self.val_mimic_dataset,
+            eicu_dataset=self.val_eicu_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,  # Don't shuffle validation data
+            num_workers=num_workers,
+            balance_strategy=self.balance_strategy,  # Use same balance strategy as training
+            mimic_only=self.mimic_only  # Pass MIMIC-only flag
+        )
     
     def test_dataloader(self):
         """Create test dataloader"""

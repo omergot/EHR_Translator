@@ -1,8 +1,9 @@
 balance_strategy: oversample_minority
 data:
   random_seed: 42
-  test_split: 0.2
-  train_split: 0.8
+  test_split: 0.15
+  train_split: 0.7
+  val_split: 0.15
 db:
   cohort_tables:
     eicu: eicu_bsi_100_2h_test.__eicu_bsi_100_2h_cohort
@@ -25,7 +26,7 @@ logging:
   log_every_n_steps: 50
   project: poc_translator_optimized
   use_wandb: false
-mimic_only: true
+mimic_only: false
 paths:
   analyze_features_path: /bigdata/omerg/RatchetEHR/analyze_features.py
   eicu_poc_csv: /bigdata/omerg/Thesis/EHR_Translator/poc_translator/eicu_poc_features.csv
@@ -36,28 +37,21 @@ preprocessing:
   max_missing_pct: 0.5
 training:
   batch_size: 128
-  cov_weight: 0.01
-  cycle_weight: 0.3
-  domain_adversarial_weight: 0.2
+  cycle_weight: 0.2
+  dropout_rate: 0.1
   early_stop_patience: 15
-  epochs: 10
-  feature_recon_weight: 0.2
-  gradient_clip_val: 1.0
+  epochs: 30
+  gradient_clip_val: 10.0
   kl_warmup_epochs: 20
-  kl_weight: 1e-5
   latent_dim: 256
+  latent_dim_auto: true
   lr: 1e-3
-  mmd_weight: 0.5
-  per_feature_mmd_weight: 0.2
-  rec_weight: 5.0
-  use_heteroscedastic: false
-  use_safe_mode: false
-  wasserstein_weight: 0.1
+  rec_weight: 0.2
+  use_residual_blocks: false
+  wasserstein_age_bucket_years: 10
+  wasserstein_compute_every_n_steps: 1
+  wasserstein_min_group_size: 32
+  wasserstein_update_worst_every_n_epochs: 1
+  wasserstein_weight: 1
+  wasserstein_worst_k: 5
   weight_decay: 1e-4
-  worst_features:
-  - Temp_mean
-  - Temp_std
-  - HR_std
-  - SpO2_std
-  - Age
-  - Creat_mean

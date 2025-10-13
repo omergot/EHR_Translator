@@ -4,6 +4,14 @@ Comprehensive Evaluation Script for Cycle-VAE
 Implements patient-level and feature-level evaluation metrics to assess translation quality.
 """
 
+# CRITICAL FIX: Force single-threaded BLAS to avoid non-deterministic correlation computations
+# Multi-threaded BLAS causes race conditions in np.corrcoef, leading to different results on each call
+import os
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
+
 import torch
 import numpy as np
 import pandas as pd
@@ -56,24 +64,40 @@ class ComprehensiveEvaluator:
         self.missing_features = feature_spec.get('missing_features', [])
         self.all_features = self.numeric_features + self.missing_features
         
+        # UPDATED: Identify clinical-only features (exclude demographics and missing flags)
+        self.demographic_features = feature_spec.get('demographic_features', ['Age', 'Gender'])
+        self.clinical_only_features = [
+            f for f in self.numeric_features 
+            if f not in self.demographic_features
+        ]
+        
+        # Get indices for filtering
+        self.clinical_indices = [i for i, f in enumerate(self.all_features) 
+                                if f in self.clinical_only_features]
+        self.demographic_indices = [i for i, f in enumerate(self.all_features) 
+                                   if f in self.demographic_features]
+        self.missing_indices = [i for i, f in enumerate(self.all_features) 
+                               if f in self.missing_features]
+        
         # Create subdirectories
         (self.eval_dir / "plots").mkdir(exist_ok=True)
         (self.eval_dir / "data").mkdir(exist_ok=True)
         
         logger.info(f"Comprehensive evaluator initialized. Output directory: {self.eval_dir}")
+        logger.info(f"Clinical features: {len(self.clinical_only_features)}, Demographics: {len(self.demographic_features)}, Missing flags: {len(self.missing_features)}")
     
     def evaluate_translation_quality(self, x_eicu: torch.Tensor, x_mimic: torch.Tensor) -> Dict:
         """
-        Run comprehensive evaluation of translation quality.
+        UPDATED: Run comprehensive evaluation with simplified model metrics.
         
         Args:
-            x_eicu: eICU test data [n_samples, n_features]
-            x_mimic: MIMIC test data [n_samples, n_features]
+            x_eicu: eICU test data [n_samples, n_features] (numeric + missing)
+            x_mimic: MIMIC test data [n_samples, n_features] (numeric + missing)
             
         Returns:
             Dictionary with all evaluation results
         """
-        logger.info("Starting comprehensive translation quality evaluation...")
+        logger.info("Starting comprehensive translation quality evaluation (SIMPLIFIED MODEL)...")
         logger.info(f"Input data shapes: eICU {x_eicu.shape}, MIMIC {x_mimic.shape}")
         
         # Move data to model device
@@ -82,28 +106,127 @@ class ComprehensiveEvaluator:
         x_eicu = x_eicu.to(device)
         x_mimic = x_mimic.to(device)
         
-        # Perform translations
-        logger.info("Performing eICU to MIMIC translation...")
-        x_eicu_to_mimic = self.model.translate_eicu_to_mimic(x_eicu)
-        logger.info("Performing MIMIC to eICU translation...")
-        x_mimic_to_eicu = self.model.translate_mimic_to_eicu(x_mimic)
+        # Split numeric and missing flags
+        numeric_dim = self.model.numeric_dim
+        x_eicu_numeric = x_eicu[:, :numeric_dim]
+        x_eicu_missing = x_eicu[:, numeric_dim:]
+        x_mimic_numeric = x_mimic[:, :numeric_dim]
+        x_mimic_missing = x_mimic[:, numeric_dim:]
         
-        # Round-trip translations
-        logger.info("Performing round-trip translations...")
-        x_eicu_roundtrip = self.model.translate_mimic_to_eicu(x_eicu_to_mimic)
-        x_mimic_roundtrip = self.model.translate_eicu_to_mimic(x_mimic_to_eicu)
+        # CRITICAL: Ensure model is in eval mode (disables dropout/batchnorm)
+        self.model.eval()
+        logger.info("Model set to eval mode (dropout/batchnorm disabled)")
+        
+        # Compute feature IQR from data (for robust error metrics)
+        logger.info("Computing feature IQR for robust error metrics...")
+        all_numeric = torch.cat([x_eicu_numeric, x_mimic_numeric], dim=0)
+        self.model.feature_iqr = self.model.compute_feature_iqr(all_numeric)
+        
+        # Perform translations (DETERMINISTIC for evaluation)
+        logger.info("Performing eICU to MIMIC translation (deterministic)...")
+        x_eicu_to_mimic = self.model.translate_eicu_to_mimic_deterministic(x_eicu)
+        logger.info("Performing MIMIC to eICU translation (deterministic)...")
+        x_mimic_to_eicu = self.model.translate_mimic_to_eicu_deterministic(x_mimic)
+        
+        # Split translated outputs
+        x_eicu_to_mimic_numeric = x_eicu_to_mimic[:, :numeric_dim]
+        x_mimic_to_eicu_numeric = x_mimic_to_eicu[:, :numeric_dim]
+        
+        # Round-trip translations (DETERMINISTIC for evaluation)
+        logger.info("Performing round-trip translations (deterministic)...")
+        x_eicu_roundtrip = self.model.translate_mimic_to_eicu_deterministic(x_eicu_to_mimic)
+        x_mimic_roundtrip = self.model.translate_eicu_to_mimic_deterministic(x_mimic_to_eicu)
+        
+        # Split roundtrip outputs
+        x_eicu_roundtrip_numeric = x_eicu_roundtrip[:, :numeric_dim]
+        x_mimic_roundtrip_numeric = x_mimic_roundtrip[:, :numeric_dim]
+        
         logger.info("Translations completed successfully")
         
-        # Convert to numpy for analysis
+        # Run all evaluations
+        results = {}
+        
+        # NEW: Per-feature percentage error metrics (reconstruction)
+        logger.info("Computing per-feature percentage errors for reconstruction...")
+        try:
+            # eICU reconstruction (direct A->A')
+            with torch.no_grad():
+                outputs_eicu = self.model.forward(x_eicu, torch.zeros(x_eicu.shape[0], dtype=torch.long, device=device))
+                x_eicu_recon_numeric = outputs_eicu['x_recon'][:, :numeric_dim]
+            
+            results['eicu_reconstruction_errors'] = self.model.compute_per_feature_percentage_errors(
+                x_eicu_numeric, x_eicu_recon_numeric, x_eicu_missing, mode='reconstruction'
+            )
+            
+            # MIMIC reconstruction
+            with torch.no_grad():
+                outputs_mimic = self.model.forward(x_mimic, torch.ones(x_mimic.shape[0], dtype=torch.long, device=device))
+                x_mimic_recon_numeric = outputs_mimic['x_recon'][:, :numeric_dim]
+            
+            results['mimic_reconstruction_errors'] = self.model.compute_per_feature_percentage_errors(
+                x_mimic_numeric, x_mimic_recon_numeric, x_mimic_missing, mode='reconstruction'
+            )
+            logger.info("✓ Reconstruction percentage errors completed")
+        except Exception as e:
+            logger.error(f"✗ Reconstruction percentage errors failed: {e}")
+            results['eicu_reconstruction_errors'] = None
+            results['mimic_reconstruction_errors'] = None
+        
+        # NEW: Per-feature percentage error metrics (cycle)
+        logger.info("Computing per-feature percentage errors for cycle...")
+        try:
+            results['eicu_cycle_errors'] = self.model.compute_per_feature_percentage_errors(
+                x_eicu_numeric, x_eicu_roundtrip_numeric, x_eicu_missing, mode='cycle'
+            )
+            results['mimic_cycle_errors'] = self.model.compute_per_feature_percentage_errors(
+                x_mimic_numeric, x_mimic_roundtrip_numeric, x_mimic_missing, mode='cycle'
+            )
+            logger.info("✓ Cycle percentage errors completed")
+        except Exception as e:
+            logger.error(f"✗ Cycle percentage errors failed: {e}")
+            results['eicu_cycle_errors'] = None
+            results['mimic_cycle_errors'] = None
+        
+        # NEW: Latent space distance metrics
+        logger.info("Computing latent space distance metrics...")
+        try:
+            with torch.no_grad():
+                z_eicu = self.model.encoder(x_eicu)[0]  # Get mu
+                z_mimic = self.model.encoder(x_mimic)[0]
+                z_eicu_to_mimic = self.model.encoder(x_eicu_to_mimic)[0]
+            
+            results['latent_distance_eicu_vs_mimic'] = self.model.compute_latent_distance(z_eicu, z_mimic)
+            results['latent_distance_translated_vs_real'] = self.model.compute_latent_distance(
+                z_eicu_to_mimic, z_mimic
+            )
+            logger.info("✓ Latent distance metrics completed")
+        except Exception as e:
+            logger.error(f"✗ Latent distance metrics failed: {e}")
+            results['latent_distance_eicu_vs_mimic'] = None
+            results['latent_distance_translated_vs_real'] = None
+        
+        # NEW: Per-feature distribution distance
+        logger.info("Computing per-feature distribution distance...")
+        try:
+            results['distribution_distance_eicu_to_mimic'] = self.model.compute_per_feature_distribution_distance(
+                x_eicu_to_mimic_numeric, x_mimic_numeric
+            )
+            results['distribution_distance_mimic_to_eicu'] = self.model.compute_per_feature_distribution_distance(
+                x_mimic_to_eicu_numeric, x_eicu_numeric
+            )
+            logger.info("✓ Distribution distance metrics completed")
+        except Exception as e:
+            logger.error(f"✗ Distribution distance metrics failed: {e}")
+            results['distribution_distance_eicu_to_mimic'] = None
+            results['distribution_distance_mimic_to_eicu'] = None
+        
+        # Convert to numpy for legacy analysis
         x_eicu_np = x_eicu.detach().cpu().numpy()
         x_mimic_np = x_mimic.detach().cpu().numpy()
         x_eicu_to_mimic_np = x_eicu_to_mimic.detach().cpu().numpy()
         x_mimic_to_eicu_np = x_mimic_to_eicu.detach().cpu().numpy()
         x_eicu_roundtrip_np = x_eicu_roundtrip.detach().cpu().numpy()
         x_mimic_roundtrip_np = x_mimic_roundtrip.detach().cpu().numpy()
-        
-        # Run all evaluations
-        results = {}
         
         # 1. Per-feature correlation and R² metrics
         logger.info("Computing per-feature correlation and R² metrics...")
@@ -202,41 +325,57 @@ class ComprehensiveEvaluator:
     
     def _compute_correlation_metrics(self, x_eicu: np.ndarray, x_eicu_roundtrip: np.ndarray,
                                    x_mimic: np.ndarray, x_mimic_roundtrip: np.ndarray) -> Dict:
-        """Compute per-feature correlation and R² metrics."""
-        n_features = x_eicu.shape[1]
+        """
+        Compute per-feature correlation and R² metrics (CLINICAL FEATURES ONLY).
+        Excludes demographics and missing flags as they are input-only.
+        """
+        # Only compute on clinical features
+        n_clinical = len(self.clinical_indices)
+        
+        # Extract clinical features only
+        x_eicu_clinical = x_eicu[:, self.clinical_indices]
+        x_eicu_roundtrip_clinical = x_eicu_roundtrip[:, self.clinical_indices]
+        x_mimic_clinical = x_mimic[:, self.clinical_indices]
+        x_mimic_roundtrip_clinical = x_mimic_roundtrip[:, self.clinical_indices]
+        
         metrics = {
             'eicu_roundtrip': {
-                'r2_scores': np.zeros(n_features),
-                'correlations': np.zeros(n_features),
-                'mse': np.zeros(n_features),
-                'mae': np.zeros(n_features)
+                'r2_scores': np.zeros(n_clinical),
+                'correlations': np.zeros(n_clinical),
+                'mse': np.zeros(n_clinical),
+                'mae': np.zeros(n_clinical)
             },
             'mimic_roundtrip': {
-                'r2_scores': np.zeros(n_features),
-                'correlations': np.zeros(n_features),
-                'mse': np.zeros(n_features),
-                'mae': np.zeros(n_features)
+                'r2_scores': np.zeros(n_clinical),
+                'correlations': np.zeros(n_clinical),
+                'mse': np.zeros(n_clinical),
+                'mae': np.zeros(n_clinical)
             }
         }
         
-        for i in range(n_features):
+        for i in range(n_clinical):
             # eICU round-trip metrics
-            if np.std(x_eicu[:, i]) > 1e-8:  # Avoid division by zero
-                metrics['eicu_roundtrip']['r2_scores'][i] = r2_score(x_eicu[:, i], x_eicu_roundtrip[:, i])
-                metrics['eicu_roundtrip']['correlations'][i] = np.corrcoef(x_eicu[:, i], x_eicu_roundtrip[:, i])[0, 1]
-            metrics['eicu_roundtrip']['mse'][i] = mean_squared_error(x_eicu[:, i], x_eicu_roundtrip[:, i])
-            metrics['eicu_roundtrip']['mae'][i] = mean_absolute_error(x_eicu[:, i], x_eicu_roundtrip[:, i])
+            if np.std(x_eicu_clinical[:, i]) > 1e-8:  # Avoid division by zero
+                metrics['eicu_roundtrip']['r2_scores'][i] = r2_score(x_eicu_clinical[:, i], x_eicu_roundtrip_clinical[:, i])
+                metrics['eicu_roundtrip']['correlations'][i] = np.corrcoef(x_eicu_clinical[:, i], x_eicu_roundtrip_clinical[:, i])[0, 1]
+            metrics['eicu_roundtrip']['mse'][i] = mean_squared_error(x_eicu_clinical[:, i], x_eicu_roundtrip_clinical[:, i])
+            metrics['eicu_roundtrip']['mae'][i] = mean_absolute_error(x_eicu_clinical[:, i], x_eicu_roundtrip_clinical[:, i])
             
             # MIMIC round-trip metrics
-            if np.std(x_mimic[:, i]) > 1e-8:
-                metrics['mimic_roundtrip']['r2_scores'][i] = r2_score(x_mimic[:, i], x_mimic_roundtrip[:, i])
-                metrics['mimic_roundtrip']['correlations'][i] = np.corrcoef(x_mimic[:, i], x_mimic_roundtrip[:, i])[0, 1]
-            metrics['mimic_roundtrip']['mse'][i] = mean_squared_error(x_mimic[:, i], x_mimic_roundtrip[:, i])
-            metrics['mimic_roundtrip']['mae'][i] = mean_absolute_error(x_mimic[:, i], x_mimic_roundtrip[:, i])
+            if np.std(x_mimic_clinical[:, i]) > 1e-8:
+                r2_val = r2_score(x_mimic_clinical[:, i], x_mimic_roundtrip_clinical[:, i])
+                corr_matrix = np.corrcoef(x_mimic_clinical[:, i], x_mimic_roundtrip_clinical[:, i])
+                corr_val = corr_matrix[0, 1]
+                
+                metrics['mimic_roundtrip']['r2_scores'][i] = r2_val
+                metrics['mimic_roundtrip']['correlations'][i] = corr_val
+                
+            metrics['mimic_roundtrip']['mse'][i] = mean_squared_error(x_mimic_clinical[:, i], x_mimic_roundtrip_clinical[:, i])
+            metrics['mimic_roundtrip']['mae'][i] = mean_absolute_error(x_mimic_clinical[:, i], x_mimic_roundtrip_clinical[:, i])
         
-        # Create summary DataFrame
+        # Create summary DataFrame (clinical features only)
         df = pd.DataFrame({
-            'feature_name': self.all_features,
+            'feature_name': self.clinical_only_features,
             'eicu_r2': metrics['eicu_roundtrip']['r2_scores'],
             'eicu_correlation': metrics['eicu_roundtrip']['correlations'],
             'eicu_mse': metrics['eicu_roundtrip']['mse'],
@@ -253,55 +392,82 @@ class ComprehensiveEvaluator:
         
         metrics['summary_df'] = df
         
+        logger.info(f"Correlation metrics computed on {n_clinical} clinical features (excluded {len(self.demographic_features)} demographics and {len(self.missing_features)} missing flags)")
+        
         return metrics
     
     def _compute_ks_analysis(self, x_eicu: np.ndarray, x_eicu_to_mimic: np.ndarray,
                            x_mimic: np.ndarray, x_mimic_to_eicu: np.ndarray) -> Dict:
-        """Compute KS p-values and significance testing."""
-        n_features = x_eicu.shape[1]
+        """
+        UPDATED: Compute KS and Wasserstein distance (CLINICAL FEATURES ONLY).
+        Excludes demographics and missing flags as they are input-only.
+        """
+        # Only compute on clinical features
+        n_clinical = len(self.clinical_indices)
+        
+        # Extract clinical features only
+        x_eicu_clinical = x_eicu[:, self.clinical_indices]
+        x_eicu_to_mimic_clinical = x_eicu_to_mimic[:, self.clinical_indices]
+        x_mimic_clinical = x_mimic[:, self.clinical_indices]
+        x_mimic_to_eicu_clinical = x_mimic_to_eicu[:, self.clinical_indices]
         
         ks_results = {
             'eicu_to_mimic': {
-                'ks_stats': np.zeros(n_features),
-                'p_values': np.zeros(n_features),
-                'significant': np.zeros(n_features, dtype=bool)
+                'ks_stats': np.zeros(n_clinical),
+                'p_values': np.zeros(n_clinical),
+                'significant': np.zeros(n_clinical, dtype=bool),
+                'wasserstein': np.zeros(n_clinical)
             },
             'mimic_to_eicu': {
-                'ks_stats': np.zeros(n_features),
-                'p_values': np.zeros(n_features),
-                'significant': np.zeros(n_features, dtype=bool)
+                'ks_stats': np.zeros(n_clinical),
+                'p_values': np.zeros(n_clinical),
+                'significant': np.zeros(n_clinical, dtype=bool),
+                'wasserstein': np.zeros(n_clinical)
             }
         }
         
-        for i in range(n_features):
+        for i in range(n_clinical):
             # eICU to MIMIC translation
-            ks_stat, p_val = stats.ks_2samp(x_mimic[:, i], x_eicu_to_mimic[:, i])
+            ks_stat, p_val = stats.ks_2samp(x_mimic_clinical[:, i], x_eicu_to_mimic_clinical[:, i])
+            wass_dist = stats.wasserstein_distance(x_mimic_clinical[:, i], x_eicu_to_mimic_clinical[:, i])
             ks_results['eicu_to_mimic']['ks_stats'][i] = ks_stat
             ks_results['eicu_to_mimic']['p_values'][i] = p_val
             ks_results['eicu_to_mimic']['significant'][i] = p_val < 0.05
+            ks_results['eicu_to_mimic']['wasserstein'][i] = wass_dist
             
             # MIMIC to eICU translation
-            ks_stat, p_val = stats.ks_2samp(x_eicu[:, i], x_mimic_to_eicu[:, i])
+            ks_stat, p_val = stats.ks_2samp(x_eicu_clinical[:, i], x_mimic_to_eicu_clinical[:, i])
+            wass_dist = stats.wasserstein_distance(x_eicu_clinical[:, i], x_mimic_to_eicu_clinical[:, i])
             ks_results['mimic_to_eicu']['ks_stats'][i] = ks_stat
             ks_results['mimic_to_eicu']['p_values'][i] = p_val
             ks_results['mimic_to_eicu']['significant'][i] = p_val < 0.05
+            ks_results['mimic_to_eicu']['wasserstein'][i] = wass_dist
         
-        # Create summary DataFrame
+        # Create summary DataFrame (clinical features only)
         df = pd.DataFrame({
-            'feature_name': self.all_features,
+            'feature_name': self.clinical_only_features,
             'eicu_to_mimic_ks': ks_results['eicu_to_mimic']['ks_stats'],
             'eicu_to_mimic_pvalue': ks_results['eicu_to_mimic']['p_values'],
             'eicu_to_mimic_significant': ks_results['eicu_to_mimic']['significant'],
+            'eicu_to_mimic_wasserstein': ks_results['eicu_to_mimic']['wasserstein'],
             'mimic_to_eicu_ks': ks_results['mimic_to_eicu']['ks_stats'],
             'mimic_to_eicu_pvalue': ks_results['mimic_to_eicu']['p_values'],
-            'mimic_to_eicu_significant': ks_results['mimic_to_eicu']['significant']
+            'mimic_to_eicu_significant': ks_results['mimic_to_eicu']['significant'],
+            'mimic_to_eicu_wasserstein': ks_results['mimic_to_eicu']['wasserstein']
         })
         
-        # Add quality flags
-        df['eicu_to_mimic_good'] = (df['eicu_to_mimic_ks'] < 0.3) & (df['eicu_to_mimic_pvalue'] > 0.05)
-        df['mimic_to_eicu_good'] = (df['mimic_to_eicu_ks'] < 0.3) & (df['mimic_to_eicu_pvalue'] > 0.05)
+        # Add quality flags based on KS statistic only (p-value uninformative with large N)
+        # KS interpretation: <0.1=excellent, <0.2=good, <0.3=acceptable, >0.5=poor
+        df['eicu_to_mimic_excellent'] = (df['eicu_to_mimic_ks'] < 0.1)
+        df['eicu_to_mimic_good'] = (df['eicu_to_mimic_ks'] < 0.2)
+        df['eicu_to_mimic_acceptable'] = (df['eicu_to_mimic_ks'] < 0.3)
+        df['mimic_to_eicu_excellent'] = (df['mimic_to_eicu_ks'] < 0.1)
+        df['mimic_to_eicu_good'] = (df['mimic_to_eicu_ks'] < 0.2)
+        df['mimic_to_eicu_acceptable'] = (df['mimic_to_eicu_ks'] < 0.3)
         
         ks_results['summary_df'] = df
+        
+        logger.info(f"KS analysis computed on {n_clinical} clinical features (excluded {len(self.demographic_features)} demographics and {len(self.missing_features)} missing flags)")
         
         return ks_results
     
@@ -477,7 +643,7 @@ class ComprehensiveEvaluator:
                                      x_mimic: np.ndarray, x_mimic_to_eicu: np.ndarray):
         """Plot distribution comparisons for key features."""
         # Select key features to visualize
-        key_features = ['HR_mean', 'Temp_mean', 'Na_mean', 'Creat_mean', 'Age']
+        key_features = ['SpO2_max', 'RR_min', 'Na_std', 'HR_min', 'RR_mean', 'SpO2_mean', 'WBC_std']
         key_indices = []
         key_names = []
         
@@ -831,34 +997,125 @@ class ComprehensiveEvaluator:
                         self._debug_json_serialization_error(item, f"{path}[{i}]")
     
     def _print_evaluation_summary(self, results: Dict):
-        """Print evaluation summary."""
-        logger.info("=== COMPREHENSIVE EVALUATION SUMMARY ===")
+        """UPDATED: Print evaluation summary with simplified model metrics."""
+        logger.info("=" * 80)
+        logger.info("=== COMPREHENSIVE EVALUATION SUMMARY (SIMPLIFIED MODEL) ===")
+        logger.info("=" * 80)
         
-        # Correlation metrics summary
-        if 'correlation_metrics' in results:
+        # NEW: Per-feature percentage errors - Reconstruction
+        if 'eicu_reconstruction_errors' in results and results['eicu_reconstruction_errors'] is not None:
+            logger.info("\n📊 RECONSTRUCTION QUALITY (A→A')")
+            logger.info("-" * 80)
+            logger.info("  NOTE: Data is normalized - MAE in standard deviation units, use IQR metrics")
+            
+            eicu_err = results['eicu_reconstruction_errors']
+            mimic_err = results['mimic_reconstruction_errors']
+            
+            # Average across clinical features
+            eicu_mae_avg = eicu_err['mae'].mean().item()
+            mimic_mae_avg = mimic_err['mae'].mean().item()
+            
+            logger.info(f"  eICU Reconstruction:")
+            logger.info(f"    - MAE: {eicu_mae_avg:.4f} (std dev units)")
+            logger.info(f"    - Median Error: {eicu_err['median_abs_error'].mean().item():.4f}")
+            logger.info(f"    - % within 0.5 IQR: {eicu_err['pct_within_iqr']['within_0.5_iqr'].mean().item():.1f}%")
+            logger.info(f"    - % within 1.0 IQR: {eicu_err['pct_within_iqr']['within_1.0_iqr'].mean().item():.1f}%")
+            
+            logger.info(f"  MIMIC Reconstruction:")
+            logger.info(f"    - MAE: {mimic_mae_avg:.4f} (std dev units)")
+            logger.info(f"    - Median Error: {mimic_err['median_abs_error'].mean().item():.4f}")
+            logger.info(f"    - % within 0.5 IQR: {mimic_err['pct_within_iqr']['within_0.5_iqr'].mean().item():.1f}%")
+            logger.info(f"    - % within 1.0 IQR: {mimic_err['pct_within_iqr']['within_1.0_iqr'].mean().item():.1f}%")
+        
+        # NEW: Per-feature percentage errors - Cycle
+        if 'eicu_cycle_errors' in results and results['eicu_cycle_errors'] is not None:
+            logger.info("\n🔄 CYCLE CONSISTENCY (A→B'→A')")
+            logger.info("-" * 80)
+            logger.info("  NOTE: Data is normalized - use IQR metrics for meaningful percentages")
+            
+            eicu_cyc = results['eicu_cycle_errors']
+            mimic_cyc = results['mimic_cycle_errors']
+            
+            logger.info(f"  eICU Cycle:")
+            logger.info(f"    - MAE: {eicu_cyc['mae'].mean().item():.4f} (std dev units)")
+            logger.info(f"    - % within 0.5 IQR: {eicu_cyc['pct_within_iqr']['within_0.5_iqr'].mean().item():.1f}%")
+            logger.info(f"    - % within 1.0 IQR: {eicu_cyc['pct_within_iqr']['within_1.0_iqr'].mean().item():.1f}%")
+            
+            logger.info(f"  MIMIC Cycle:")
+            logger.info(f"    - MAE: {mimic_cyc['mae'].mean().item():.4f} (std dev units)")
+            logger.info(f"    - % within 0.5 IQR: {mimic_cyc['pct_within_iqr']['within_0.5_iqr'].mean().item():.1f}%")
+            logger.info(f"    - % within 1.0 IQR: {mimic_cyc['pct_within_iqr']['within_1.0_iqr'].mean().item():.1f}%")
+        
+        # NEW: Latent space distance
+        if 'latent_distance_eicu_vs_mimic' in results and results['latent_distance_eicu_vs_mimic'] is not None:
+            logger.info("\n🧠 LATENT SPACE ANALYSIS")
+            logger.info("-" * 80)
+            
+            latent_orig = results['latent_distance_eicu_vs_mimic']
+            latent_trans = results['latent_distance_translated_vs_real']
+            
+            logger.info(f"  Original (eICU vs MIMIC):")
+            logger.info(f"    - Euclidean Distance: {latent_orig['mean_euclidean_distance']:.4f}")
+            logger.info(f"    - Cosine Similarity: {latent_orig['cosine_similarity']:.4f}")
+            logger.info(f"    - KL Divergence: {latent_orig['kl_divergence']:.4f}")
+            
+            logger.info(f"  After Translation (eICU→MIMIC vs real MIMIC):")
+            logger.info(f"    - Euclidean Distance: {latent_trans['mean_euclidean_distance']:.4f}")
+            logger.info(f"    - Cosine Similarity: {latent_trans['cosine_similarity']:.4f}")
+            logger.info(f"    - KL Divergence: {latent_trans['kl_divergence']:.4f}")
+        
+        # NEW: Per-feature distribution distance
+        if 'distribution_distance_eicu_to_mimic' in results and results['distribution_distance_eicu_to_mimic'] is not None:
+            logger.info("\n📈 DISTRIBUTION MATCHING")
+            logger.info("-" * 80)
+            
+            dist_e2m = results['distribution_distance_eicu_to_mimic']
+            
+            logger.info(f"  eICU→MIMIC Translation:")
+            logger.info(f"    - Mean Wasserstein Distance: {dist_e2m['wasserstein_distances'].mean().item():.4f}")
+            logger.info(f"    - Mean KS Statistic: {dist_e2m['ks_statistics'].mean().item():.4f}")
+            logger.info(f"    - Mean Diff in Means: {dist_e2m['mean_differences'].mean().item():.4f}")
+        
+        # Legacy metrics
+        if 'correlation_metrics' in results and results['correlation_metrics'] is not None:
+            logger.info("\n📊 LEGACY: Feature Quality (R² > 0.5 & correlation > 0.7)")
+            logger.info("-" * 80)
             df = results['correlation_metrics']['summary_df']
             good_eicu = df['eicu_good_quality'].sum()
             good_mimic = df['mimic_good_quality'].sum()
             total_features = len(df)
             
-            logger.info(f"Feature Quality (R² > 0.5 & correlation > 0.7):")
             logger.info(f"  eICU round-trip: {good_eicu}/{total_features} ({good_eicu/total_features*100:.1f}%)")
             logger.info(f"  MIMIC round-trip: {good_mimic}/{total_features} ({good_mimic/total_features*100:.1f}%)")
         
-        # KS analysis summary
-        if 'ks_analysis' in results:
+        if 'ks_analysis' in results and results['ks_analysis'] is not None:
+            logger.info("\n📊 Distribution Matching (KS statistic thresholds)")
+            logger.info("-" * 80)
             df = results['ks_analysis']['summary_df']
-            good_eicu = df['eicu_to_mimic_good'].sum()
-            good_mimic = df['mimic_to_eicu_good'].sum()
+            total_features = len(df)
             
-            logger.info(f"Distribution Matching (KS < 0.3 & p > 0.05):")
-            logger.info(f"  eICU→MIMIC: {good_eicu}/{total_features} ({good_eicu/total_features*100:.1f}%)")
-            logger.info(f"  MIMIC→eICU: {good_mimic}/{total_features} ({good_mimic/total_features*100:.1f}%)")
+            # eICU→MIMIC
+            excellent_e2m = df['eicu_to_mimic_excellent'].sum()
+            good_e2m = df['eicu_to_mimic_good'].sum()
+            acceptable_e2m = df['eicu_to_mimic_acceptable'].sum()
+            
+            logger.info(f"  eICU→MIMIC:")
+            logger.info(f"    - Excellent (KS<0.1): {excellent_e2m}/{total_features} ({excellent_e2m/total_features*100:.1f}%)")
+            logger.info(f"    - Good (KS<0.2): {good_e2m}/{total_features} ({good_e2m/total_features*100:.1f}%)")
+            logger.info(f"    - Acceptable (KS<0.3): {acceptable_e2m}/{total_features} ({acceptable_e2m/total_features*100:.1f}%)")
+            logger.info(f"    - Mean KS: {df['eicu_to_mimic_ks'].mean():.3f}")
+            
+            # MIMIC→eICU
+            excellent_m2e = df['mimic_to_eicu_excellent'].sum()
+            good_m2e = df['mimic_to_eicu_good'].sum()
+            acceptable_m2e = df['mimic_to_eicu_acceptable'].sum()
+            
+            logger.info(f"  MIMIC→eICU:")
+            logger.info(f"    - Excellent (KS<0.1): {excellent_m2e}/{total_features} ({excellent_m2e/total_features*100:.1f}%)")
+            logger.info(f"    - Good (KS<0.2): {good_m2e}/{total_features} ({good_m2e/total_features*100:.1f}%)")
+            logger.info(f"    - Acceptable (KS<0.3): {acceptable_m2e}/{total_features} ({acceptable_m2e/total_features*100:.1f}%)")
+            logger.info(f"    - Mean KS: {df['mimic_to_eicu_ks'].mean():.3f}")
         
-        # Missingness analysis summary
-        if 'missingness_analysis' in results:
-            logger.info("Missingness Analysis:")
-            for bucket, data in results['missingness_analysis']['bucket_analysis'].items():
-                logger.info(f"  {bucket}: eICU MSE={data['eicu_mse']:.4f}, MIMIC MSE={data['mimic_mse']:.4f}")
-        
-        logger.info(f"Results saved to: {self.eval_dir}")
+        logger.info("\n" + "=" * 80)
+        logger.info(f"✅ Results saved to: {self.eval_dir}")
+        logger.info("=" * 80)

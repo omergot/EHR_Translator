@@ -126,6 +126,94 @@ The script extracts all available numerical measurements, including but not limi
 - No time window restrictions - extracts all measurements during ICU stays
 - Includes comprehensive error handling and progress reporting
 
+## compare_distributions.py
+
+This script analyzes the quality of distribution matching between trained and untrained models - the real test of translation performance.
+
+### What it does:
+
+1. **Loads trained and untrained models**:
+   - Compares a trained Cycle Encoder-Decoder model with an untrained baseline
+   - Tests whether training actually improves distribution matching
+
+2. **Computes distribution matching metrics**:
+   - **KS (Kolmogorov-Smirnov) statistics**: Measures distribution similarity (KS < 0.1 = good match)
+   - **Wasserstein distance**: Measures distributional distance between translated and target data
+   - Compares both metrics for: translated vs target, and source vs target (baseline)
+   - Identifies which features are well-matched vs poorly-matched
+
+3. **Per-feature analysis**:
+   - Evaluates each clinical feature separately
+   - Provides detailed statistics on translation quality
+   - Identifies improvement over baseline (source→target)
+
+### Usage:
+
+```bash
+cd /bigdata/omerg/Thesis/EHR_Translator/poc_translator
+python scripts/compare_distributions.py
+```
+
+### Output:
+
+- **Console output**: Per-feature KS and Wasserstein statistics
+- **`dist.txt`**: Detailed distribution analysis results
+- Summary statistics showing:
+  - Number of features with KS < 0.1 (well-matched)
+  - Average improvement over baseline
+  - Worst-performing features that need attention
+
+### When to Use:
+
+- After training to validate that the model learned meaningful translations
+- To compare different model configurations or training runs
+- To identify which features need additional training focus
+- To verify that conditional Wasserstein loss is effective
+
+**Note**: Reconstruction quality alone doesn't indicate good translation. This script tests the critical property: does translated data match the target distribution?
+
+## compare_trained_vs_untrained.py
+
+This script provides a direct comparison between trained and untrained models to measure the impact of training on translation quality.
+
+### What it does:
+
+1. **Side-by-side model comparison**:
+   - Loads both trained and untrained (random initialization) models
+   - Translates the same data using both models
+   - Compares translation quality metrics
+
+2. **Distribution matching analysis**:
+   - KS statistics for both models
+   - Wasserstein distances for both models
+   - Improvement metrics (trained vs untrained)
+
+3. **Statistical significance testing**:
+   - Tests whether improvements are statistically significant
+   - Identifies features where training made the most impact
+
+### Usage:
+
+```bash
+cd /bigdata/omerg/Thesis/EHR_Translator/poc_translator
+python scripts/compare_trained_vs_untrained.py
+```
+
+### Output:
+
+Console output showing:
+- Per-feature comparison of KS and Wasserstein metrics
+- Percentage improvement from training
+- Features with significant improvement
+- Features that still need work
+
+### When to Use:
+
+- To validate that training is effective
+- To quantify the benefit of your training approach
+- To identify which features benefit most from training
+- For ablation studies and model comparisons
+
 ## Script Comparison
 
 | Script | Purpose | Output | When to Use |
@@ -133,6 +221,9 @@ The script extracts all available numerical measurements, including but not limi
 | `explore_databases.py` | **Database Structure Analysis** | Markdown report + JSON data | **First step** - understand what's available in the databases |
 | `demo_exploration.py` | **Analysis of Exploration Results** | Console output with recommendations | **Second step** - get actionable insights from exploration |
 | `extract_all_features.py` | **Feature Data Extraction** | CSV files with actual data | **Third step** - extract the actual feature data for analysis |
+| `extract_poc_features.py` | **POC Feature Extraction** | CSV files with aligned POC features | **Main pipeline** - extract point-of-care features for training |
+| `compare_distributions.py` | **Distribution Matching Analysis** | dist.txt with detailed statistics | **After training** - validate translation quality |
+| `compare_trained_vs_untrained.py` | **Training Impact Analysis** | Console output with comparison | **After training** - measure training effectiveness |
 
 ## demo_exploration.py
 

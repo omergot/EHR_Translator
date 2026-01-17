@@ -2,9 +2,7 @@ db:
   mimic_conn: "postgresql://postgres:postgres@localhost:5432/mimic"
   eicu_conn: "postgresql://postgres:postgres@localhost:5432/mimic"
   omop_schema: "omop"
-  cohort_tables:
-    mimic: "mimiciv_bsi_100_2h_test.__mimiciv_bsi_100_2h_cohort"
-    eicu: "eicu_bsi_100_2h_test.__eicu_bsi_100_2h_cohort"
+ 
 
 paths:
   eicu_poc_csv: "/bigdata/omerg/Thesis/EHR_Translator/poc_translator/eicu_poc_features.csv"

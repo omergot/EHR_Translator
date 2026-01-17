@@ -1,0 +1,151 @@
+================================================================================
+MIMIC-IV and eICU-CRD Shared Features Report
+================================================================================
+
+Total Matches Found: 152
+  - Exact Matches: 100
+  - Fuzzy Matches: 48
+  - Manual Mappings: 4
+
+--------------------------------------------------------------------------------
+Matches by Category:
+--------------------------------------------------------------------------------
+  Other: 85
+  Laboratory - Blood Gas: 14
+  Laboratory - Electrolytes: 9
+  Vital Signs - Oxygenation: 9
+  Laboratory - Glucose: 6
+  Vital Signs - Respiratory: 5
+  Laboratory - Hematology: 5
+  Neurological: 5
+  Laboratory - Renal: 4
+  Vital Signs - Cardiovascular: 3
+  Vital Signs - Temperature: 3
+  Laboratory - Hepatic: 2
+  Vital Signs - Blood Pressure: 2
+
+--------------------------------------------------------------------------------
+Top 20 Matches by Data Availability (MIMIC records):
+--------------------------------------------------------------------------------
+
+96. Heart Rate <-> Heart Rate
+   Category: Vital Signs - Cardiovascular
+   Match Type: exact (similarity: 1.00)
+   MIMIC: chartevents (6,460,839.0 records)
+   eICU: nurseCharting (17,565,063.0 records)
+
+64. Respiratory Rate <-> Respiratory Rate
+   Category: Vital Signs - Respiratory
+   Match Type: exact (similarity: 1.00)
+   MIMIC: chartevents (6,393,762.0 records)
+   eICU: lab (49,021.0 records)
+
+98. Respiratory Rate <-> Respiratory Rate
+   Category: Vital Signs - Respiratory
+   Match Type: exact (similarity: 1.00)
+   MIMIC: chartevents (6,393,762.0 records)
+   eICU: nurseCharting (16,180,404.0 records)
+
+13. Creatinine <-> creatinine
+   Category: Laboratory - Renal
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,282,278.0 records)
+   eICU: lab (1,277,760.0 records)
+
+19. MCHC <-> MCHC
+   Category: Other
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,167,190.0 records)
+   eICU: lab (1,104,854.0 records)
+
+18. MCV <-> MCV
+   Category: Other
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,167,074.0 records)
+   eICU: lab (1,105,350.0 records)
+
+20. MCH <-> MCH
+   Category: Other
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,167,073.0 records)
+   eICU: lab (1,059,865.0 records)
+
+21. RDW <-> RDW
+   Category: Other
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,166,860.0 records)
+   eICU: lab (1,048,569.0 records)
+
+2. Potassium <-> potassium
+   Category: Laboratory - Electrolytes
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,150,261.0 records)
+   eICU: lab (1,493,261.0 records)
+
+4. Sodium <-> sodium
+   Category: Laboratory - Electrolytes
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,119,778.0 records)
+   eICU: lab (1,393,205.0 records)
+
+11. Chloride <-> chloride
+   Category: Laboratory - Electrolytes
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (3,083,705.0 records)
+   eICU: lab (1,283,839.0 records)
+
+16. Bicarbonate <-> bicarbonate
+   Category: Laboratory - Blood Gas
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (2,972,827.0 records)
+   eICU: lab (1,199,866.0 records)
+
+23. Anion Gap <-> anion gap
+   Category: Other
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (2,965,452.0 records)
+   eICU: lab (1,024,278.0 records)
+
+6. Glucose <-> glucose
+   Category: Laboratory - Glucose
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (2,749,562.0 records)
+   eICU: lab (1,319,496.0 records)
+
+26. Magnesium <-> magnesium
+   Category: Laboratory - Electrolytes
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (2,154,209.0 records)
+   eICU: lab (648,642.0 records)
+
+39. Phosphate <-> phosphate
+   Category: Laboratory - Blood Gas
+   Match Type: exact (similarity: 1.00)
+   MIMIC: labevents (2,066,052.0 records)
+   eICU: lab (425,439.0 records)
+
+146. GCS - Eye Opening <-> Eye Opening
+   Category: Neurological
+   Match Type: fuzzy (similarity: 0.81)
+   MIMIC: chartevents (1,630,825.0 records)
+   eICU: nurseCharting (250,077.0 records)
+
+148. GCS - Verbal Response <-> Verbal Response
+   Category: Neurological
+   Match Type: fuzzy (similarity: 0.86)
+   MIMIC: chartevents (1,627,786.0 records)
+   eICU: nurseCharting (213,293.0 records)
+
+143. GCS - Verbal Response <-> Best Verbal Response
+   Category: Neurological
+   Match Type: fuzzy (similarity: 0.85)
+   MIMIC: chartevents (1,627,786.0 records)
+   eICU: nurseCharting (419,834.0 records)
+
+147. GCS - Motor Response <-> Motor Response
+   Category: Neurological
+   Match Type: fuzzy (similarity: 0.85)
+   MIMIC: chartevents (1,623,795.0 records)
+   eICU: nurseCharting (213,325.0 records)
+
+================================================================================

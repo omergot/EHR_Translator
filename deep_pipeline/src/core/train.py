@@ -31,47 +31,73 @@ class TranslatorTrainer:
         self.translator.train()
         total_loss = 0.0
         num_batches = 0
-        
+        total_elements = 0
         for batch in train_loader:
             batch = tuple(b.to(self.device) for b in batch)
             
             self.optimizer.zero_grad()
-            
+            if num_batches % 200 == 0:
+                logging.info(f"Training Batch number: {num_batches}/{len(train_loader)}")
             translated_data = self.translator(batch)
             baseline_outputs = self.yaib_runtime.forward((translated_data, batch[1], batch[2]))
             loss = self.yaib_runtime.compute_loss(baseline_outputs, (translated_data, batch[1], batch[2]))
-            
+            total_loss += loss.item()
             loss.backward()
             self.optimizer.step()
             
-            total_loss += loss.item()
             num_batches += 1
         
-        return total_loss / num_batches if num_batches > 0 else 0.0
+        return total_loss / num_batches if num_batches > 0 else float("inf")
     
     def validate(self, val_loader: DataLoader) -> Dict[str, float]:
         self.translator.eval()
-        all_outputs = []
-        all_batches = []
-        
+        all_probs = []
+        all_targets = []
+        total_loss = 0.0
+        num_batches = 0
         with torch.no_grad():
             for batch in val_loader:
+                if num_batches % 200 == 0:
+                    logging.info(f"Validating Batch number: {num_batches}/{len(val_loader)}")
                 batch = tuple(b.to(self.device) for b in batch)
                 translated_data = self.translator(batch)
                 baseline_outputs = self.yaib_runtime.forward((translated_data, batch[1], batch[2]))
-                all_outputs.append(baseline_outputs)
-                all_batches.append(batch)
+                mask = batch[2].to(baseline_outputs.device).bool()
+                prediction = torch.masked_select(
+                    baseline_outputs, mask.unsqueeze(-1)
+                ).reshape(-1, baseline_outputs.shape[-1])
+                target = torch.masked_select(batch[1].to(baseline_outputs.device), mask)
+
+                if baseline_outputs.shape[-1] > 1:
+                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                else:
+                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+
+                all_probs.append(prediction_proba.detach().cpu())
+                all_targets.append(target.detach().cpu())
+                loss = self.yaib_runtime.compute_loss(baseline_outputs, (translated_data, batch[1], batch[2]))
+                total_loss += loss.item()
+                num_batches += 1
         
-        metrics = {}
-        for outputs, batch in zip(all_outputs, all_batches):
-            batch_metrics = self.yaib_runtime.compute_metrics(outputs, batch, split="val")
-            for key, value in batch_metrics.items():
-                if key not in metrics:
-                    metrics[key] = []
-                metrics[key].append(value)
-        
-        avg_metrics = {key: sum(values) / len(values) for key, values in metrics.items()}
-        return avg_metrics
+        if not all_probs:
+            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+
+        probs = torch.cat(all_probs).numpy()
+        targets = torch.cat(all_targets).numpy()
+
+        from sklearn.metrics import roc_auc_score, average_precision_score, log_loss
+
+        try:
+            auroc = roc_auc_score(targets, probs)
+        except ValueError:
+            auroc = 0.0
+        try:
+            auprc = average_precision_score(targets, probs)
+        except ValueError:
+            auprc = 0.0
+        loss = total_loss / num_batches if num_batches > 0 else float("inf")
+
+        return {"AUCROC": auroc, "AUCPR": auprc, "loss": loss}
     
     def train(
         self,
@@ -84,7 +110,9 @@ class TranslatorTrainer:
         logging.info(f"Starting training for {epochs} epochs...")
         
         for epoch in range(epochs):
+            logging.info(f"Epoch {epoch+1}/{epochs} - Training...")
             train_loss = self.train_epoch(train_loader)
+            logging.info(f"Epoch {epoch+1}/{epochs} - Validating...")
             val_metrics = self.validate(val_loader)
             
             logging.info(
@@ -113,6 +141,3 @@ class TranslatorTrainer:
         if self.best_translator_state:
             self.translator.load_state_dict(self.best_translator_state)
             logging.info("Loaded best translator weights")
-
-
-

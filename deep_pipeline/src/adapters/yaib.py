@@ -49,31 +49,45 @@ def import_yaib_run_module():
     spec.loader.exec_module(module)  # registers @gin.configurable("Run")
     return module
 
+
+def _get_gin_param(name: str, default):
+    try:
+        return gin.query_parameter(name)
+    except Exception:
+        return default
+
 class YAIBRuntime:
     def __init__(
         self,
         data_dir: Path,
         baseline_model_dir: Path,
         task_config: Path,
+        model_config: Optional[Path],
         model_name: str,
         vars: Dict[str, Any],
         file_names: Dict[str, str],
         seed: int = 42,
         batch_size: int = 1,
+        percentile_outliers_csv: Optional[Path] = None,
     ):
         self.data_dir = Path(data_dir)
         self.baseline_model_dir = Path(baseline_model_dir)
         self.task_config = Path(task_config)
+        self.model_config = Path(model_config) if model_config else None
         self.model_name = model_name
         self.vars = vars
         self.file_names = file_names
         self.seed = seed
         self.batch_size = batch_size
+        self.percentile_outliers_csv = Path(percentile_outliers_csv) if percentile_outliers_csv else None
         
         self._data: Optional[Dict[str, Dict[str, pl.DataFrame]]] = None
         self._model: Optional[Any] = None
         self._preprocessor = None
         self._mode: Optional[RunMode] = None
+        self._loss_weight_set = False
+        self._trained_columns_set = False
+        self._logged_test_stats = False
 
     def _setup_gin_search_paths(self, task_config_path: str):
         gin.clear_config()
@@ -111,22 +125,45 @@ class YAIBRuntime:
             
         logging.info("Loading and preprocessing data using YAIB...")
         gin.clear_config()
+        self._mode = RunMode.classification
+        import_yaib_run_module()
         self.wrap_load_gin_config(self.task_config)
-        yaib_run_module = import_yaib_run_module()
+        if self.model_config is not None:
+            self.wrap_load_gin_config(self.model_config)
 
         if (self.baseline_model_dir / "train_config.gin").exists():
             self.wrap_load_gin_config(self.baseline_model_dir / "train_config.gin")
+
+        cv_repetitions = _get_gin_param("execute_repeated_cv.cv_repetitions", 5)
+        cv_folds = _get_gin_param("execute_repeated_cv.cv_folds", 5)
+        repetition_index = _get_gin_param("execute_repeated_cv.repetition_index", 0)
+        fold_index = _get_gin_param("execute_repeated_cv.fold_index", 0)
+        train_size = _get_gin_param("execute_repeated_cv.train_size", None)
+        complete_train = _get_gin_param("execute_repeated_cv.complete_train", False)
+        logging.info(
+            "[debug] cv params "
+            f"cv_repetitions={cv_repetitions} cv_folds={cv_folds} "
+            f"repetition_index={repetition_index} fold_index={fold_index} "
+            f"train_size={train_size} complete_train={complete_train}"
+        )
         
         self._data = preprocess_data(
             data_dir=self.data_dir,
             file_names=self.file_names,
             vars=self.vars,
             seed=self.seed,
+            cv_repetitions=cv_repetitions,
+            cv_folds=cv_folds,
+            repetition_index=repetition_index,
+            fold_index=fold_index,
+            train_size=train_size,
+            complete_train=complete_train,
             load_cache=True,
             generate_cache=False,
+            percentile_outliers_csv=self.percentile_outliers_csv,
+            export_feature_stats=True,
         )
         
-        self._mode = RunMode.classification
         logging.info(f"Data loaded: train={len(self._data[DataSplit.train][DataSegment.features])} rows, "
                     f"val={len(self._data[DataSplit.val][DataSegment.features])} rows, "
                     f"test={len(self._data[DataSplit.test][DataSegment.features])} rows")
@@ -172,14 +209,114 @@ class YAIBRuntime:
             ram_cache=ram_cache,
         )
     
-    def create_dataloader(self, dataset: PredictionPolarsDataset, shuffle: bool = False) -> DataLoader:
-        return DataLoader(
+    def create_dataloader(self, split: str, shuffle: bool = False) -> DataLoader:
+        self.load_baseline_model()
+        train_dataset = None
+        if not self._loss_weight_set and hasattr(self._model, 'set_weight'):
+            train_dataset = self.create_dataset(DataSplit.train, ram_cache=False)
+            self._model.set_weight('balanced', train_dataset)
+            self._loss_weight_set = True
+            if hasattr(self._model, 'loss_weights'):
+                loss_weights = getattr(self._model, 'loss_weights', None)
+                if loss_weights is not None:
+                    lw = loss_weights.detach().cpu()
+                    logging.info(
+                        f"[debug] loss_weights stats min={lw.min().item():.6f} "
+                        f"max={lw.max().item():.6f} mean={lw.mean().item():.6f}"
+                    )
+        if not self._trained_columns_set and hasattr(self._model, 'set_trained_columns'):
+            if train_dataset is None:
+                train_dataset = self.create_dataset(DataSplit.train, ram_cache=False)
+            self._model.set_trained_columns(train_dataset.get_feature_names())
+            self._trained_columns_set = True
+        dataset = self.create_dataset(split, ram_cache=True)
+        batch_size = self.batch_size
+        if split == DataSplit.test:
+            batch_size = min(self.batch_size * 4, len(dataset))
+
+        if hasattr(self._model, 'run_mode'):
+            self._model.run_mode = RunMode(RunMode.classification)
+            logging.info(f"Set run_mode to {self._model.run_mode} (overriding checkpoint value)")
+        # Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods# Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods
+        # Add requires_backprop=False for sklearn models that don't have this attribute
+        if not hasattr(self._model, 'requires_backprop'):
+            self._model.requires_backprop = False
+        if hasattr(self._model, 'set_trained_columns') and not self._trained_columns_set:
+            self._model.set_trained_columns(dataset.get_feature_names())
+            self._trained_columns_set = True
+        loader = DataLoader(
             dataset,
-            batch_size=self.batch_size,
+            batch_size=batch_size,
             shuffle=shuffle,
             num_workers=4,
             drop_last=True,
         )
+        self._log_dataset_stats(dataset, split)
+        logging.info(
+            f"[debug] dataloader split={split} batch_size={batch_size} "
+            f"shuffle={shuffle} drop_last=True num_batches={len(loader)}"
+        )
+        if split == DataSplit.test and not self._logged_test_stats:
+            self._log_test_batch_stats(loader)
+            self._logged_test_stats = True
+        return loader
+
+    def _log_dataset_stats(self, dataset: PredictionPolarsDataset, split: str) -> None:
+        if not hasattr(dataset, "outcome_df"):
+            return
+        label_col = self.vars.get("LABEL")
+        if not label_col or label_col not in dataset.outcome_df.columns:
+            return
+        try:
+            counts = dataset.outcome_df[label_col].value_counts(parallel=True)
+            labels = counts.get_column(label_col).to_list()
+            count_col = counts.columns[1] if len(counts.columns) > 1 else counts.columns[0]
+            freqs = counts.get_column(count_col).to_list()
+            stats = {str(label): int(freq) for label, freq in zip(labels, freqs)}
+            total = sum(stats.values())
+            pos = stats.get("1", stats.get(1, 0))
+            neg = stats.get("0", stats.get(0, 0))
+            pos_rate = (pos / total) if total > 0 else 0.0
+            logging.info(
+                f"[debug] split={split} label_counts={stats} "
+                f"pos={pos} neg={neg} pos_rate={pos_rate:.6f} total={total}"
+            )
+        except Exception as exc:
+            logging.info(f"[debug] split={split} label_counts=unavailable ({exc})")
+
+    def _log_test_batch_stats(self, loader: DataLoader) -> None:
+        try:
+            batch = next(iter(loader))
+        except StopIteration:
+            logging.info("[debug] test batch stats unavailable: empty loader")
+            return
+        device = torch.device("cpu")
+        if hasattr(self._model, "parameters"):
+            device = next(self._model.parameters()).device
+        batch = tuple(b.to(device) for b in batch)
+        data, labels, mask = batch
+        with torch.no_grad():
+            outputs = self.forward((data, labels, mask))
+        mask = mask.to(outputs.device).bool()
+        prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
+        target = torch.masked_select(labels.to(outputs.device), mask)
+        if outputs.shape[-1] > 1:
+            probs = torch.softmax(prediction, dim=-1)[:, 1]
+        else:
+            probs = torch.sigmoid(prediction).squeeze(-1)
+        logging.info(
+            "[debug] test_batch logits stats "
+            f"min={prediction.min().item():.6f} max={prediction.max().item():.6f} "
+            f"mean={prediction.mean().item():.6f} std={prediction.std().item():.6f}"
+        )
+        logging.info(
+            "[debug] test_batch prob stats "
+            f"min={probs.min().item():.6f} max={probs.max().item():.6f} "
+            f"mean={probs.mean().item():.6f} std={probs.std().item():.6f}"
+        )
+        positives = int((target > 0.5).sum().item())
+        total = int(target.numel())
+        logging.info(f"[debug] test_batch targets pos={positives} neg={total - positives} total={total}")
     
     def compute_loss(self, outputs: torch.Tensor, batch: Tuple[torch.Tensor, ...]) -> torch.Tensor:
         if self._model is None:
@@ -188,26 +325,24 @@ class YAIBRuntime:
         labels, mask = batch[1], batch[2]
         
         if isinstance(self._model, LightningModule):
-            if hasattr(self._model, 'step_fn'):
-                data = batch[0]
-                element = (data, labels, mask)
-                loss = self._model.step_fn(element, step_prefix="")
-                return loss
-            else:
-                if hasattr(self._model, 'loss'):
-                    prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
-                    target = torch.masked_select(labels, mask)
-                    device = next(self._model.parameters()).device if hasattr(self._model, 'parameters') else torch.device("cpu")
-                    if outputs.shape[-1] > 1 and self._model.run_mode == RunMode.classification:
-                        loss_weights = self._model.loss_weights.to(device) if hasattr(self._model, 'loss_weights') else None
-                        loss = self._model.loss(prediction, target.long(), weight=loss_weights)
-                    elif self._model.run_mode == RunMode.regression:
-                        loss = self._model.loss(prediction[:, 0], target.float())
-                    else:
-                        raise ValueError(f"Unsupported run mode: {self._model.run_mode}")
-                    return loss
+            if hasattr(self._model, 'loss'):
+                device = outputs.device
+                mask = mask.to(device).bool()
+                labels = labels.to(device)
+                prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
+                target = torch.masked_select(labels, mask)
+                run_mode = getattr(self._model, "run_mode", RunMode.classification)
+                if outputs.shape[-1] > 1 and run_mode == RunMode.classification:
+                    loss_weights = getattr(self._model, "loss_weights", None)
+                    if loss_weights is not None:
+                        loss_weights = loss_weights.to(device)
+                    loss = self._model.loss(prediction, target.long(), weight=loss_weights)
+                elif run_mode == RunMode.regression:
+                    loss = self._model.loss(prediction[:, 0], target.float())
                 else:
-                    raise AttributeError("Model has no loss computation method")
+                    raise ValueError(f"Unsupported run mode: {run_mode}")
+                return loss
+            raise AttributeError("Model has no loss computation method")
         else:
             raise NotImplementedError("ML models not yet supported for loss computation")
     
@@ -223,10 +358,9 @@ class YAIBRuntime:
         else:
             data = data.float().to(device)
         
-        with torch.no_grad():
-            outputs = self._model(data)
-            if isinstance(outputs, tuple):
-                outputs = outputs[0]
+        outputs = self._model(data)
+        if isinstance(outputs, tuple):
+            outputs = outputs[0]
         return outputs
     
     def compute_metrics(
@@ -239,6 +373,9 @@ class YAIBRuntime:
             self.load_baseline_model()
         
         data, labels, mask = batch[0], batch[1], batch[2]
+        device = outputs.device
+        labels = labels.to(device)
+        mask = mask.to(device)
         
         if isinstance(self._model, LightningModule):
             prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
@@ -308,4 +445,3 @@ class YAIBRuntime:
                     rows.append(row)
         
         return pl.DataFrame(rows)
-

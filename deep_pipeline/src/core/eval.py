@@ -29,8 +29,11 @@ class TranslatorEvaluator:
     ) -> Dict[str, float]:
         self.translator.eval()
         
-        all_outputs = []
+        all_probs = []
+        all_targets = []
         all_batches = []
+        total_loss = 0.0
+        num_batches = 0
         translated_batches = []
         stay_id_batches = []
         
@@ -40,20 +43,49 @@ class TranslatorEvaluator:
                 translated_data = self.translator(batch)
                 baseline_outputs = self.yaib_runtime.forward((translated_data, batch[1], batch[2]))
                 
-                all_outputs.append(baseline_outputs)
+                mask = batch[2].to(baseline_outputs.device).bool()
+                prediction = torch.masked_select(
+                    baseline_outputs, mask.unsqueeze(-1)
+                ).reshape(-1, baseline_outputs.shape[-1])
+                target = torch.masked_select(batch[1].to(baseline_outputs.device), mask)
+
+                if baseline_outputs.shape[-1] > 1:
+                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                else:
+                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+
+                all_probs.append(prediction_proba.detach().cpu())
+                all_targets.append(target.detach().cpu())
+                total_loss += self.yaib_runtime.compute_loss(
+                    baseline_outputs, (translated_data, batch[1], batch[2])
+                ).item()
+                num_batches += 1
                 all_batches.append(batch)
                 translated_batches.append(translated_data)
                 stay_id_batches.append(None)
-        
-        metrics = {}
-        for outputs, batch in zip(all_outputs, all_batches):
-            batch_metrics = self.yaib_runtime.compute_metrics(outputs, batch, split="test")
-            for key, value in batch_metrics.items():
-                if key not in metrics:
-                    metrics[key] = []
-                metrics[key].append(value)
-        
-        avg_metrics = {key: sum(values) / len(values) for key, values in metrics.items()}
+
+        if not all_probs:
+            avg_metrics = {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+        else:
+            probs = torch.cat(all_probs).numpy()
+            targets = torch.cat(all_targets).numpy()
+
+            from sklearn.metrics import roc_auc_score, average_precision_score
+
+            try:
+                auroc = roc_auc_score(targets, probs)
+            except ValueError:
+                auroc = 0.0
+            try:
+                auprc = average_precision_score(targets, probs)
+            except ValueError:
+                auprc = 0.0
+
+            avg_metrics = {
+                "AUCROC": auroc,
+                "AUCPR": auprc,
+                "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+            }
         
         if output_parquet_path:
             self.export_translated_parquet(
@@ -112,23 +144,50 @@ class TranslatorEvaluator:
         }
     
     def _evaluate_without_translator(self, test_loader: DataLoader) -> Dict[str, float]:
-        all_outputs = []
-        all_batches = []
+        all_probs = []
+        all_targets = []
+        total_loss = 0.0
+        num_batches = 0
         
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 baseline_outputs = self.yaib_runtime.forward(batch)
-                all_outputs.append(baseline_outputs)
-                all_batches.append(batch)
-        
-        metrics = {}
-        for outputs, batch in zip(all_outputs, all_batches):
-            batch_metrics = self.yaib_runtime.compute_metrics(outputs, batch, split="test")
-            for key, value in batch_metrics.items():
-                if key not in metrics:
-                    metrics[key] = []
-                metrics[key].append(value)
-        
-        return {key: sum(values) / len(values) for key, values in metrics.items()}
+                mask = batch[2].to(baseline_outputs.device).bool()
+                prediction = torch.masked_select(
+                    baseline_outputs, mask.unsqueeze(-1)
+                ).reshape(-1, baseline_outputs.shape[-1])
+                target = torch.masked_select(batch[1].to(baseline_outputs.device), mask)
 
+                if baseline_outputs.shape[-1] > 1:
+                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                else:
+                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+
+                all_probs.append(prediction_proba.detach().cpu())
+                all_targets.append(target.detach().cpu())
+                total_loss += self.yaib_runtime.compute_loss(baseline_outputs, batch).item()
+                num_batches += 1
+
+        if not all_probs:
+            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+
+        probs = torch.cat(all_probs).numpy()
+        targets = torch.cat(all_targets).numpy()
+
+        from sklearn.metrics import roc_auc_score, average_precision_score
+
+        try:
+            auroc = roc_auc_score(targets, probs)
+        except ValueError:
+            auroc = 0.0
+        try:
+            auprc = average_precision_score(targets, probs)
+        except ValueError:
+            auprc = 0.0
+
+        return {
+            "AUCROC": auroc,
+            "AUCPR": auprc,
+            "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+        }

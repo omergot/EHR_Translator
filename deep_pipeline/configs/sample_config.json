@@ -1,7 +1,8 @@
 {
   "data_dir": "/bigdata/omerg/Thesis/cohort_data/sepsis/eicu",
   "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Sepsis/LSTM/repetition_0/fold_0",
-  "task_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
   "model_name": "LSTM",
   "vars": {
     "GROUP": "stay_id",
@@ -15,14 +16,16 @@
     "OUTCOME": "outc.parquet",
     "STATIC": "sta.parquet"
   },
-  "seed": 42,
-  "batch_size": 1,
+  "seed": 2222,
+  "batch_size": 64,
   "learning_rate": 1e-4,
-  "epochs": 10,
+  "epochs": 1,
   "patience": 10,
   "checkpoint_dir": "checkpoints",
-  "device": "cuda"
+  "device": "cuda",
+  "percentile_outliers_csv": "/bigdata/omerg/Thesis/YAIB/sepsis_comparison_results.csv"
 }
+
 
 
 

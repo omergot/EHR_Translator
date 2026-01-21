@@ -21,7 +21,8 @@ class IdentityTranslator(Translator):
     
     def forward(self, batch: Tuple[torch.Tensor, ...]) -> torch.Tensor:
         data = batch[0]
-        return data
+        return data + (self._dummy * 0.0)
+
 
 
 

@@ -35,36 +35,21 @@ def train_translator(args):
         data_dir=Path(config["data_dir"]),
         baseline_model_dir=Path(config["baseline_model_dir"]),
         task_config=Path(config["task_config"]),
+        model_config=Path(config["model_config"]) if config.get("model_config") else None,
         model_name=config["model_name"],
         vars=config["vars"],
         file_names=config["file_names"],
         seed=config.get("seed", 42),
         batch_size=config.get("batch_size", 1),
+        percentile_outliers_csv=Path(config["percentile_outliers_csv"])
+        if config.get("percentile_outliers_csv")
+        else None,
     )
     
     yaib_runtime.load_data()
-    model = yaib_runtime.load_baseline_model()
     
-    # TEMP debug
-    # train_loader = yaib_runtime.create_dataloader(train_dataset, shuffle=True)
-    # val_loader = yaib_runtime.create_dataloader(val_dataset, shuffle=False)
-    train_dataset = yaib_runtime.create_dataset('test', ram_cache=True)
-
-    if hasattr(model, 'run_mode'):
-        model.run_mode = RunMode(RunMode.classification)
-        logging.info(f"Set run_mode to {model.run_mode} (overriding checkpoint value)")
-    # Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods# Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods
-    # Add requires_backprop=False for sklearn models that don't have this attribute
-    if not hasattr(model, 'requires_backprop'):
-        model.requires_backprop = False
-    if hasattr(model, 'set_weight'):
-        model.set_weight('balanced', train_dataset)
-    if hasattr(model, 'set_trained_columns'):
-        model.set_trained_columns(train_dataset.get_feature_names())
-
-
-    train_loader = yaib_runtime.create_dataloader(train_dataset, shuffle=True)
-    val_loader = train_loader
+    train_loader = yaib_runtime.create_dataloader('test', shuffle=False)
+    val_loader = yaib_runtime.create_dataloader('test', shuffle=False)
     
     data_shape = next(iter(train_loader))[0].shape
 
@@ -97,32 +82,20 @@ def translate_and_eval(args):
         data_dir=Path(config["data_dir"]),
         baseline_model_dir=Path(config["baseline_model_dir"]),
         task_config=Path(config["task_config"]),
+        model_config=Path(config["model_config"]) if config.get("model_config") else None,
         model_name=config["model_name"],
         vars=config["vars"],
         file_names=config["file_names"],
         seed=config.get("seed", 42),
         batch_size=config.get("batch_size", 1),
+        percentile_outliers_csv=Path(config["percentile_outliers_csv"])
+        if config.get("percentile_outliers_csv")
+        else None,
     )
     
     yaib_runtime.load_data()
-    model = yaib_runtime.load_baseline_model()
-    
-    test_dataset = yaib_runtime.create_dataset("test", ram_cache=True)
 
-    if hasattr(model, 'run_mode'):
-        model.run_mode = RunMode(RunMode.classification)
-        logging.info(f"Set run_mode to {model.run_mode} (overriding checkpoint value)")
-    # Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods
-    # Add requires_backprop=False for sklearn models that don't have this attribute
-    if not hasattr(model, 'requires_backprop'):
-        model.requires_backprop = False
-    if hasattr(model, 'set_weight'):
-        model.set_weight('balanced', test_dataset)
-    if hasattr(model, 'set_trained_columns'):
-        model.set_trained_columns(test_dataset.get_feature_names())
-
-
-    test_loader = yaib_runtime.create_dataloader(test_dataset, shuffle=False)
+    test_loader = yaib_runtime.create_dataloader('test', shuffle=False)
     
     data_shape = next(iter(test_loader))[0].shape
     input_size = data_shape[-1]
@@ -190,6 +163,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

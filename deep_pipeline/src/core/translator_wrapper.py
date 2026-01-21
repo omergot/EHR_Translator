@@ -61,3 +61,5 @@ class TranslatorModelWrapper(LightningModule):
         return torch.optim.Adam(self.translator.parameters(), lr=self.learning_rate)
 
 
+
+

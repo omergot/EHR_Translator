@@ -16,6 +16,19 @@
     "OUTCOME": "outc.parquet",
     "STATIC": "sta.parquet"
   },
+  "translator": {
+  "type": "linear_regression",
+  "plot_dir": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_maps",
+  "plot_max_points": 50000,
+  "target_data_dir": "/bigdata/omerg/Thesis/cohort_data/sepsis/miiv",
+  "exclude_static": false,
+  "exclude_features": [],
+  "missing_prefix": "MissingIndicator_",
+  "model_path": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/models/linear_regression.pkl",
+  "sample_dir": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/translation_samples",
+  "sample_count": 100,
+  "use_missing_indicator_mask": false
+  },
   "seed": 2222,
   "batch_size": 64,
   "learning_rate": 1e-4,
@@ -24,8 +37,9 @@
   "checkpoint_dir": "checkpoints",
   "device": "cuda",
   "percentile_outliers_csv": "/bigdata/omerg/Thesis/YAIB/sepsis_comparison_results.csv"
+  ,
+  "eval_baseline_with_target_normalization": true
 }
-
 
 
 

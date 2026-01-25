@@ -56,6 +56,14 @@ def _get_gin_param(name: str, default):
     except Exception:
         return default
 
+
+def _is_yaib_run_registered() -> bool:
+    try:
+        gin.get_configurable("yaib_run.Run")
+        return True
+    except Exception:
+        return False
+
 class YAIBRuntime:
     def __init__(
         self,
@@ -89,6 +97,19 @@ class YAIBRuntime:
         self._trained_columns_set = False
         self._logged_test_stats = False
 
+        self.setup_yaib_environment()
+
+    def setup_yaib_environment(self):
+        gin.clear_config()
+        self._mode = RunMode.classification
+        if not _is_yaib_run_registered():
+            import_yaib_run_module()
+        self.wrap_load_gin_config(self.task_config)
+        if self.model_config is not None:
+            self.wrap_load_gin_config(self.model_config)
+        if (self.baseline_model_dir / "train_config.gin").exists():
+            self.wrap_load_gin_config(self.baseline_model_dir / "train_config.gin")
+
     def _setup_gin_search_paths(self, task_config_path: str):
         gin.clear_config()
 
@@ -119,20 +140,24 @@ class YAIBRuntime:
         with _pushd(yaib_root):
             gin.parse_config_file(config_path)
         
-    def load_data(self) -> Dict[str, Dict[str, pl.DataFrame]]:
+    def load_data(self, scaling_override: Optional[bool] = None) -> Dict[str, Dict[str, pl.DataFrame]]:
         if self._data is not None:
             return self._data
             
         logging.info("Loading and preprocessing data using YAIB...")
-        gin.clear_config()
-        self._mode = RunMode.classification
-        import_yaib_run_module()
-        self.wrap_load_gin_config(self.task_config)
-        if self.model_config is not None:
-            self.wrap_load_gin_config(self.model_config)
-
-        if (self.baseline_model_dir / "train_config.gin").exists():
-            self.wrap_load_gin_config(self.baseline_model_dir / "train_config.gin")
+        prev_scaling = None
+        prev_reg_scaling = None
+        if scaling_override is not None:
+            try:
+                prev_scaling = gin.query_parameter("base_classification_preprocessor.scaling")
+            except Exception:
+                prev_scaling = None
+            try:
+                prev_reg_scaling = gin.query_parameter("base_regression_preprocessor.scaling")
+            except Exception:
+                prev_reg_scaling = None
+            gin.bind_parameter("base_classification_preprocessor.scaling", scaling_override)
+            gin.bind_parameter("base_regression_preprocessor.scaling", scaling_override)
 
         cv_repetitions = _get_gin_param("execute_repeated_cv.cv_repetitions", 5)
         cv_folds = _get_gin_param("execute_repeated_cv.cv_folds", 5)
@@ -161,8 +186,13 @@ class YAIBRuntime:
             load_cache=True,
             generate_cache=False,
             percentile_outliers_csv=self.percentile_outliers_csv,
-            export_feature_stats=True,
+            export_feature_stats=False,
         )
+        if scaling_override is not None:
+            if prev_scaling is not None:
+                gin.bind_parameter("base_classification_preprocessor.scaling", prev_scaling)
+            if prev_reg_scaling is not None:
+                gin.bind_parameter("base_regression_preprocessor.scaling", prev_reg_scaling)
         
         logging.info(f"Data loaded: train={len(self._data[DataSplit.train][DataSegment.features])} rows, "
                     f"val={len(self._data[DataSplit.val][DataSegment.features])} rows, "
@@ -249,7 +279,7 @@ class YAIBRuntime:
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=4,
-            drop_last=True,
+        drop_last=True,
         )
         self._log_dataset_stats(dataset, split)
         logging.info(

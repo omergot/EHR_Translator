@@ -203,3 +203,5 @@ evaluation/*.bin
 .Trashes
 ehthumbs.db
 Thumbs.db
+optional_changes/non_vae_changes.txt
+deep_pipeline/out.parqeut

@@ -15,7 +15,7 @@ from src.core.translator import IdentityTranslator
 def test_identity_translator_metrics_unchanged():
     """Test that identity translator produces identical metrics to original data."""
     
-    config_path = Path(__file__).parent.parent / "configs" / "sample_config.json"
+    config_path = Path(__file__).parent.parent / "configs" / "sample_transformer_config.json"
     if not config_path.exists():
         logging.warning(f"Config file not found at {config_path}, skipping test")
         return

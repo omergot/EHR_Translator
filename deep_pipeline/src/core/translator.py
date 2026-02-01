@@ -1,4 +1,6 @@
 import logging
+import math
+import os
 from typing import Iterable, List, Tuple
 
 import joblib
@@ -300,3 +302,178 @@ class LinearRegressionTranslator(Translator):
         self.tgt_mean = state.get("tgt_mean")
         self.tgt_std = state.get("tgt_std")
         return self
+
+
+class AxialBlock(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int):
+        super().__init__()
+        self.var_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.temp_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+        self.dropout = nn.Dropout(dropout)
+        self.norm_var = nn.LayerNorm(d_model)
+        self.norm_temp = nn.LayerNorm(d_model)
+        self.norm_ffn = nn.LayerNorm(d_model)
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, d_ff),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_ff, d_model),
+        )
+
+    def forward(self, h: torch.Tensor, m_pad: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        batch_size, seq_len, num_features, d_model = h.shape
+        h_var = h.reshape(batch_size * seq_len, num_features, d_model)
+        attn_out, _ = self.var_attn(h_var, h_var, h_var, need_weights=False)
+        h_var = self.norm_var(h_var + self.dropout(attn_out))
+        h = h_var.reshape(batch_size, seq_len, num_features, d_model)
+
+        h_temp = h.permute(0, 2, 1, 3).reshape(batch_size * num_features, seq_len, d_model).contiguous()
+        key_padding_mask = m_pad.unsqueeze(1).expand(batch_size, num_features, seq_len).reshape(batch_size * num_features, seq_len).contiguous()
+        if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
+            if key_padding_mask.dtype is not torch.bool:
+                raise RuntimeError(f"key_padding_mask dtype {key_padding_mask.dtype} (expected bool)")
+            if key_padding_mask.shape != (batch_size * num_features, seq_len):
+                raise RuntimeError(
+                    f"key_padding_mask shape {tuple(key_padding_mask.shape)} "
+                    f"(expected {(batch_size * num_features, seq_len)})"
+                )
+            if key_padding_mask.device != h_temp.device:
+                raise RuntimeError("key_padding_mask device mismatch with h_temp")
+            if not torch.isfinite(h_temp).all():
+                bad = (~torch.isfinite(h_temp)).any().item()
+                raise RuntimeError(f"h_temp has non-finite values: {bad}")
+            if not torch.isfinite(h).all():
+                bad = (~torch.isfinite(h)).any().item()
+                raise RuntimeError(f"h has non-finite values: {bad}")
+        # Guard against all-padded rows (can trigger CUDA kernel faults in some MHA kernels).
+        all_pad = key_padding_mask.all(dim=1)
+        if all_pad.any():
+            h_temp[all_pad] = 0
+            key_padding_mask[all_pad, 0] = False
+            if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
+                logging.warning("All-padded sequences in temporal attention: %d", int(all_pad.sum().item()))
+        attn_out, _ = self.temp_attn(
+            h_temp,
+            h_temp,
+            h_temp,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )
+        h_temp = self.norm_temp(h_temp + self.dropout(attn_out))
+        h = h_temp.reshape(batch_size, num_features, seq_len, d_model).permute(0, 2, 1, 3)
+
+        h_ffn = self.ffn(h)
+        h = self.norm_ffn(h + self.dropout(h_ffn))
+        return h, key_padding_mask
+
+
+class EHRTranslator(nn.Module):
+    def __init__(
+        self,
+        num_features: int,
+        d_latent: int = 16,
+        d_model: int = 128,
+        d_time: int = 16,
+        n_layers: int = 4,
+        n_heads: int = 8,
+        d_ff: int = 512,
+        dropout: float = 0.2,
+        out_dropout: float = 0.1,
+        static_dim: int = 4,
+    ):
+        super().__init__()
+        if d_time % 2 != 0:
+            raise ValueError("d_time must be even for sin/cos encoding")
+        self.num_features = num_features
+        self.d_latent = d_latent
+        self.d_model = d_model
+        self.d_time = d_time
+        self.n_layers = n_layers
+
+        self.triplet_proj = nn.Linear(3, d_latent)
+        self.sensor_emb = nn.Parameter(torch.zeros(num_features, d_latent))
+        nn.init.normal_(self.sensor_emb, mean=0.0, std=0.02)
+        self.lift = nn.Linear(d_latent, d_model)
+        self.time_proj = nn.Linear(d_time, d_model)
+
+        self.blocks = nn.ModuleList(
+            [AxialBlock(d_model=d_model, n_heads=n_heads, dropout=dropout, d_ff=d_ff) for _ in range(n_layers)]
+        )
+
+        self.film_mlp = nn.Sequential(
+            nn.Linear(static_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, 2 * n_layers * d_model),
+        )
+
+        self.delta_head = nn.Linear(d_model, 1)
+        self.out_dropout = nn.Dropout(out_dropout)
+        self._last_temporal_key_padding_mask = None
+
+    def forward(
+        self,
+        x_val: torch.Tensor,
+        x_miss: torch.Tensor,
+        t_abs: torch.Tensor,
+        m_pad: torch.Tensor,
+        x_static: torch.Tensor,
+    ) -> torch.Tensor:
+        m_pad = m_pad.bool()
+        if x_val.shape[-1] != self.num_features:
+            raise ValueError(f"Expected {self.num_features} features, got {x_val.shape[-1]}")
+        if x_miss.shape != x_val.shape:
+            raise ValueError(f"x_miss shape {tuple(x_miss.shape)} does not match x_val {tuple(x_val.shape)}")
+        if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
+            if m_pad.shape != x_val.shape[:2]:
+                raise RuntimeError(f"M_pad shape {tuple(m_pad.shape)} does not match (B,T) {tuple(x_val.shape[:2])}")
+            if not torch.isfinite(x_val).all():
+                raise RuntimeError("x_val contains non-finite values")
+            if not torch.isfinite(x_miss).all():
+                raise RuntimeError("x_miss contains non-finite values")
+            if not torch.isfinite(t_abs).all():
+                raise RuntimeError("t_abs contains non-finite values")
+        t_abs = t_abs.to(dtype=x_val.dtype)
+        time_delta = torch.zeros_like(t_abs)
+        time_delta[:, 1:] = t_abs[:, 1:] - t_abs[:, :-1]
+        time_delta = time_delta.masked_fill(m_pad, 0.0)
+
+        time_delta_feat = time_delta.unsqueeze(-1).expand(-1, -1, self.num_features)
+        x_trip = torch.stack([x_val, x_miss, time_delta_feat], dim=-1)
+        h = self.triplet_proj(x_trip)
+        h = h + self.sensor_emb.view(1, 1, self.num_features, self.d_latent)
+        h = self.lift(h)
+
+        time_enc = self._time_encoding(t_abs)
+        time_enc = self.time_proj(time_enc)
+        h = h + time_enc[:, :, None, :]
+        h = h.masked_fill(m_pad[:, :, None, None], 0.0)
+
+        context = self.film_mlp(x_static)
+        context = context.view(x_static.shape[0], self.n_layers, 2, self.d_model)
+
+        for layer_idx, block in enumerate(self.blocks):
+            h, key_padding_mask = block(h, m_pad)
+            gamma = context[:, layer_idx, 0, :].unsqueeze(1).unsqueeze(1)
+            beta = context[:, layer_idx, 1, :].unsqueeze(1).unsqueeze(1)
+            h = gamma * h + beta
+            h = h.masked_fill(m_pad[:, :, None, None], 0.0)
+            self._last_temporal_key_padding_mask = key_padding_mask
+
+        delta = self.delta_head(h).squeeze(-1)
+        delta = self.out_dropout(delta)
+        x_val_out = x_val + delta
+        x_val_out = x_val_out.masked_fill(m_pad[:, :, None], 0.0)
+        return x_val_out
+
+    def _time_encoding(self, t_abs: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len = t_abs.shape
+        half_dim = self.d_time // 2
+        if half_dim == 1:
+            freq = torch.ones(1, device=t_abs.device, dtype=t_abs.dtype)
+        else:
+            freq = torch.exp(
+                torch.arange(half_dim, device=t_abs.device, dtype=t_abs.dtype)
+                * -(math.log(10000.0) / (half_dim - 1))
+            )
+        angles = t_abs.unsqueeze(-1) * freq.view(1, 1, half_dim)
+        return torch.cat([torch.sin(angles), torch.cos(angles)], dim=-1)

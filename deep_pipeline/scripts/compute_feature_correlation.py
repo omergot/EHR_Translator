@@ -4,6 +4,214 @@ from pathlib import Path
 import math
 import numpy as np
 import pandas as pd
+import pickle
+
+
+def _read_columns(path: Path) -> list[str]:
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        try:
+            import pyarrow.parquet as pq
+        except Exception as exc:
+            raise RuntimeError("pyarrow is required to read parquet files.") from exc
+        return pq.ParquetFile(path).schema.names
+    return pd.read_csv(path, nrows=0).columns.tolist()
+
+
+def _iter_table(path: Path, columns: list[str], chunksize: int):
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        try:
+            import pyarrow.parquet as pq
+        except Exception as exc:
+            raise RuntimeError("pyarrow is required to read parquet files.") from exc
+        pf = pq.ParquetFile(path)
+        for batch in pf.iter_batches(columns=columns, batch_size=chunksize):
+            yield batch.to_pandas()
+    else:
+        yield from pd.read_csv(path, usecols=columns, chunksize=chunksize)
+
+
+def _load_recipe_scaler_stats(recipe_path: Path) -> tuple[list[str], dict[str, float], dict[str, float]]:
+    with recipe_path.open("rb") as f:
+        recipe = pickle.load(f)
+    scaler = None
+    for step in getattr(recipe, "steps", []):
+        transformer = getattr(step, "sklearn_transformer", None)
+        if transformer is not None and transformer.__class__.__name__ == "StandardScaler":
+            scaler = transformer
+            break
+    if scaler is None:
+        raise RuntimeError("Could not find StandardScaler in recipe steps.")
+    if hasattr(scaler, "feature_names_in_"):
+        cols = list(scaler.feature_names_in_)
+    else:
+        cols = list(getattr(step, "columns", []))
+    means = dict(zip(cols, scaler.mean_, strict=False))
+    scales = dict(zip(cols, scaler.scale_, strict=False))
+    return cols, means, scales
+
+
+def _compute_temporal_delta(
+    path: Path,
+    columns: list[str],
+    chunksize: int,
+    means: dict[str, float],
+    scales: dict[str, float],
+) -> dict[str, float]:
+    path_cols = set(_read_columns(path))
+    if "stay_id" not in path_cols or "time" not in path_cols:
+        raise RuntimeError(f"{path} must contain stay_id and time for temporal smoothness.")
+    cols = [c for c in columns if c in path_cols]
+    if not cols:
+        return {}
+
+    sum_abs = np.zeros(len(cols), dtype=np.float64)
+    count = np.zeros(len(cols), dtype=np.float64)
+    last_values: dict[int, np.ndarray] = {}
+
+    for chunk in _iter_table(path, ["stay_id", "time", *cols], chunksize):
+        chunk = chunk.sort_values(["stay_id", "time"])
+        vals = chunk[cols].apply(pd.to_numeric, errors="coerce")
+        for col in cols:
+            if col in means and col in scales:
+                vals[col] = vals[col] * scales[col] + means[col]
+
+        diff = vals.groupby(chunk["stay_id"]).diff()
+        first_rows = chunk.groupby("stay_id", sort=False).head(1)
+        for idx, row in first_rows.iterrows():
+            sid = int(row["stay_id"])
+            if sid in last_values:
+                diff.loc[idx] = vals.loc[idx] - last_values[sid]
+
+        abs_diff = diff.abs()
+        sum_abs += abs_diff.sum(skipna=True).to_numpy()
+        count += abs_diff.notna().sum().to_numpy()
+
+        last_rows = chunk.groupby("stay_id", sort=False).tail(1)
+        for idx, row in last_rows.iterrows():
+            sid = int(row["stay_id"])
+            last_values[sid] = vals.loc[idx].to_numpy()
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        delta = sum_abs / count
+    return dict(zip(cols, delta, strict=False))
+
+
+def _load_patient_series(
+    path: Path,
+    stay_id: int,
+    feature: str,
+    means: dict[str, float],
+    scales: dict[str, float],
+) -> pd.DataFrame:
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        try:
+            import pyarrow.dataset as ds
+        except Exception as exc:
+            raise RuntimeError("pyarrow is required to read parquet files.") from exc
+        dataset = ds.dataset(path)
+        table = dataset.to_table(filter=ds.field("stay_id") == stay_id, columns=["stay_id", "time", feature])
+        df = table.to_pandas()
+    else:
+        rows = []
+        for chunk in pd.read_csv(path, usecols=["stay_id", "time", feature], chunksize=200_000):
+            rows.append(chunk[chunk["stay_id"] == stay_id])
+        df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["stay_id", "time", feature])
+
+    if df.empty:
+        return df
+    df = df.sort_values("time")
+    df[feature] = pd.to_numeric(df[feature], errors="coerce")
+    if feature in means and feature in scales:
+        df[feature] = df[feature] * scales[feature] + means[feature]
+    return df
+
+
+def _load_patient_series_multi(
+    path: Path,
+    stay_ids: list[int],
+    feature: str,
+    means: dict[str, float],
+    scales: dict[str, float],
+) -> dict[int, pd.DataFrame]:
+    if not stay_ids:
+        return {}
+    stay_set = set(stay_ids)
+    if path.suffix.lower() in {".parquet", ".pq"}:
+        try:
+            import pyarrow.dataset as ds
+        except Exception as exc:
+            raise RuntimeError("pyarrow is required to read parquet files.") from exc
+        dataset = ds.dataset(path)
+        table = dataset.to_table(
+            filter=ds.field("stay_id").isin(list(stay_set)),
+            columns=["stay_id", "time", feature],
+        )
+        df = table.to_pandas()
+    else:
+        rows = []
+        for chunk in pd.read_csv(path, usecols=["stay_id", "time", feature], chunksize=200_000):
+            rows.append(chunk[chunk["stay_id"].isin(stay_set)])
+        df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["stay_id", "time", feature])
+
+    if df.empty:
+        return {}
+    df = df.sort_values(["stay_id", "time"])
+    df[feature] = pd.to_numeric(df[feature], errors="coerce")
+    if feature in means and feature in scales:
+        df[feature] = df[feature] * scales[feature] + means[feature]
+
+    out: dict[int, pd.DataFrame] = {}
+    for sid, group in df.groupby("stay_id"):
+        out[int(sid)] = group[["stay_id", "time", feature]].copy()
+    return out
+
+
+def _sample_stay_ids(path: Path, k: int, seed: int, chunksize: int) -> list[int]:
+    rng = np.random.default_rng(seed)
+    seen: set[int] = set()
+    sample: list[int] = []
+    for chunk in _iter_table(path, ["stay_id"], chunksize):
+        ids = pd.to_numeric(chunk["stay_id"], errors="coerce").dropna().astype(int).unique()
+        for sid in ids:
+            if sid in seen:
+                continue
+            seen.add(int(sid))
+            if len(sample) < k:
+                sample.append(int(sid))
+            else:
+                j = int(rng.integers(0, len(seen)))
+                if j < k:
+                    sample[j] = int(sid)
+    return sample
+
+
+def _corr_matrix_from_path(path: Path, columns: list[str], chunksize: int) -> np.ndarray:
+    size = len(columns)
+    n_pair = np.zeros((size, size), dtype=np.float64)
+    sum_x = np.zeros((size, size), dtype=np.float64)
+    sum_x2 = np.zeros((size, size), dtype=np.float64)
+    sum_xy = np.zeros((size, size), dtype=np.float64)
+
+    for chunk in _iter_table(path, columns, chunksize):
+        vals = chunk.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float, copy=False)
+        mask = ~np.isnan(vals)
+        x = np.nan_to_num(vals, nan=0.0)
+        m = mask.astype(np.float64)
+
+        n_pair += m.T @ m
+        sum_x += x.T @ m
+        sum_x2 += (x * x).T @ m
+        sum_xy += x.T @ x
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        num = sum_xy - (sum_x * sum_x.T) / n_pair
+        den_x = sum_x2 - (sum_x ** 2) / n_pair
+        den_y = sum_x2.T - (sum_x.T ** 2) / n_pair
+        denom = np.sqrt(den_x * den_y)
+        corr = num / denom
+
+    corr[(n_pair < 2) | (denom <= 0)] = np.nan
+    return corr
 
 
 def compute_correlations(
@@ -14,14 +222,25 @@ def compute_correlations(
     verbose: bool = True,
     out_stats_path: Path | None = None,
     bins: int = 200,
+    path_t: Path | None = None,
+    out_corr_delta_path: Path | None = None,
+    smoothness_recipe_path: Path | None = None,
+    smoothness_plot_path: Path | None = None,
+    smoothness_stay_id: int | None = None,
+    smoothness_feature: str | None = None,
+    smoothness_samples: int = 5,
+    smoothness_seed: int = 2222,
 ):
     # Read headers only
-    cols_a = pd.read_csv(path_a, nrows=0).columns.tolist()
-    cols_b = pd.read_csv(path_b, nrows=0).columns.tolist()
+    cols_a = _read_columns(path_a)
+    cols_b = _read_columns(path_b)
+    cols_t = _read_columns(path_t) if path_t is not None else None
 
     ignore = {"stay_id", "time"}
     ignore |= {c for c in cols_a if c.startswith("MissingIndicator_")}
     ignore |= {c for c in cols_b if c.startswith("MissingIndicator_")}
+    if cols_t is not None:
+        ignore |= {c for c in cols_t if c.startswith("MissingIndicator_")}
 
     common = [c for c in cols_a if c in cols_b and c not in ignore]
     if not common:
@@ -38,10 +257,13 @@ def compute_correlations(
     # Accumulators for per-dataset stats
     n_a = {c: 0 for c in common}
     n_b = {c: 0 for c in common}
+    n_t = {c: 0 for c in common}
     sum_a = {c: 0.0 for c in common}
     sum_b = {c: 0.0 for c in common}
+    sum_t = {c: 0.0 for c in common}
     sum_a2 = {c: 0.0 for c in common}
     sum_b2 = {c: 0.0 for c in common}
+    sum_t2 = {c: 0.0 for c in common}
 
     # Optional pre-pass to get min/max per feature (for distribution metrics)
     edges = None
@@ -50,6 +272,8 @@ def compute_correlations(
         max_a = {c: float("-inf") for c in common}
         min_b = {c: float("inf") for c in common}
         max_b = {c: float("-inf") for c in common}
+        min_t = {c: float("inf") for c in common}
+        max_t = {c: float("-inf") for c in common}
 
         reader_a_minmax = pd.read_csv(path_a, usecols=common, chunksize=chunksize)
         for chunk_a in reader_a_minmax:
@@ -69,10 +293,23 @@ def compute_correlations(
                     min_b[c] = min(min_b[c], float(np.nanmin(y)))
                     max_b[c] = max(max_b[c], float(np.nanmax(y)))
 
+        if path_t is not None:
+            common_t = [c for c in common if c in cols_t]
+            for chunk_t in _iter_table(path_t, common_t, chunksize):
+                t_vals = chunk_t.apply(pd.to_numeric, errors="coerce")
+                for c in common_t:
+                    z = t_vals[c].to_numpy(dtype=float, copy=False)
+                    if np.isfinite(z).any():
+                        min_t[c] = min(min_t[c], float(np.nanmin(z)))
+                        max_t[c] = max(max_t[c], float(np.nanmax(z)))
+
         edges = {}
         for c in common:
             min_v = min(min_a[c], min_b[c])
             max_v = max(max_a[c], max_b[c])
+            if path_t is not None and np.isfinite(min_t[c]) and np.isfinite(max_t[c]):
+                min_v = min(min_v, min_t[c])
+                max_v = max(max_v, max_t[c])
             if not np.isfinite(min_v) or not np.isfinite(max_v) or min_v == max_v:
                 edges[c] = None
             else:
@@ -86,6 +323,7 @@ def compute_correlations(
     # Histograms for distribution metrics
     hist_a = {c: np.zeros(bins, dtype=np.float64) for c in common} if edges is not None else None
     hist_b = {c: np.zeros(bins, dtype=np.float64) for c in common} if edges is not None else None
+    hist_t = {c: np.zeros(bins, dtype=np.float64) for c in common} if edges is not None else None
 
     # Compute per-dataset stats on full CSVs (not paired)
     reader_a_stats = pd.read_csv(path_a, usecols=common, chunksize=chunksize)
@@ -117,6 +355,22 @@ def compute_correlations(
                 if hist_b is not None and edges[c] is not None:
                     h, _ = np.histogram(y_b, bins=edges[c])
                     hist_b[c] += h
+
+    if out_stats_path is not None and path_t is not None:
+        common_t = [c for c in common if c in cols_t]
+        for chunk_t in _iter_table(path_t, common_t, chunksize):
+            t_vals = chunk_t.apply(pd.to_numeric, errors="coerce")
+            for c in common_t:
+                z = t_vals[c].to_numpy(dtype=float, copy=False)
+                mask_t = ~np.isnan(z)
+                if mask_t.any():
+                    z_t = z[mask_t]
+                    n_t[c] += z_t.size
+                    sum_t[c] += float(z_t.sum())
+                    sum_t2[c] += float(np.dot(z_t, z_t))
+                    if hist_t is not None and edges[c] is not None:
+                        h, _ = np.histogram(z_t, bins=edges[c])
+                        hist_t[c] += h
 
     for chunk_a, chunk_b in zip(reader_a, reader_b):
         chunk_idx += 1
@@ -171,6 +425,49 @@ def compute_correlations(
         print(f"Saved {len(out_df)} correlations to {out_path}")
 
     if out_stats_path is not None:
+        delta_source = None
+        delta_trans = None
+        if smoothness_recipe_path is not None and path_t is not None:
+            dyn_cols, means, scales = _load_recipe_scaler_stats(smoothness_recipe_path)
+            delta_source = _compute_temporal_delta(path_b, dyn_cols, chunksize, means, scales)
+            delta_trans = _compute_temporal_delta(path_t, dyn_cols, chunksize, means, scales)
+
+            if smoothness_plot_path is not None:
+                plot_dir = smoothness_plot_path
+                plot_dir.mkdir(parents=True, exist_ok=True)
+                stay_ids = _sample_stay_ids(path_t, smoothness_samples, smoothness_seed, chunksize)
+                if smoothness_stay_id is not None:
+                    stay_ids = [smoothness_stay_id]
+
+                import matplotlib.pyplot as plt
+
+                for feature in dyn_cols:
+                    if smoothness_feature is not None and feature != smoothness_feature:
+                        continue
+                    src_series = _load_patient_series_multi(path_b, stay_ids, feature, means, scales)
+                    trans_series = _load_patient_series_multi(path_t, stay_ids, feature, means, scales)
+                    if not src_series and not trans_series:
+                        continue
+
+                    plt.figure(figsize=(10, 4))
+                    colors = plt.get_cmap("tab10").colors
+                    for idx, sid in enumerate(stay_ids):
+                        color = colors[idx % len(colors)]
+                        src_df = src_series.get(sid)
+                        trans_df = trans_series.get(sid)
+                        if src_df is not None and not src_df.empty:
+                            plt.plot(src_df["time"], src_df[feature], color=color, linestyle="--", linewidth=1.5, label=f"{sid} source")
+                        if trans_df is not None and not trans_df.empty:
+                            plt.plot(trans_df["time"], trans_df[feature], color=color, linestyle="-", linewidth=1.5, label=f"{sid} translated")
+
+                    plt.xlabel("time")
+                    plt.ylabel(feature)
+                    plt.title(f"{feature}: {len(stay_ids)} random stays")
+                    plt.legend(ncol=2, fontsize=8)
+                    plt.tight_layout()
+                    plt.savefig(plot_dir / f"smoothness_{feature}.png")
+                    plt.close()
+
         stats_rows = []
         for c in common:
             if n_a[c] > 0:
@@ -189,61 +486,134 @@ def compute_correlations(
                 mean_b = float("nan")
                 std_b = float("nan")
 
+            if n_t[c] > 0:
+                mean_t = sum_t[c] / n_t[c]
+                var_t = (sum_t2[c] - (sum_t[c] ** 2) / n_t[c]) / n_t[c]
+                std_t = math.sqrt(var_t) if var_t > 0 else 0.0
+            else:
+                mean_t = float("nan")
+                std_t = float("nan")
+
             # Distribution metrics from histograms
-            if edges is not None and edges[c] is not None and n_a[c] > 0 and n_b[c] > 0:
+            if edges is not None and edges[c] is not None:
                 ea = edges[c]
-                ha = hist_a[c]
-                hb = hist_b[c]
-                cdf_a = np.cumsum(ha) / ha.sum()
-                cdf_b = np.cumsum(hb) / hb.sum()
-                ks_stat = float(np.max(np.abs(cdf_a - cdf_b)))
-
-                # Approximate KS p-value
-                en = math.sqrt((n_a[c] * n_b[c]) / (n_a[c] + n_b[c]))
-                p_value = float(min(1.0, 2.0 * math.exp(-2.0 * (en * ks_stat) ** 2)))
-
                 bin_widths = np.diff(ea)
-                wasserstein = float(np.sum(np.abs(cdf_a - cdf_b) * bin_widths))
 
-                def quantile_from_hist(q):
-                    target = q * ha.sum()
-                    cum = np.cumsum(ha)
-                    idx = int(np.searchsorted(cum, target, side="left"))
-                    idx = min(max(idx, 0), len(bin_widths) - 1)
-                    prev = cum[idx - 1] if idx > 0 else 0.0
-                    if ha[idx] == 0:
-                        return float(ea[idx])
-                    frac = (target - prev) / ha[idx]
-                    return float(ea[idx] + frac * bin_widths[idx])
+                if n_a[c] > 0 and n_b[c] > 0:
+                    ha = hist_a[c]
+                    hb = hist_b[c]
+                    cdf_a = np.cumsum(ha) / ha.sum()
+                    cdf_b = np.cumsum(hb) / hb.sum()
+                    ks_stat = float(np.max(np.abs(cdf_a - cdf_b)))
 
-                def quantile_from_hist_b(q):
-                    target = q * hb.sum()
-                    cum = np.cumsum(hb)
-                    idx = int(np.searchsorted(cum, target, side="left"))
-                    idx = min(max(idx, 0), len(bin_widths) - 1)
-                    prev = cum[idx - 1] if idx > 0 else 0.0
-                    if hb[idx] == 0:
-                        return float(ea[idx])
-                    frac = (target - prev) / hb[idx]
-                    return float(ea[idx] + frac * bin_widths[idx])
+                    # Approximate KS p-value
+                    en = math.sqrt((n_a[c] * n_b[c]) / (n_a[c] + n_b[c]))
+                    p_value = float(min(1.0, 2.0 * math.exp(-2.0 * (en * ks_stat) ** 2)))
 
-                q05_a = quantile_from_hist(0.05)
-                q25_a = quantile_from_hist(0.25)
-                q50_a = quantile_from_hist(0.50)
-                q75_a = quantile_from_hist(0.75)
-                q95_a = quantile_from_hist(0.95)
+                    wasserstein = float(np.sum(np.abs(cdf_a - cdf_b) * bin_widths))
+                else:
+                    ks_stat = float("nan")
+                    p_value = float("nan")
+                    wasserstein = float("nan")
 
-                q05_b = quantile_from_hist_b(0.05)
-                q25_b = quantile_from_hist_b(0.25)
-                q50_b = quantile_from_hist_b(0.50)
-                q75_b = quantile_from_hist_b(0.75)
-                q95_b = quantile_from_hist_b(0.95)
+                if n_a[c] > 0:
+                    ha = hist_a[c]
+                    cdf_a = np.cumsum(ha) / ha.sum()
+
+                    def quantile_from_hist(q):
+                        target = q * ha.sum()
+                        cum = np.cumsum(ha)
+                        idx = int(np.searchsorted(cum, target, side="left"))
+                        idx = min(max(idx, 0), len(bin_widths) - 1)
+                        prev = cum[idx - 1] if idx > 0 else 0.0
+                        if ha[idx] == 0:
+                            return float(ea[idx])
+                        frac = (target - prev) / ha[idx]
+                        return float(ea[idx] + frac * bin_widths[idx])
+
+                    p_001_a = quantile_from_hist(0.001)
+                    p_05_a = quantile_from_hist(0.05)
+                    p_25_a = quantile_from_hist(0.25)
+                    p_50_a = quantile_from_hist(0.50)
+                    p_75_a = quantile_from_hist(0.75)
+                    p_95_a = quantile_from_hist(0.95)
+                    p_999_a = quantile_from_hist(0.999)
+                else:
+                    p_001_a = p_05_a = p_25_a = p_50_a = p_75_a = p_95_a = p_999_a = float("nan")
+
+                if n_b[c] > 0:
+                    hb = hist_b[c]
+                    cdf_b = np.cumsum(hb) / hb.sum()
+
+                    def quantile_from_hist_b(q):
+                        target = q * hb.sum()
+                        cum = np.cumsum(hb)
+                        idx = int(np.searchsorted(cum, target, side="left"))
+                        idx = min(max(idx, 0), len(bin_widths) - 1)
+                        prev = cum[idx - 1] if idx > 0 else 0.0
+                        if hb[idx] == 0:
+                            return float(ea[idx])
+                        frac = (target - prev) / hb[idx]
+                        return float(ea[idx] + frac * bin_widths[idx])
+
+                    p_001_b = quantile_from_hist_b(0.001)
+                    p_05_b = quantile_from_hist_b(0.05)
+                    p_25_b = quantile_from_hist_b(0.25)
+                    p_50_b = quantile_from_hist_b(0.50)
+                    p_75_b = quantile_from_hist_b(0.75)
+                    p_95_b = quantile_from_hist_b(0.95)
+                    p_999_b = quantile_from_hist_b(0.999)
+                else:
+                    p_001_b = p_05_b = p_25_b = p_50_b = p_75_b = p_95_b = p_999_b = float("nan")
+
+                if n_t[c] > 0:
+                    ht = hist_t[c]
+
+                    def quantile_from_hist_t(q):
+                        target = q * ht.sum()
+                        cum = np.cumsum(ht)
+                        idx = int(np.searchsorted(cum, target, side="left"))
+                        idx = min(max(idx, 0), len(bin_widths) - 1)
+                        prev = cum[idx - 1] if idx > 0 else 0.0
+                        if ht[idx] == 0:
+                            return float(ea[idx])
+                        frac = (target - prev) / ht[idx]
+                        return float(ea[idx] + frac * bin_widths[idx])
+
+                    p_001_t = quantile_from_hist_t(0.001)
+                    p_05_t = quantile_from_hist_t(0.05)
+                    p_25_t = quantile_from_hist_t(0.25)
+                    p_50_t = quantile_from_hist_t(0.50)
+                    p_75_t = quantile_from_hist_t(0.75)
+                    p_95_t = quantile_from_hist_t(0.95)
+                    p_999_t = quantile_from_hist_t(0.999)
+                else:
+                    p_001_t = p_05_t = p_25_t = p_50_t = p_75_t = p_95_t = p_999_t = float("nan")
+
+                if path_t is not None and n_t[c] > 0:
+                    ht = hist_t[c]
+                    cdf_t = np.cumsum(ht) / ht.sum()
+                    wasserstein_a_t = float(np.sum(np.abs(cdf_a - cdf_t) * bin_widths)) if n_a[c] > 0 else float("nan")
+                    wasserstein_b_t = float(np.sum(np.abs(cdf_b - cdf_t) * bin_widths)) if n_b[c] > 0 else float("nan")
+                else:
+                    wasserstein_a_t = float("nan")
+                    wasserstein_b_t = float("nan")
             else:
                 ks_stat = float("nan")
                 p_value = float("nan")
                 wasserstein = float("nan")
-                q05_a = q25_a = q50_a = q75_a = q95_a = float("nan")
-                q05_b = q25_b = q50_b = q75_b = q95_b = float("nan")
+                p_001_a = p_05_a = p_25_a = p_50_a = p_75_a = p_95_a = p_999_a = float("nan")
+                p_001_b = p_05_b = p_25_b = p_50_b = p_75_b = p_95_b = p_999_b = float("nan")
+                p_001_t = p_05_t = p_25_t = p_50_t = p_75_t = p_95_t = p_999_t = float("nan")
+                wasserstein_a_t = float("nan")
+                wasserstein_b_t = float("nan")
+
+            delta_source_c = float("nan")
+            delta_trans_c = float("nan")
+            if delta_source is not None:
+                delta_source_c = delta_source.get(c, float("nan"))
+            if delta_trans is not None:
+                delta_trans_c = delta_trans.get(c, float("nan"))
 
             stats_rows.append(
                 (
@@ -251,22 +621,40 @@ def compute_correlations(
                     mean_a,
                     std_a,
                     n_a[c],
-                    q05_a,
-                    q25_a,
-                    q50_a,
-                    q75_a,
-                    q95_a,
+                    p_001_a,
+                    p_05_a,
+                    p_25_a,
+                    p_50_a,
+                    p_75_a,
+                    p_95_a,
+                    p_999_a,
                     mean_b,
                     std_b,
                     n_b[c],
-                    q05_b,
-                    q25_b,
-                    q50_b,
-                    q75_b,
-                    q95_b,
+                    p_001_b,
+                    p_05_b,
+                    p_25_b,
+                    p_50_b,
+                    p_75_b,
+                    p_95_b,
+                    p_999_b,
+                    mean_t,
+                    std_t,
+                    n_t[c],
+                    p_001_t,
+                    p_05_t,
+                    p_25_t,
+                    p_50_t,
+                    p_75_t,
+                    p_95_t,
+                    p_999_t,
                     ks_stat,
                     p_value,
                     wasserstein,
+                    wasserstein_a_t,
+                    wasserstein_b_t,
+                    delta_source_c,
+                    delta_trans_c,
                 )
             )
 
@@ -277,22 +665,40 @@ def compute_correlations(
                 "mean_a",
                 "std_a",
                 "n_a",
-                "q05_a",
-                "q25_a",
-                "q50_a",
-                "q75_a",
-                "q95_a",
+                "p_001_a",
+                "p_05_a",
+                "p_25_a",
+                "p_50_a",
+                "p_75_a",
+                "p_95_a",
+                "p_999_a",
                 "mean_b",
                 "std_b",
                 "n_b",
-                "q05_b",
-                "q25_b",
-                "q50_b",
-                "q75_b",
-                "q95_b",
+                "p_001_b",
+                "p_05_b",
+                "p_25_b",
+                "p_50_b",
+                "p_75_b",
+                "p_95_b",
+                "p_999_b",
+                "mean_t",
+                "std_t",
+                "n_t",
+                "p_001_t",
+                "p_05_t",
+                "p_25_t",
+                "p_50_t",
+                "p_75_t",
+                "p_95_t",
+                "p_999_t",
                 "ks_stat",
                 "ks_pvalue",
                 "wasserstein",
+                "wasserstein_a_t",
+                "wasserstein_b_t",
+                "delta_source",
+                "delta_trans",
             ],
         )
         stats_df.to_csv(out_stats_path, index=False)
@@ -305,6 +711,31 @@ def compute_correlations(
             print(f"Correlation of feature means (a vs b): {mean_corr:.6f}")
             print(f"Correlation of feature stds (a vs b): {std_corr:.6f}")
 
+    if out_corr_delta_path is not None:
+        if path_t is None:
+            raise ValueError("--out-corr-delta requires --t.")
+        common_corr = [c for c in common if c in cols_t]
+        if not common_corr:
+            raise ValueError("No common feature columns for correlation delta after filtering.")
+
+        corr_a = _corr_matrix_from_path(path_a, common_corr, chunksize)
+        corr_t = _corr_matrix_from_path(path_t, common_corr, chunksize)
+        delta = np.abs(corr_a - corr_t)
+
+        rows_delta = []
+        for i, fi in enumerate(common_corr):
+            for j in range(i + 1, len(common_corr)):
+                rows_delta.append((fi, common_corr[j], corr_a[i, j], corr_t[i, j], delta[i, j]))
+
+        delta_df = pd.DataFrame(
+            rows_delta,
+            columns=["feature_i", "feature_j", "corr_a", "corr_t", "delta"],
+        )
+        delta_df.to_csv(out_corr_delta_path, index=False)
+
+        if verbose:
+            print(f"Saved correlation delta matrix to {out_corr_delta_path}")
+
 
 def main():
     ap = argparse.ArgumentParser(description="Compute column-wise Pearson correlation between two CSVs with matching columns.")
@@ -313,6 +744,14 @@ def main():
     ap.add_argument("--out", required=True, help="Output CSV path")
     ap.add_argument("--chunksize", type=int, default=200_000, help="Rows per chunk (default: 200000)")
     ap.add_argument("--out-stats", help="Output CSV for per-feature means/stds (optional)")
+    ap.add_argument("--t", help="Path to translated dataset (parquet or CSV, optional)")
+    ap.add_argument("--out-corr-delta", help="Output CSV for correlation delta matrix (requires --t)")
+    ap.add_argument("--smoothness-recipe", help="Path to recipys recipe for denormalization (optional)")
+    ap.add_argument("--smoothness-plot", help="Output directory for temporal smoothness plots (optional)")
+    ap.add_argument("--smoothness-stay-id", type=int, help="Stay ID for temporal smoothness plot (optional)")
+    ap.add_argument("--smoothness-feature", help="Feature name for temporal smoothness plot (optional)")
+    ap.add_argument("--smoothness-samples", type=int, default=5, help="Number of random stays to plot (default: 5)")
+    ap.add_argument("--smoothness-seed", type=int, default=2222, help="Random seed for stay sampling (default: 2222)")
     ap.add_argument("--bins", type=int, default=200, help="Histogram bins for distribution metrics (default: 200)")
     ap.add_argument("--quiet", action="store_true", help="Disable progress prints")
     args = ap.parse_args()
@@ -325,6 +764,14 @@ def main():
         verbose=not args.quiet,
         out_stats_path=Path(args.out_stats) if args.out_stats else None,
         bins=args.bins,
+        path_t=Path(args.t) if args.t else None,
+        out_corr_delta_path=Path(args.out_corr_delta) if args.out_corr_delta else None,
+        smoothness_recipe_path=Path(args.smoothness_recipe) if args.smoothness_recipe else None,
+        smoothness_plot_path=Path(args.smoothness_plot) if args.smoothness_plot else None,
+        smoothness_stay_id=args.smoothness_stay_id,
+        smoothness_feature=args.smoothness_feature,
+        smoothness_samples=args.smoothness_samples,
+        smoothness_seed=args.smoothness_seed,
     )
 
 

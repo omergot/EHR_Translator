@@ -8,18 +8,26 @@ import numpy as np
 from torch.utils.data import DataLoader
 
 from .adapters.yaib import YAIBRuntime
-from .core.eval import TranslatorEvaluator
-from .core.train import TranslatorTrainer
-from .core.translator import IdentityTranslator, LinearRegressionTranslator
+from .core.eval import TranslatorEvaluator, TransformerTranslatorEvaluator
+from .core.train import TranslatorTrainer, TransformerTranslatorTrainer
+from .core.translator import IdentityTranslator, LinearRegressionTranslator, EHRTranslator
+from .core.schema import SchemaResolver
 from icu_benchmarks.constants import RunMode
 from icu_benchmarks.data.constants import DataSplit
 import pandas as pd
 
-def setup_logging(verbose: bool = False):
+def setup_logging(verbose: bool = False, log_file: str | None = "run.log"):
     level = logging.DEBUG if verbose else logging.INFO
+    handlers = [logging.StreamHandler()]
+    if log_file:
+        log_path = Path(log_file)
+        if log_path.parent != Path("."):
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_path, mode="a"))
     logging.basicConfig(
         level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=handlers,
     )
 
 
@@ -27,8 +35,15 @@ def load_config(config_path: Path) -> dict:
     with open(config_path, 'r') as f:
         return json.load(f)
 
-def _build_runtime_from_config(config: dict, data_dir_override: str | None = None) -> YAIBRuntime:
+def _build_runtime_from_config(
+    config: dict,
+    data_dir_override: str | None = None,
+    batch_size_override: int | None = None,
+    seed_override: int | None = None,
+) -> YAIBRuntime:
     data_dir = Path(data_dir_override) if data_dir_override else Path(config["data_dir"])
+    batch_size = batch_size_override if batch_size_override is not None else config.get("batch_size", 1)
+    seed = seed_override if seed_override is not None else config.get("seed", 42)
     return YAIBRuntime(
         data_dir=data_dir,
         baseline_model_dir=Path(config["baseline_model_dir"]),
@@ -37,12 +52,35 @@ def _build_runtime_from_config(config: dict, data_dir_override: str | None = Non
         model_name=config["model_name"],
         vars=config["vars"],
         file_names=config["file_names"],
-        seed=config.get("seed", 42),
-        batch_size=config.get("batch_size", 1),
+        seed=seed,
+        batch_size=batch_size,
         percentile_outliers_csv=Path(config["percentile_outliers_csv"])
         if config.get("percentile_outliers_csv")
         else None,
     )
+
+
+
+def _get_training_config(config: dict) -> dict:
+    training = config.get("training", {})
+    return {
+        "epochs": training.get("epochs", config.get("epochs", 10)),
+        "batch_size": training.get("batch_size", config.get("batch_size", 1)),
+        "lr": training.get("lr", config.get("learning_rate", 1e-4)),
+        "lambda_fidelity": training.get("lambda_fidelity", config.get("lambda_fidelity", 0.01)),
+        "lambda_range": training.get("lambda_range", config.get("lambda_range", 1e-3)),
+        "seed": training.get("seed", config.get("seed", 42)),
+        "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
+    }
+
+
+def _get_output_config(config: dict) -> dict:
+    output = config.get("output", {})
+    run_dir = output.get("run_dir", config.get("run_dir", config.get("checkpoint_dir", "runs/translator")))
+    return {"run_dir": run_dir}
+
+
+
 
 def _get_translator_config(config: dict) -> dict:
     return config.get("translator", {})
@@ -50,6 +88,13 @@ def _get_translator_config(config: dict) -> dict:
 
 def _get_translator_type(config: dict) -> str:
     return _get_translator_config(config).get("type", "identity")
+
+
+
+
+def _get_bounds_csv(config: dict) -> str:
+    paths = config.get("paths", {})
+    return paths.get("bounds_csv", config.get("bounds_csv", ""))
 
 
 def _regression_feature_names(columns, missing_prefix, exclude_features):
@@ -65,6 +110,9 @@ def _prepare_linear_regression(
     *,
     split: str,
     shuffle: bool,
+    debug_mode: bool = False,
+    debug_fraction: float = 0.05,
+    seed: int = 42,
 ) -> tuple[LinearRegressionTranslator, YAIBRuntime, DataLoader, DataLoader | None]:
     translator_cfg = _get_translator_config(config)
     static_features = translator_cfg.get("static_features", ["age", "sex", "height", "weight"])
@@ -78,7 +126,13 @@ def _prepare_linear_regression(
 
     source_runtime = _build_runtime_from_config(config)
     source_runtime.load_data(scaling_override=False)
-    source_loader = source_runtime.create_dataloader(split, shuffle=shuffle)
+    source_loader = source_runtime.create_dataloader(
+        split,
+        shuffle=shuffle,
+        ram_cache=True,
+        subset_fraction=debug_fraction if debug_mode else None,
+        subset_seed=seed,
+    )
     source_feature_names = source_loader.dataset.get_feature_names()
     group_col = source_runtime.vars.get("GROUP")
     source_feature_names = [col for col in source_feature_names if col != group_col]
@@ -97,7 +151,13 @@ def _prepare_linear_regression(
     if target_data_dir:
         target_runtime = _build_runtime_from_config(config, data_dir_override=target_data_dir)
         target_runtime.load_data(scaling_override=False)
-        target_loader = target_runtime.create_dataloader(split, shuffle=shuffle)
+        target_loader = target_runtime.create_dataloader(
+            split,
+            shuffle=shuffle,
+            ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=seed,
+        )
         target_feature_names = target_loader.dataset.get_feature_names()
         target_group_col = target_runtime.vars.get("GROUP")
         target_feature_names = [col for col in target_feature_names if col != target_group_col]
@@ -226,17 +286,96 @@ def _save_translation_samples(
 
 def train_translator(args):
     if torch.cuda.is_available() :
-        device = [0]  # Use GPU 0 specifically
+        device = [0,1,2]  # Use GPU 0 specifically
         logging.info(f"Using GPU 0: {torch.cuda.get_device_name(0)}")
 
     config = load_config(args.config)
+    training_cfg = _get_training_config(config)
+    output_cfg = _get_output_config(config)
+    debug_mode = config.get("debug", False)
+    if debug_mode:
+        training_cfg["epochs"] = 1
     translator_type = _get_translator_type(config)
 
-    if translator_type == "linear_regression":
+
+    if translator_type == "transformer":
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        train_loader = yaib_runtime.create_dataloader(
+            'train',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=0.05 if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        val_loader = yaib_runtime.create_dataloader(
+            'val',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=0.05 if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+
+        feature_names = train_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=config["vars"]["STATIC"],
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
+        if not bounds_csv:
+            raise ValueError("bounds_csv must be provided for transformer translator.")
+
+        translator = EHRTranslator(
+            num_features=len(schema_resolver.indices.dynamic),
+            d_latent=translator_cfg.get("d_latent", 16),
+            d_model=translator_cfg.get("d_model", 128),
+            d_time=translator_cfg.get("d_time", 16),
+            n_layers=translator_cfg.get("n_layers", 4),
+            n_heads=translator_cfg.get("n_heads", 8),
+            d_ff=translator_cfg.get("d_ff", 512),
+            dropout=translator_cfg.get("dropout", 0.2),
+            out_dropout=translator_cfg.get("out_dropout", 0.1),
+            static_dim=len(schema_resolver.indices.static),
+        )
+
+        trainer = TransformerTranslatorTrainer(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            bounds_csv=Path(bounds_csv),
+            learning_rate=training_cfg["lr"],
+            weight_decay=translator_cfg.get("weight_decay", 1e-5),
+            lambda_fidelity=training_cfg["lambda_fidelity"],
+            lambda_range=training_cfg["lambda_range"],
+            best_metric=training_cfg["best_metric"],
+            run_dir=Path(output_cfg["run_dir"]),
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+        )
+        trainer.train(
+            epochs=training_cfg["epochs"],
+            train_loader=train_loader,
+            val_loader=val_loader,
+        )
+        logging.info("Transformer translator training completed")
+        return
+
+    elif translator_type == "linear_regression":
         translator, _, train_loader, target_loader = _prepare_linear_regression(
             config,
             split=DataSplit.train,
             shuffle=False,
+            debug_mode=debug_mode,
+            seed=training_cfg["seed"],
         )
         translator.fit_from_loaders(train_loader, target_loader)
         model_path = _get_translator_config(config).get("model_path")
@@ -247,25 +386,28 @@ def train_translator(args):
         logging.info("Linear regression translator fitted on training set.")
         return
     
-    yaib_runtime = YAIBRuntime(
-        data_dir=Path(config["data_dir"]),
-        baseline_model_dir=Path(config["baseline_model_dir"]),
-        task_config=Path(config["task_config"]),
-        model_config=Path(config["model_config"]) if config.get("model_config") else None,
-        model_name=config["model_name"],
-        vars=config["vars"],
-        file_names=config["file_names"],
-        seed=config.get("seed", 42),
-        batch_size=config.get("batch_size", 1),
-        percentile_outliers_csv=Path(config["percentile_outliers_csv"])
-        if config.get("percentile_outliers_csv")
-        else None,
+    yaib_runtime = _build_runtime_from_config(
+        config,
+        batch_size_override=training_cfg["batch_size"],
+        seed_override=training_cfg["seed"],
     )
     
     yaib_runtime.load_data()
     
-    train_loader = yaib_runtime.create_dataloader('train', shuffle=False)
-    val_loader = yaib_runtime.create_dataloader('val', shuffle=False)
+    train_loader = yaib_runtime.create_dataloader(
+        'train',
+        shuffle=False,
+        ram_cache=True,
+        subset_fraction=0.05 if debug_mode else None,
+        subset_seed=training_cfg["seed"],
+    )
+    val_loader = yaib_runtime.create_dataloader(
+        'val',
+        shuffle=False,
+        ram_cache=True,
+        subset_fraction=0.05 if debug_mode else None,
+        subset_seed=training_cfg["seed"],
+    )
     
     data_shape = next(iter(train_loader))[0].shape
 
@@ -275,13 +417,13 @@ def train_translator(args):
     trainer = TranslatorTrainer(
         yaib_runtime=yaib_runtime,
         translator=translator,
-        learning_rate=config.get("learning_rate", 1e-4),
+        learning_rate=training_cfg["lr"],
         device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
     )
     
     checkpoint_dir = Path(config.get("checkpoint_dir", "checkpoints"))
     trainer.train(
-        epochs=config.get("epochs", 10),
+        epochs=training_cfg["epochs"],
         train_loader=train_loader,
         val_loader=val_loader,
         checkpoint_dir=checkpoint_dir,
@@ -293,15 +435,90 @@ def train_translator(args):
 
 def translate_and_eval(args):
     config = load_config(args.config)
+    training_cfg = _get_training_config(config)
+    output_cfg = _get_output_config(config)
+    debug_mode = config.get("debug", False)
+    if debug_mode:
+        training_cfg["epochs"] = 1
     translator_type = _get_translator_type(config)
     eval_baseline_with_target_norm = config.get("eval_baseline_with_target_normalization", False)
 
     lr_target_loader = None
-    if translator_type == "linear_regression":
+    results = None
+
+    if translator_type == "transformer":
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        test_loader = yaib_runtime.create_dataloader(
+            'test',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=0.05 if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        feature_names = test_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=config["vars"]["STATIC"],
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        translator = EHRTranslator(
+            num_features=len(schema_resolver.indices.dynamic),
+            d_latent=translator_cfg.get("d_latent", 16),
+            d_model=translator_cfg.get("d_model", 128),
+            d_time=translator_cfg.get("d_time", 16),
+            n_layers=translator_cfg.get("n_layers", 4),
+            n_heads=translator_cfg.get("n_heads", 8),
+            d_ff=translator_cfg.get("d_ff", 512),
+            dropout=translator_cfg.get("dropout", 0.2),
+            out_dropout=translator_cfg.get("out_dropout", 0.1),
+            static_dim=len(schema_resolver.indices.static),
+        )
+
+        checkpoint_path = args.translator_checkpoint
+        if not checkpoint_path:
+            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        if checkpoint_path and Path(checkpoint_path).exists():
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            translator.load_state_dict(checkpoint["translator_state_dict"])
+            logging.info("Loaded transformer translator from %s", checkpoint_path)
+        else:
+            logging.warning("No transformer checkpoint found at %s", checkpoint_path)
+
+        evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+        )
+        output_path = Path(args.output_parquet)
+        sample_dir = translator_cfg.get(
+            "sample_dir", "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/translation_samples"
+        )
+        sample_size = int(translator_cfg.get("sample_size", 1000))
+        results = evaluator.evaluate_original_vs_translated(
+            test_loader,
+            output_path,
+            sample_output_dir=Path(sample_dir) if sample_dir else None,
+            sample_size=sample_size,
+        )
+
+    elif translator_type == "linear_regression":
         translator, yaib_runtime, test_loader, target_loader = _prepare_linear_regression(
             config,
             split=DataSplit.test,
             shuffle=False,
+            debug_mode=debug_mode,
+            seed=training_cfg["seed"],
         )
         lr_target_loader = target_loader
         model_path = _get_translator_config(config).get("model_path")
@@ -326,63 +543,79 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(config)
         yaib_runtime.load_data()
 
-        test_loader = yaib_runtime.create_dataloader('test', shuffle=False)
-        
+        test_loader = yaib_runtime.create_dataloader(
+            'test',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=0.05 if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+
         data_shape = next(iter(test_loader))[0].shape
         input_size = data_shape[-1]
         translator = IdentityTranslator(input_size=input_size)
-    
-    if translator_type != "linear_regression" and args.translator_checkpoint:
+
+    if translator_type not in {"linear_regression", "transformer"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
         translator.load_state_dict(checkpoint["translator_state_dict"])
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
-    
-    evaluator = TranslatorEvaluator(
-        yaib_runtime=yaib_runtime,
-        translator=translator,
-        device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
-    )
-    
-    output_path = Path(args.output_parquet)
-    if translator_type == "linear_regression":
-        if eval_baseline_with_target_norm:
-            # Apply target normalization only (no translation) on raw inputs.
-            original_a = translator.a
-            original_b = translator.b
-            translator.a = np.ones_like(original_a)
-            translator.b = np.zeros_like(original_b)
-            original_metrics = evaluator.translate_and_evaluate(test_loader, None)
-            translator.a = original_a
-            translator.b = original_b
+
+    if translator_type != "transformer":
+        evaluator = TranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+        )
+
+        output_path = Path(args.output_parquet)
+        if translator_type == "linear_regression":
+            if eval_baseline_with_target_norm:
+                # Apply target normalization only (no translation) on raw inputs.
+                original_a = translator.a
+                original_b = translator.b
+                translator.a = np.ones_like(original_a)
+                translator.b = np.zeros_like(original_b)
+                original_metrics = evaluator.translate_and_evaluate(test_loader, None)
+                translator.a = original_a
+                translator.b = original_b
+            else:
+                # Use eICU-normalized runtime for original metrics.
+                norm_runtime = _build_runtime_from_config(config)
+                norm_runtime.load_data()
+                norm_test_loader = norm_runtime.create_dataloader(
+                    'test',
+                    shuffle=False,
+                    ram_cache=True,
+                    subset_fraction=0.05 if debug_mode else None,
+                    subset_seed=training_cfg["seed"],
+                )
+                evaluator.yaib_runtime = norm_runtime
+                original_metrics = evaluator._evaluate_without_translator(norm_test_loader)
+                evaluator.yaib_runtime = yaib_runtime
+            translated_metrics = evaluator.translate_and_evaluate(test_loader, output_path)
+            results = {"original": original_metrics, "translated": translated_metrics}
         else:
-            # Use eICU-normalized runtime for original metrics.
-            norm_runtime = _build_runtime_from_config(config)
-            norm_runtime.load_data()
-            norm_test_loader = norm_runtime.create_dataloader('test', shuffle=False)
-            evaluator.yaib_runtime = norm_runtime
-            original_metrics = evaluator._evaluate_without_translator(norm_test_loader)
-            evaluator.yaib_runtime = yaib_runtime
-        translated_metrics = evaluator.translate_and_evaluate(test_loader, output_path)
-        results = {"original": original_metrics, "translated": translated_metrics}
-    else:
-        results = evaluator.evaluate_original_vs_translated(test_loader, output_path)
-    
-    print("\n" + "="*80)
+            results = evaluator.evaluate_original_vs_translated(test_loader, output_path)
+
+    if results is None:
+        raise RuntimeError("No evaluation results produced.")
+
+    print("\n" + "=" * 80)
     print("EVALUATION RESULTS")
-    print("="*80)
+    print("=" * 80)
     print("\nOriginal Test Data:")
     for metric, value in results["original"].items():
         print(f"  {metric}: {value:.4f}")
-    
+
     print("\nTranslated Test Data:")
     for metric, value in results["translated"].items():
         print(f"  {metric}: {value:.4f}")
-    
+
     print("\nDifference:")
     for metric in results["original"].keys():
         diff = results["translated"][metric] - results["original"][metric]
         print(f"  {metric}: {diff:+.4f}")
-    print("="*80)
+    print("=" * 80)
 
     if translator_type == "linear_regression" and lr_target_loader is not None:
         lr_metrics = _linear_regression_metrics(translator, test_loader, lr_target_loader)
@@ -390,7 +623,6 @@ def translate_and_eval(args):
             print("\nLinear Regression Metrics (translated vs target):")
             for key, value in lr_metrics.items():
                 print(f"  {key}: {value:.6f}")
-
 
 def train_and_eval(args):
     train_translator(args)

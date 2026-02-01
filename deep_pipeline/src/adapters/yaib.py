@@ -8,7 +8,7 @@ import numpy as np
 import polars as pl
 import torch
 from pytorch_lightning import LightningModule
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset, Subset
 
 yaib_path = Path(__file__).parent.parent.parent.parent.parent / "YAIB"
 if not yaib_path.exists():
@@ -27,6 +27,23 @@ import os
 import importlib.util
 
 from contextlib import contextmanager
+
+
+class _CachedSubsetDataset(Dataset):
+    def __init__(self, dataset, indices):
+        self._dataset = dataset
+        self._indices = list(indices)
+        self._cached_dataset = [dataset[i] for i in self._indices]
+        if hasattr(dataset, "get_feature_names"):
+            self.get_feature_names = dataset.get_feature_names
+        if hasattr(dataset, "vars"):
+            self.vars = dataset.vars
+
+    def __len__(self) -> int:
+        return len(self._cached_dataset)
+
+    def __getitem__(self, idx):
+        return self._cached_dataset[idx]
 
 @contextmanager
 def _pushd(path: str):
@@ -186,7 +203,7 @@ class YAIBRuntime:
             load_cache=True,
             generate_cache=False,
             percentile_outliers_csv=self.percentile_outliers_csv,
-            export_feature_stats=False,
+            export_feature_stats=True,
         )
         if scaling_override is not None:
             if prev_scaling is not None:
@@ -239,7 +256,15 @@ class YAIBRuntime:
             ram_cache=ram_cache,
         )
     
-    def create_dataloader(self, split: str, shuffle: bool = False) -> DataLoader:
+    def create_dataloader(
+        self,
+        split: str,
+        shuffle: bool = False,
+        ram_cache: bool = True,
+        subset_fraction: float | None = None,
+        subset_seed: int = 42,
+        drop_last: bool | None = None,
+    ) -> DataLoader:
         self.load_baseline_model()
         train_dataset = None
         if not self._loss_weight_set and hasattr(self._model, 'set_weight'):
@@ -259,10 +284,31 @@ class YAIBRuntime:
                 train_dataset = self.create_dataset(DataSplit.train, ram_cache=False)
             self._model.set_trained_columns(train_dataset.get_feature_names())
             self._trained_columns_set = True
-        dataset = self.create_dataset(split, ram_cache=True)
+        base_ram_cache = ram_cache and subset_fraction is None
+        dataset = self.create_dataset(split, ram_cache=base_ram_cache)
+        dataset_to_use = dataset
+        if subset_fraction is not None and subset_fraction < 1.0:
+            subset_size = max(1, int(len(dataset) * subset_fraction))
+            generator = torch.Generator()
+            generator.manual_seed(subset_seed)
+            indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+            if ram_cache:
+                dataset_to_use = _CachedSubsetDataset(dataset, indices)
+            else:
+                dataset_to_use = Subset(dataset, indices)
+            if hasattr(dataset, "get_feature_names") and not hasattr(dataset_to_use, "get_feature_names"):
+                dataset_to_use.get_feature_names = dataset.get_feature_names
+            if hasattr(dataset, "vars") and not hasattr(dataset_to_use, "vars"):
+                dataset_to_use.vars = dataset.vars
+            if drop_last is None:
+                drop_last = True
+
+        if drop_last is None:
+            drop_last = True
+
         batch_size = self.batch_size
-        if split == DataSplit.test:
-            batch_size = min(self.batch_size * 4, len(dataset))
+        if split == DataSplit.test and subset_fraction is None and 1==2:
+            batch_size = min(self.batch_size * 4, len(dataset_to_use))
 
         if hasattr(self._model, 'run_mode'):
             self._model.run_mode = RunMode(RunMode.classification)
@@ -275,16 +321,17 @@ class YAIBRuntime:
             self._model.set_trained_columns(dataset.get_feature_names())
             self._trained_columns_set = True
         loader = DataLoader(
-            dataset,
+            dataset_to_use,
             batch_size=batch_size,
             shuffle=shuffle,
             num_workers=4,
-        drop_last=True,
+            drop_last=drop_last,
         )
         self._log_dataset_stats(dataset, split)
         logging.info(
             f"[debug] dataloader split={split} batch_size={batch_size} "
-            f"shuffle={shuffle} drop_last=True num_batches={len(loader)}"
+            f"shuffle={shuffle} drop_last={drop_last} num_workers={loader.num_workers} "
+            f"num_batches={len(loader)}"
         )
         if split == DataSplit.test and not self._logged_test_stats:
             self._log_test_batch_stats(loader)

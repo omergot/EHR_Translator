@@ -203,7 +203,7 @@ class YAIBRuntime:
             load_cache=True,
             generate_cache=False,
             percentile_outliers_csv=self.percentile_outliers_csv,
-            export_feature_stats=True,
+            export_feature_stats=False,
         )
         if scaling_override is not None:
             if prev_scaling is not None:

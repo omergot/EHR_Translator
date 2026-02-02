@@ -1,4 +1,6 @@
 import logging
+import hashlib
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -328,6 +330,7 @@ class YAIBRuntime:
             drop_last=drop_last,
         )
         self._log_dataset_stats(dataset, split)
+        self._log_split_hash(dataset_to_use, split, subset_fraction)
         logging.info(
             f"[debug] dataloader split={split} batch_size={batch_size} "
             f"shuffle={shuffle} drop_last={drop_last} num_workers={loader.num_workers} "
@@ -360,6 +363,46 @@ class YAIBRuntime:
             )
         except Exception as exc:
             logging.info(f"[debug] split={split} label_counts=unavailable ({exc})")
+
+    def _log_split_hash(
+        self,
+        dataset: PredictionPolarsDataset,
+        split: str,
+        subset_fraction: float | None,
+    ) -> None:
+        if os.getenv("YAIB_SPLIT_HASH", "0") != "1":
+            return
+        if not hasattr(dataset, "outcome_df"):
+            logging.info(f"[debug] split={split} stay_id_hash=unavailable (no outcome_df)")
+            return
+        group_col = self.vars.get("GROUP")
+        if not group_col or group_col not in dataset.outcome_df.columns:
+            return
+        try:
+            ids = dataset.outcome_df[group_col].unique().to_list()
+            ids = sorted(ids)
+            digest = hashlib.md5()
+            for val in ids:
+                digest.update(str(val).encode("utf-8"))
+                digest.update(b",")
+            logging.info(
+                "[debug] split=%s stay_id_hash=%s num_stays=%d subset_fraction=%s",
+                split,
+                digest.hexdigest(),
+                len(ids),
+                subset_fraction,
+            )
+            output_dir = Path(os.getenv("YAIB_SPLIT_HASH_DIR", "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/yaib_split_ids"))
+            output_dir.mkdir(parents=True, exist_ok=True)
+            dataset_tag = f"{self.data_dir.parent.name}_{self.data_dir.name}"
+            subset_tag = "full" if subset_fraction is None else f"{subset_fraction:.4f}".replace(".", "p")
+            output_path = output_dir / f"stay_ids_{dataset_tag}_{split}_{subset_tag}_{digest.hexdigest()}.txt"
+            with output_path.open("w", encoding="utf-8") as handle:
+                for stay_id in ids:
+                    handle.write(f"{stay_id}\n")
+            logging.info("[debug] wrote stay_id list to %s", output_path)
+        except Exception as exc:
+            logging.info(f"[debug] split={split} stay_id_hash=unavailable ({exc})")
 
     def _log_test_batch_stats(self, loader: DataLoader) -> None:
         try:

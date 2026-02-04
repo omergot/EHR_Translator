@@ -31,7 +31,7 @@
   "output": {
     "run_dir": "checkpoints/transformer"
   },
-  "seed": 2222,
+  "seed": 2223,
   "device": "cuda",
   "debug": false
 }

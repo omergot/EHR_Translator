@@ -40,6 +40,7 @@ def reconstruct_parquet_from_batches(
     stay_id_batches: List[Optional[torch.Tensor]],
     vars: Dict[str, str],
     feature_names: List[str],
+    time_batches: Optional[List[Optional[List[List[float]]]]] = None,
 ) -> pl.DataFrame:
     all_rows = []
     
@@ -47,21 +48,28 @@ def reconstruct_parquet_from_batches(
         data, labels, mask = batch[0], batch[1], batch[2]
         translated_np = translated.detach().cpu().numpy()
         mask_np = mask.cpu().numpy()
+        time_rows = None
+        if time_batches is not None and batch_idx < len(time_batches):
+            time_rows = time_batches[batch_idx]
         
         batch_size, seq_len, num_features = translated_np.shape
         
         for b in range(batch_size):
             stay_id = stay_ids[b].item() if stay_ids is not None else (batch_idx * batch_size + b)
+            time_seq = None
+            if time_rows is not None and b < len(time_rows):
+                time_seq = time_rows[b]
             for t in range(seq_len):
                 if mask_np[b, t]:
                     row = {vars["GROUP"]: stay_id}
                     if vars.get("SEQUENCE"):
-                        row[vars["SEQUENCE"]] = t
+                        if time_seq is not None and t < len(time_seq):
+                            row[vars["SEQUENCE"]] = time_seq[t]
+                        else:
+                            row[vars["SEQUENCE"]] = t
                     for f_idx, f_name in enumerate(feature_names):
                         if f_idx < num_features:
                             row[f_name] = float(translated_np[b, t, f_idx])
                     all_rows.append(row)
     
     return pl.DataFrame(all_rows)
-
-

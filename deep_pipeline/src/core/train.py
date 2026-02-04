@@ -241,8 +241,10 @@ class TransformerTranslatorTrainer:
             if f"{base}_a" in columns:
                 return f"{base}_a"
             if f"{base}_b" in columns:
+                logging.warning(f"Using {base}_b as fallback for {base}")
                 return f"{base}_b"
             if base in columns:
+                logging.warning(f"Using {base} as fallback for {base}")
                 return base
             return None
 

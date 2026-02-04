@@ -600,29 +600,29 @@ def translate_and_eval(args):
     if results is None:
         raise RuntimeError("No evaluation results produced.")
 
-    print("\n" + "=" * 80)
-    print("EVALUATION RESULTS")
-    print("=" * 80)
-    print("\nOriginal Test Data:")
+    logging.info("=" * 80)
+    logging.info("EVALUATION RESULTS")
+    logging.info("=" * 80)
+    logging.info("Original Test Data:")
     for metric, value in results["original"].items():
-        print(f"  {metric}: {value:.4f}")
+        logging.info("  %s: %.4f", metric, value)
 
-    print("\nTranslated Test Data:")
+    logging.info("Translated Test Data:")
     for metric, value in results["translated"].items():
-        print(f"  {metric}: {value:.4f}")
+        logging.info("  %s: %.4f", metric, value)
 
-    print("\nDifference:")
+    logging.info("Difference:")
     for metric in results["original"].keys():
         diff = results["translated"][metric] - results["original"][metric]
-        print(f"  {metric}: {diff:+.4f}")
-    print("=" * 80)
+        logging.info("  %s: %+0.4f", metric, diff)
+    logging.info("=" * 80)
 
     if translator_type == "linear_regression" and lr_target_loader is not None:
         lr_metrics = _linear_regression_metrics(translator, test_loader, lr_target_loader)
         if lr_metrics:
-            print("\nLinear Regression Metrics (translated vs target):")
+            logging.info("Linear Regression Metrics (translated vs target):")
             for key, value in lr_metrics.items():
-                print(f"  {key}: {value:.6f}")
+                logging.info("  %s: %.6f", key, value)
 
 def train_and_eval(args):
     train_translator(args)

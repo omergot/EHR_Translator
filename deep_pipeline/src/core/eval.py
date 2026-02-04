@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import polars as pl
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
@@ -123,6 +123,7 @@ class TranslatorEvaluator:
             stay_id_batches,
             self.yaib_runtime.vars,
             feature_names,
+            None
         )
         
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,6 +214,8 @@ class TransformerTranslatorEvaluator:
         batches = []
         translated_batches = []
         stay_id_batches = []
+        time_batches = []
+        sample_indices = []
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
@@ -230,9 +233,19 @@ class TransformerTranslatorEvaluator:
                 batches.append(batch)
                 translated_batches.append(x_yaib_translated)
                 stay_id_batches.append(None)
+                sample_indices.append(batch[0].shape[0])
 
         if output_parquet_path:
-            self._export_translated_parquet(batches, translated_batches, stay_id_batches, output_parquet_path)
+            stay_id_batches, time_batches = self._build_id_time_batches(
+                test_loader, sample_indices
+            )
+            self._export_translated_parquet(
+                batches,
+                translated_batches,
+                stay_id_batches,
+                time_batches,
+                output_parquet_path,
+            )
 
     def evaluate_original(self, test_loader: DataLoader) -> Dict[str, float]:
         all_probs = []
@@ -296,6 +309,8 @@ class TransformerTranslatorEvaluator:
         batches = []
         translated_batches = []
         stay_id_batches = []
+        time_batches = []
+        sample_indices = []
         sample_before: List[torch.Tensor] = []
         sample_after: List[torch.Tensor] = []
         remaining_samples = sample_size
@@ -336,6 +351,7 @@ class TransformerTranslatorEvaluator:
                     batches.append(batch)
                     translated_batches.append(x_yaib_translated)
                     stay_id_batches.append(None)
+                    sample_indices.append(batch[0].shape[0])
                 if sample_output_dir is not None and remaining_samples > 0:
                     valid_mask = ~parts["M_pad"]
                     flat_before = parts["X_yaib"][valid_mask]
@@ -347,7 +363,16 @@ class TransformerTranslatorEvaluator:
                         remaining_samples -= take
 
         if output_parquet_path is not None:
-            self._export_translated_parquet(batches, translated_batches, stay_id_batches, output_parquet_path)
+            stay_id_batches, time_batches = self._build_id_time_batches(
+                test_loader, sample_indices
+            )
+            self._export_translated_parquet(
+                batches,
+                translated_batches,
+                stay_id_batches,
+                time_batches,
+                output_parquet_path,
+            )
         if sample_output_dir is not None and sample_before:
             self._save_translation_samples(sample_before, sample_after, sample_output_dir)
 
@@ -397,6 +422,7 @@ class TransformerTranslatorEvaluator:
         batches: List[Tuple[torch.Tensor, ...]],
         translated_batches: List[torch.Tensor],
         stay_id_batches: List[Optional[torch.Tensor]],
+        time_batches: Optional[List[Optional[List[List[float]]]]],
         output_path: Path,
     ) -> None:
         feature_names = list(self.schema_resolver.feature_names)
@@ -420,6 +446,7 @@ class TransformerTranslatorEvaluator:
             stay_id_batches,
             self.yaib_runtime.vars,
             feature_names,
+            time_batches,
         )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -456,3 +483,68 @@ class TransformerTranslatorEvaluator:
             cols[f"{name}_after"] = after_np[:, idx]
         sample_df = pd.DataFrame(cols)
         sample_df.to_csv(output_dir / "translation_samples.csv", index=False)
+
+    def _build_id_time_batches(
+        self,
+        loader: DataLoader,
+        batch_sizes: List[int],
+    ) -> tuple[List[Optional[torch.Tensor]], List[Optional[List[List[float]]]]]:
+        dataset = loader.dataset
+        base_dataset, index_map = self._resolve_dataset_indices(dataset)
+        group_col = base_dataset.vars.get("GROUP") if hasattr(base_dataset, "vars") else None
+        seq_col = base_dataset.vars.get("SEQUENCE") if hasattr(base_dataset, "vars") else None
+        if not group_col or not hasattr(base_dataset, "outcome_df"):
+            return [None] * len(batch_sizes), [None] * len(batch_sizes)
+
+        stay_ids_series = base_dataset.outcome_df[group_col].unique()
+        stay_ids = [stay_ids_series[idx] for idx in index_map]
+
+        time_map: dict[int, List[float]] = {}
+        if seq_col and hasattr(base_dataset, "row_indicators"):
+            try:
+                import polars as pl
+                stay_set = set(int(sid) for sid in stay_ids)
+                ri = base_dataset.row_indicators
+                if isinstance(ri, pl.DataFrame) and seq_col in ri.columns and group_col in ri.columns:
+                    df = (
+                        ri.filter(pl.col(group_col).is_in(list(stay_set)))
+                        .sort([group_col, seq_col])
+                        .group_by(group_col)
+                        .agg(pl.col(seq_col).alias("_time"))
+                    )
+                    time_map = {
+                        int(row[group_col]): row["_time"] for row in df.iter_rows(named=True)
+                    }
+            except Exception:
+                time_map = {}
+
+        stay_id_batches: List[Optional[torch.Tensor]] = []
+        time_batches: List[Optional[List[List[float]]]] = []
+        cursor = 0
+        for batch_size in batch_sizes:
+            batch_ids = stay_ids[cursor : cursor + batch_size]
+            cursor += batch_size
+            stay_id_batches.append(
+                torch.tensor(batch_ids, dtype=torch.long)
+                if batch_ids
+                else None
+            )
+            if time_map:
+                time_batches.append([time_map.get(int(sid), []) for sid in batch_ids])
+            else:
+                time_batches.append(None)
+
+        return stay_id_batches, time_batches
+
+    def _resolve_dataset_indices(self, dataset):
+        indices = list(range(len(dataset)))
+        while True:
+            if hasattr(dataset, "_indices") and hasattr(dataset, "_dataset"):
+                indices = [dataset._indices[i] for i in indices]
+                dataset = dataset._dataset
+            elif isinstance(dataset, Subset):
+                indices = [dataset.indices[i] for i in indices]
+                dataset = dataset.dataset
+            else:
+                break
+        return dataset, indices

@@ -22,6 +22,7 @@ from icu_benchmarks.data.constants import DataSegment, DataSplit
 from icu_benchmarks.data.loader import PredictionPolarsDataset
 from icu_benchmarks.data.split_process_data import preprocess_data
 from icu_benchmarks.models.train import load_model, train_common
+import icu_benchmarks.models as yaib_models
 from icu_benchmarks.tuning import hyperparameters  # registers gin configurables used by DLTuning.gin
 
 
@@ -115,6 +116,7 @@ class YAIBRuntime:
         self._loss_weight_set = False
         self._trained_columns_set = False
         self._logged_test_stats = False
+        self._is_ml_model = False
 
         self.setup_yaib_environment()
 
@@ -233,16 +235,26 @@ class YAIBRuntime:
             "Transformer": Transformer,
         }
         
-        if self.model_name not in model_map:
-            raise ValueError(f"Unknown model: {self.model_name}. Supported: {list(model_map.keys())}")
-        
-        model_class = model_map[self.model_name]
-        
+        model_class = model_map.get(self.model_name)
+        if model_class is None and hasattr(yaib_models, self.model_name):
+            model_class = getattr(yaib_models, self.model_name)
+            self._is_ml_model = True
+        if model_class is None:
+            raise ValueError(
+                f"Unknown model: {self.model_name}. Supported: {list(model_map.keys())} "
+                f"+ ML models in icu_benchmarks.models"
+            )
+
         self._model = load_model(model_class, self.baseline_model_dir, pl_model=True)
-        
-        for param in self._model.parameters():
-            param.requires_grad = False
-        self._model.eval()
+
+        if isinstance(self._model, LightningModule):
+            for param in self._model.parameters():
+                param.requires_grad = False
+            self._model.eval()
+        else:
+            self._is_ml_model = True
+            if not hasattr(self._model, "requires_backprop"):
+                self._model.requires_backprop = False
         
         logging.info(f"Baseline model loaded and frozen: {type(self._model).__name__}")
         return self._model
@@ -463,6 +475,29 @@ class YAIBRuntime:
                     raise ValueError(f"Unsupported run mode: {run_mode}")
                 return loss
             raise AttributeError("Model has no loss computation method")
+        elif self._is_ml_model:
+            mask = mask.to(outputs.device).bool()
+            labels = labels.to(outputs.device)
+            prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
+            target = torch.masked_select(labels, mask)
+
+            run_mode = self._mode or RunMode.classification
+            if run_mode == RunMode.regression:
+                loss = torch.mean((prediction[:, 0] - target.float()) ** 2)
+                return loss
+
+            if prediction.shape[-1] > 1:
+                probs = torch.softmax(prediction, dim=-1)[:, 1]
+            else:
+                probs = torch.sigmoid(prediction).squeeze(-1)
+
+            from sklearn.metrics import log_loss
+
+            try:
+                loss_value = log_loss(target.detach().cpu().numpy(), probs.detach().cpu().numpy())
+            except ValueError:
+                loss_value = float("inf")
+            return outputs.new_tensor(loss_value)
         else:
             raise NotImplementedError("ML models not yet supported for loss computation")
     
@@ -471,13 +506,51 @@ class YAIBRuntime:
             self.load_baseline_model()
         
         data = batch[0]
-        device = next(self._model.parameters()).device if hasattr(self._model, 'parameters') else torch.device("cpu")
-        
+        device = next(self._model.parameters()).device if hasattr(self._model, "parameters") else torch.device("cpu")
+
         if isinstance(data, list):
             data = [d.float().to(device) for d in data]
         else:
             data = data.float().to(device)
-        
+
+        if self._is_ml_model:
+            mask = batch[2].to(device).bool()
+            flat_data = data.reshape(-1, data.shape[-1])
+            flat_mask = mask.reshape(-1)
+            if flat_mask.sum() == 0:
+                return data.new_zeros((*data.shape[:2], 1))
+            features = flat_data[flat_mask].detach().cpu().numpy()
+            if hasattr(self._model, "predict_proba"):
+                proba = self._model.predict_proba(features)
+            elif hasattr(self._model, "decision_function"):
+                scores = self._model.decision_function(features)
+                if scores.ndim == 1:
+                    proba = 1 / (1 + np.exp(-scores))
+                else:
+                    exp_scores = np.exp(scores - scores.max(axis=1, keepdims=True))
+                    proba = exp_scores / exp_scores.sum(axis=1, keepdims=True)
+            else:
+                preds = self._model.predict(features)
+                proba = preds
+
+            eps = 1e-6
+            if isinstance(proba, np.ndarray) and proba.ndim == 2 and proba.shape[1] > 1:
+                log_probs = np.log(np.clip(proba, eps, 1.0))
+                out_dim = proba.shape[1]
+            else:
+                if isinstance(proba, np.ndarray):
+                    p1 = proba.reshape(-1)
+                else:
+                    p1 = np.asarray(proba).reshape(-1)
+                p1 = np.clip(p1, eps, 1 - eps)
+                logit = np.log(p1 / (1 - p1))
+                log_probs = logit.reshape(-1, 1)
+                out_dim = 1
+
+            output = data.new_zeros((flat_data.shape[0], out_dim))
+            output[flat_mask] = torch.from_numpy(log_probs).to(output.device, output.dtype)
+            return output.view(data.shape[0], data.shape[1], out_dim)
+
         outputs = self._model(data)
         if isinstance(outputs, tuple):
             outputs = outputs[0]
@@ -530,6 +603,28 @@ class YAIBRuntime:
                 "AUCPR": auprc,
                 "loss": loss,
             }
+        elif self._is_ml_model:
+            prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
+            target = torch.masked_select(labels, mask)
+            if outputs.shape[-1] > 1:
+                prediction_proba = torch.softmax(prediction, dim=-1)[:, 1].cpu().numpy()
+            else:
+                prediction_proba = torch.sigmoid(prediction).cpu().numpy()
+            target_np = target.cpu().numpy()
+            from sklearn.metrics import roc_auc_score, average_precision_score, log_loss
+            try:
+                auroc = roc_auc_score(target_np, prediction_proba)
+            except ValueError:
+                auroc = 0.0
+            try:
+                auprc = average_precision_score(target_np, prediction_proba)
+            except ValueError:
+                auprc = 0.0
+            try:
+                loss = log_loss(target_np, prediction_proba)
+            except ValueError:
+                loss = float("inf")
+            return {"AUCROC": auroc, "AUCPR": auprc, "loss": loss}
         else:
             raise NotImplementedError("ML models not yet supported for metrics computation")
     

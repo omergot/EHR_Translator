@@ -256,10 +256,11 @@ class TransformerTranslatorEvaluator:
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
-                outputs = self.yaib_runtime.forward(batch)
-                mask = batch[2].to(outputs.device).bool()
+                yaib_batch = batch[:3]
+                outputs = self.yaib_runtime.forward(yaib_batch)
+                mask = yaib_batch[2].to(outputs.device).bool()
                 prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
-                target = torch.masked_select(batch[1].to(outputs.device), mask)
+                target = torch.masked_select(yaib_batch[1].to(outputs.device), mask)
 
                 if outputs.shape[-1] > 1:
                     prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
@@ -268,7 +269,7 @@ class TransformerTranslatorEvaluator:
 
                 all_probs.append(prediction_proba.detach().cpu())
                 all_targets.append(target.detach().cpu())
-                total_loss += self.yaib_runtime.compute_loss(outputs, batch).item()
+                total_loss += self.yaib_runtime.compute_loss(outputs, yaib_batch).item()
                 num_batches += 1
 
         if not all_probs:

@@ -19,6 +19,7 @@ class SchemaResolver:
         feature_names: Iterable[str],
         dynamic_features: Iterable[str],
         static_features: Iterable[str],
+        allow_missing_static: bool = False,
         missing_prefix: str = "MissingIndicator_",
         group_col: Optional[str] = None,
     ) -> None:
@@ -28,13 +29,14 @@ class SchemaResolver:
         self.feature_names = feature_names
         self.dynamic_features = list(dynamic_features)
         self.static_features = list(static_features)
+        self.allow_missing_static = allow_missing_static
         self.missing_prefix = missing_prefix
         self.indices = SchemaIndices(
             dynamic=self._resolve_indices(self.dynamic_features),
             missing=self._resolve_indices(
                 [f"{missing_prefix}{name}" for name in self.dynamic_features]
             ),
-            static=self._resolve_indices(self.static_features),
+            static=self._resolve_indices(self.static_features, allow_missing=allow_missing_static),
         )
         missing_dynamic = [name for name, idx in zip(self.dynamic_features, self.indices.dynamic) if idx is None]
         missing_missing = [
@@ -50,7 +52,7 @@ class SchemaResolver:
             raise ValueError(f"Missing dynamic features in YAIB batch: {missing_dynamic}")
         if missing_missing:
             raise ValueError(f"Missing missing-indicator features in YAIB batch: {missing_missing}")
-        if missing_static:
+        if missing_static and not allow_missing_static:
             raise ValueError(f"Missing static features in YAIB batch: {missing_static}")
         self.indices = SchemaIndices(
             dynamic=[idx for idx in self.indices.dynamic if idx is not None],
@@ -71,12 +73,16 @@ class SchemaResolver:
 
     def extract(self, batch: tuple[torch.Tensor, ...]) -> Dict[str, torch.Tensor]:
         data, labels, label_mask = batch[0], batch[1], batch[2]
+        static_override = batch[3] if len(batch) > 3 else None
         label_mask = label_mask.bool()
         m_pad = self._infer_pad_mask(data)
         x_val = data[:, :, self.indices.dynamic]
         x_miss = data[:, :, self.indices.missing]
-        valid_mask = ~m_pad
-        x_static = self._extract_static(data, valid_mask)
+        if static_override is None:
+            valid_mask = ~m_pad
+            x_static = self._extract_static(data, valid_mask)
+        else:
+            x_static = static_override
         t_abs = self._build_time_index(data, m_pad)
 
         return {

@@ -1,4 +1,5 @@
 import argparse
+import copy
 import json
 import logging
 from pathlib import Path
@@ -6,12 +7,14 @@ from pathlib import Path
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
+import polars as pl
 
 from .adapters.yaib import YAIBRuntime
 from .core.eval import TranslatorEvaluator, TransformerTranslatorEvaluator
 from .core.train import TranslatorTrainer, TransformerTranslatorTrainer
 from .core.translator import IdentityTranslator, LinearRegressionTranslator, EHRTranslator
 from .core.schema import SchemaResolver
+from .core.static_utils import StaticAugmentedDataset, build_static_matrix_for_dataset, load_static_with_recipe
 from icu_benchmarks.constants import RunMode
 from icu_benchmarks.data.constants import DataSplit
 import pandas as pd
@@ -44,14 +47,16 @@ def _build_runtime_from_config(
     data_dir = Path(data_dir_override) if data_dir_override else Path(config["data_dir"])
     batch_size = batch_size_override if batch_size_override is not None else config.get("batch_size", 1)
     seed = seed_override if seed_override is not None else config.get("seed", 42)
+    vars_cfg = copy.deepcopy(config["vars"])
+    file_names_cfg = copy.deepcopy(config["file_names"])
     return YAIBRuntime(
         data_dir=data_dir,
         baseline_model_dir=Path(config["baseline_model_dir"]),
         task_config=Path(config["task_config"]),
         model_config=Path(config["model_config"]) if config.get("model_config") else None,
         model_name=config["model_name"],
-        vars=config["vars"],
-        file_names=config["file_names"],
+        vars=vars_cfg,
+        file_names=file_names_cfg,
         seed=seed,
         batch_size=batch_size,
         percentile_outliers_csv=Path(config["percentile_outliers_csv"])
@@ -89,8 +94,46 @@ def _get_translator_config(config: dict) -> dict:
 def _get_translator_type(config: dict) -> str:
     return _get_translator_config(config).get("type", "identity")
 
+def _get_static_recipe(config: dict) -> str:
+    paths = config.get("paths", {})
+    return paths.get("static_recipe", config.get("static_recipe", ""))
 
 
+def _augment_loader_with_static(
+    loader: DataLoader,
+    static_df,
+    group_col: str,
+    static_features: list[str],
+) -> DataLoader:
+    static_matrix = build_static_matrix_for_dataset(loader.dataset, static_df, group_col, static_features)
+    dataset = StaticAugmentedDataset(loader.dataset, static_matrix)
+    return DataLoader(
+        dataset,
+        batch_size=loader.batch_size,
+        shuffle=False,
+        num_workers=loader.num_workers,
+        drop_last=loader.drop_last,
+        pin_memory=getattr(loader, "pin_memory", False),
+        collate_fn=loader.collate_fn,
+    )
+
+
+def _augment_loader_with_zero_static(
+    loader: DataLoader,
+    static_features: list[str],
+) -> DataLoader:
+    static_dim = len(static_features)
+    static_matrix = torch.zeros((len(loader.dataset), static_dim), dtype=torch.float32)
+    dataset = StaticAugmentedDataset(loader.dataset, static_matrix)
+    return DataLoader(
+        dataset,
+        batch_size=loader.batch_size,
+        shuffle=False,
+        num_workers=loader.num_workers,
+        drop_last=loader.drop_last,
+        pin_memory=getattr(loader, "pin_memory", False),
+        collate_fn=loader.collate_fn,
+    )
 
 def _get_bounds_csv(config: dict) -> str:
     paths = config.get("paths", {})
@@ -323,10 +366,37 @@ def train_translator(args):
 
         feature_names = train_loader.dataset.get_feature_names()
         group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError(
+                        "Static features are missing from YAIB inputs; "
+                        "provide paths.static_recipe in config for translator conditioning."
+                    )
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                train_loader = _augment_loader_with_static(train_loader, static_df, group_col, static_features)
+                val_loader = _augment_loader_with_static(val_loader, static_df, group_col, static_features)
+                logging.info("Using static_recipe for translator conditioning only: %s", static_recipe)
+            else:
+                train_loader = _augment_loader_with_zero_static(train_loader, static_features)
+                val_loader = _augment_loader_with_zero_static(val_loader, static_features)
+                logging.info("Static conditioning disabled; using zero static features for translator.")
+
         schema_resolver = SchemaResolver(
             feature_names=feature_names,
             dynamic_features=config["vars"]["DYNAMIC"],
-            static_features=config["vars"]["STATIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
             missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
             group_col=group_col,
         )
@@ -345,7 +415,7 @@ def train_translator(args):
             d_ff=translator_cfg.get("d_ff", 512),
             dropout=translator_cfg.get("dropout", 0.2),
             out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(schema_resolver.indices.static),
+            static_dim=len(static_features),
         )
 
         trainer = TransformerTranslatorTrainer(
@@ -463,10 +533,42 @@ def translate_and_eval(args):
         )
         feature_names = test_loader.dataset.get_feature_names()
         group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError(
+                        "Static features are missing from YAIB inputs; "
+                        "provide paths.static_recipe in config for translator conditioning."
+                    )
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                for col in ("age", "height", "weight"):
+                    if col in static_df.columns:
+                        stats = static_df.select(
+                            pl.col(col).mean().alias("mean"),
+                            pl.col(col).std(ddof=0).alias("std"),
+                        ).row(0)
+                        logging.info("[static] %s mean=%.6f std=%.6f", col, stats[0], stats[1])
+                test_loader = _augment_loader_with_static(test_loader, static_df, group_col, static_features)
+                logging.info("Using static_recipe for translator conditioning only: %s", static_recipe)
+            else:
+                test_loader = _augment_loader_with_zero_static(test_loader, static_features)
+                logging.info("Static conditioning disabled; using zero static features for translator.")
+
         schema_resolver = SchemaResolver(
             feature_names=feature_names,
             dynamic_features=config["vars"]["DYNAMIC"],
-            static_features=config["vars"]["STATIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
             missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
             group_col=group_col,
         )
@@ -481,7 +583,7 @@ def translate_and_eval(args):
             d_ff=translator_cfg.get("d_ff", 512),
             dropout=translator_cfg.get("dropout", 0.2),
             out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(schema_resolver.indices.static),
+            static_dim=len(static_features),
         )
 
         checkpoint_path = args.translator_checkpoint

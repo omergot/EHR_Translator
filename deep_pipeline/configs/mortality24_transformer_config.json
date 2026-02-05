@@ -1,10 +1,10 @@
 
 {
   "data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu_sepsis_test_subset",
-  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/LSTM/repetition_0/fold_0",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/GRU/repetition_0/fold_0",
   "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
-  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
-  "model_name": "LSTM",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/GRU.gin",
+  "model_name": "GRU",
   "vars": {
     "GROUP": "stay_id",
     "LABEL": "label",
@@ -23,7 +23,7 @@
   },
   "paths": {
     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv",
-    "static_recipe": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu_sepsis_test_subset/preproc/static_recipe"
+    "static_recipe": "/bigdata/omerg/Thesis/cohort_data/sepsis/eicu/preproc/static_recipe"
   },
   "training": {
     "lr": 1e-4,

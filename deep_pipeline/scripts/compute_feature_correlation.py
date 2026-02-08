@@ -7,8 +7,12 @@ import pandas as pd
 import pickle
 
 
+def _is_parquet(path: Path) -> bool:
+    return path.suffix.lower() in {".parquet", ".pq"}
+
+
 def _read_columns(path: Path) -> list[str]:
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    if _is_parquet(path):
         try:
             import pyarrow.parquet as pq
         except Exception as exc:
@@ -18,7 +22,7 @@ def _read_columns(path: Path) -> list[str]:
 
 
 def _iter_table(path: Path, columns: list[str], chunksize: int):
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    if _is_parquet(path):
         try:
             import pyarrow.parquet as pq
         except Exception as exc:
@@ -56,6 +60,7 @@ def _compute_temporal_delta(
     chunksize: int,
     means: dict[str, float],
     scales: dict[str, float],
+    apply_denorm: bool = True,
 ) -> dict[str, float]:
     path_cols = set(_read_columns(path))
     if "stay_id" not in path_cols or "time" not in path_cols:
@@ -64,32 +69,36 @@ def _compute_temporal_delta(
     if not cols:
         return {}
 
+    # Assumes rows are ordered by (stay_id, time) in the input file; this is true for our
+    # cohort dyn.parquet outputs and avoids holding state for every stay_id.
     sum_abs = np.zeros(len(cols), dtype=np.float64)
     count = np.zeros(len(cols), dtype=np.float64)
-    last_values: dict[int, np.ndarray] = {}
+    prev_sid: int | None = None
+    prev_vals: np.ndarray | None = None
+
+    mean_vec = np.array([means.get(c, 0.0) for c in cols], dtype=np.float64)
+    scale_vec = np.array([scales.get(c, 1.0) for c in cols], dtype=np.float64)
 
     for chunk in _iter_table(path, ["stay_id", "time", *cols], chunksize):
-        chunk = chunk.sort_values(["stay_id", "time"])
-        vals = chunk[cols].apply(pd.to_numeric, errors="coerce")
-        for col in cols:
-            if col in means and col in scales:
-                vals[col] = vals[col] * scales[col] + means[col]
+        sid = pd.to_numeric(chunk["stay_id"], errors="coerce").to_numpy(dtype=np.int64, copy=False)
+        vals = chunk[cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float, copy=False)
+        if apply_denorm:
+            vals = vals * scale_vec + mean_vec
 
-        diff = vals.groupby(chunk["stay_id"]).diff()
-        first_rows = chunk.groupby("stay_id", sort=False).head(1)
-        for idx, row in first_rows.iterrows():
-            sid = int(row["stay_id"])
-            if sid in last_values:
-                diff.loc[idx] = vals.loc[idx] - last_values[sid]
+        diffs = np.full_like(vals, np.nan)
+        if sid.size >= 2:
+            same = sid[1:] == sid[:-1]
+            diffs[1:][same] = vals[1:][same] - vals[:-1][same]
+        if prev_sid is not None and sid.size and sid[0] == prev_sid and prev_vals is not None:
+            diffs[0] = vals[0] - prev_vals
 
-        abs_diff = diff.abs()
-        sum_abs += abs_diff.sum(skipna=True).to_numpy()
-        count += abs_diff.notna().sum().to_numpy()
+        abs_diff = np.abs(diffs)
+        sum_abs += np.nansum(abs_diff, axis=0)
+        count += np.sum(~np.isnan(abs_diff), axis=0)
 
-        last_rows = chunk.groupby("stay_id", sort=False).tail(1)
-        for idx, row in last_rows.iterrows():
-            sid = int(row["stay_id"])
-            last_values[sid] = vals.loc[idx].to_numpy()
+        if sid.size:
+            prev_sid = int(sid[-1])
+            prev_vals = vals[-1].copy()
 
     with np.errstate(divide="ignore", invalid="ignore"):
         delta = sum_abs / count
@@ -102,8 +111,9 @@ def _load_patient_series(
     feature: str,
     means: dict[str, float],
     scales: dict[str, float],
+    apply_denorm: bool = True,
 ) -> pd.DataFrame:
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    if _is_parquet(path):
         try:
             import pyarrow.dataset as ds
         except Exception as exc:
@@ -121,7 +131,7 @@ def _load_patient_series(
         return df
     df = df.sort_values("time")
     df[feature] = pd.to_numeric(df[feature], errors="coerce")
-    if feature in means and feature in scales:
+    if apply_denorm and feature in means and feature in scales:
         df[feature] = df[feature] * scales[feature] + means[feature]
     return df
 
@@ -132,11 +142,12 @@ def _load_patient_series_multi(
     feature: str,
     means: dict[str, float],
     scales: dict[str, float],
+    apply_denorm: bool = True,
 ) -> dict[int, pd.DataFrame]:
     if not stay_ids:
         return {}
     stay_set = set(stay_ids)
-    if path.suffix.lower() in {".parquet", ".pq"}:
+    if _is_parquet(path):
         try:
             import pyarrow.dataset as ds
         except Exception as exc:
@@ -157,7 +168,7 @@ def _load_patient_series_multi(
         return {}
     df = df.sort_values(["stay_id", "time"])
     df[feature] = pd.to_numeric(df[feature], errors="coerce")
-    if feature in means and feature in scales:
+    if apply_denorm and feature in means and feature in scales:
         df[feature] = df[feature] * scales[feature] + means[feature]
 
     out: dict[int, pd.DataFrame] = {}
@@ -183,6 +194,181 @@ def _sample_stay_ids(path: Path, k: int, seed: int, chunksize: int) -> list[int]
                 if j < k:
                     sample[j] = int(sid)
     return sample
+
+
+def _collect_stay_ids(path: Path, chunksize: int) -> set[int]:
+    stay_ids: set[int] = set()
+    for chunk in _iter_table(path, ["stay_id"], chunksize):
+        ids = pd.to_numeric(chunk["stay_id"], errors="coerce").dropna().astype(int).unique()
+        stay_ids.update(int(x) for x in ids)
+    return stay_ids
+
+
+def run_smoothness(
+    source_path: Path,
+    translated_path: Path,
+    recipe_path: Path,
+    out_dir: Path,
+    *,
+    chunksize: int = 200_000,
+    stay_id: int | None = None,
+    feature: str | None = None,
+    samples: int = 5,
+    seed: int = 2222,
+    source_space: str = "normalized",
+    write_delta_csv: bool = False,
+    verbose: bool = True,
+) -> list[int]:
+    dyn_cols, means, scales = _load_recipe_scaler_stats(recipe_path)
+    if source_space not in {"normalized", "physical"}:
+        raise ValueError("--smoothness-source-space must be 'normalized' or 'physical'.")
+    denorm_source = source_space == "normalized"
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if write_delta_csv:
+        delta_source = _compute_temporal_delta(source_path, dyn_cols, chunksize, means, scales, apply_denorm=denorm_source)
+        delta_trans = _compute_temporal_delta(translated_path, dyn_cols, chunksize, means, scales, apply_denorm=True)
+        delta_rows = []
+        for c in dyn_cols:
+            ds = float(delta_source.get(c, float("nan")))
+            dt = float(delta_trans.get(c, float("nan")))
+            ratio = dt / ds if np.isfinite(ds) and ds != 0 and np.isfinite(dt) else float("nan")
+            delta_rows.append((c, ds, dt, ratio))
+        pd.DataFrame(delta_rows, columns=["feature", "delta_source", "delta_trans", "delta_ratio"]).to_csv(
+            out_dir / "smoothness_delta.csv",
+            index=False,
+        )
+
+    if stay_id is not None:
+        stay_ids = [int(stay_id)]
+    else:
+        try:
+            src_ids = _collect_stay_ids(source_path, chunksize)
+            trans_ids = _collect_stay_ids(translated_path, chunksize)
+            common_ids = list(src_ids & trans_ids)
+        except Exception:
+            common_ids = []
+
+        rng = np.random.default_rng(seed)
+        if common_ids:
+            k = min(samples, len(common_ids))
+            stay_ids = [int(x) for x in rng.choice(common_ids, size=k, replace=False)]
+        else:
+            stay_ids = _sample_stay_ids(translated_path, samples, seed, chunksize)
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    colors = plt.get_cmap("tab10").colors
+
+    def _maybe_denorm_df(df: pd.DataFrame, cols: list[str], do_denorm: bool) -> pd.DataFrame:
+        if not do_denorm or df.empty:
+            return df
+        present = [c for c in cols if c in df.columns and c in means and c in scales]
+        if not present:
+            return df
+        df = df.copy()
+        for c in present:
+            df[c] = pd.to_numeric(df[c], errors="coerce") * scales[c] + means[c]
+        return df
+
+    def _df_to_series_dict(df: pd.DataFrame, col: str) -> dict[int, pd.DataFrame]:
+        out: dict[int, pd.DataFrame] = {}
+        if df.empty or col not in df.columns:
+            return out
+        for sid, group in df[["stay_id", "time", col]].groupby("stay_id"):
+            out[int(sid)] = group.sort_values("time").copy()
+        return out
+
+    src_all: pd.DataFrame | None = None
+    trans_all: pd.DataFrame | None = None
+    if _is_parquet(source_path) and _is_parquet(translated_path):
+        try:
+            import pyarrow.dataset as ds
+        except Exception as exc:
+            raise RuntimeError("pyarrow is required to read parquet files.") from exc
+        src_ds = ds.dataset(source_path)
+        trans_ds = ds.dataset(translated_path)
+        src_cols = [c for c in dyn_cols if c in src_ds.schema.names]
+        trans_cols = [c for c in dyn_cols if c in trans_ds.schema.names]
+        src_table = src_ds.to_table(filter=ds.field("stay_id").isin(stay_ids), columns=["stay_id", "time", *src_cols])
+        trans_table = trans_ds.to_table(filter=ds.field("stay_id").isin(stay_ids), columns=["stay_id", "time", *trans_cols])
+        src_all = _maybe_denorm_df(src_table.to_pandas().sort_values(["stay_id", "time"]), src_cols, denorm_source)
+        trans_all = _maybe_denorm_df(trans_table.to_pandas().sort_values(["stay_id", "time"]), trans_cols, True)
+
+    for col in dyn_cols:
+        if feature is not None and col != feature:
+            continue
+
+        if src_all is not None and trans_all is not None:
+            src_series = _df_to_series_dict(src_all, col)
+            trans_series = _df_to_series_dict(trans_all, col)
+        else:
+            src_series = _load_patient_series_multi(source_path, stay_ids, col, means, scales, apply_denorm=denorm_source)
+            trans_series = _load_patient_series_multi(translated_path, stay_ids, col, means, scales, apply_denorm=True)
+        if not src_series and not trans_series:
+            continue
+
+        # Export the per-hour samples used for the plot.
+        rows = []
+        for sid in stay_ids:
+            s_df = src_series.get(sid)
+            t_df = trans_series.get(sid)
+            s = s_df[["time", col]].rename(columns={col: "source"}) if s_df is not None else pd.DataFrame(columns=["time", "source"])
+            t = t_df[["time", col]].rename(columns={col: "translated"}) if t_df is not None else pd.DataFrame(columns=["time", "translated"])
+            merged = pd.merge(s, t, on="time", how="outer").sort_values("time")
+            merged.insert(0, "stay_id", sid)
+            rows.append(merged)
+
+        samples_df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=["stay_id", "time", "source", "translated"])
+        samples_df.to_csv(out_dir / f"smoothness_{col}.csv", index=False)
+
+        plt.figure(figsize=(10, 4))
+        for idx, sid in enumerate(stay_ids):
+            color = colors[idx % len(colors)]
+            s_df = src_series.get(sid)
+            t_df = trans_series.get(sid)
+            if t_df is not None and not t_df.empty:
+                plt.plot(
+                    t_df["time"],
+                    t_df[col],
+                    color=color,
+                    linestyle="-",
+                    linewidth=1.2,
+                    marker="o",
+                    markersize=2.0,
+                    alpha=0.7,
+                    label=f"{sid} translated",
+                )
+            if s_df is not None and not s_df.empty:
+                plt.plot(
+                    s_df["time"],
+                    s_df[col],
+                    color=color,
+                    linestyle="--",
+                    linewidth=1.6,
+                    marker="x",
+                    markersize=2.5,
+                    alpha=1.0,
+                    zorder=3,
+                    label=f"{sid} source",
+                )
+
+        plt.xlabel("time")
+        plt.ylabel(col)
+        plt.title(f"{col}: {len(stay_ids)} stays")
+        plt.legend(ncol=2, fontsize=8)
+        plt.tight_layout()
+        plt.savefig(out_dir / f"smoothness_{col}.png")
+        plt.close()
+
+    (out_dir / "smoothness_stay_ids.txt").write_text("\n".join(str(x) for x in stay_ids) + "\n")
+    if verbose:
+        print(f"Saved smoothness plots and samples to {out_dir} (stays={stay_ids})")
+    return stay_ids
 
 
 def _corr_matrix_from_path(path: Path, columns: list[str], chunksize: int) -> np.ndarray:
@@ -230,6 +416,8 @@ def compute_correlations(
     smoothness_feature: str | None = None,
     smoothness_samples: int = 5,
     smoothness_seed: int = 2222,
+    smoothness_source_path: Path | None = None,
+    smoothness_source_space: str = "normalized",
 ):
     # Read headers only
     cols_a = _read_columns(path_a)
@@ -428,45 +616,13 @@ def compute_correlations(
         delta_source = None
         delta_trans = None
         if smoothness_recipe_path is not None and path_t is not None:
+            src_path = smoothness_source_path or path_b
             dyn_cols, means, scales = _load_recipe_scaler_stats(smoothness_recipe_path)
-            delta_source = _compute_temporal_delta(path_b, dyn_cols, chunksize, means, scales)
-            delta_trans = _compute_temporal_delta(path_t, dyn_cols, chunksize, means, scales)
-
-            if smoothness_plot_path is not None:
-                plot_dir = smoothness_plot_path
-                plot_dir.mkdir(parents=True, exist_ok=True)
-                stay_ids = _sample_stay_ids(path_t, smoothness_samples, smoothness_seed, chunksize)
-                if smoothness_stay_id is not None:
-                    stay_ids = [smoothness_stay_id]
-
-                import matplotlib.pyplot as plt
-
-                for feature in dyn_cols:
-                    if smoothness_feature is not None and feature != smoothness_feature:
-                        continue
-                    src_series = _load_patient_series_multi(path_b, stay_ids, feature, means, scales)
-                    trans_series = _load_patient_series_multi(path_t, stay_ids, feature, means, scales)
-                    if not src_series and not trans_series:
-                        continue
-
-                    plt.figure(figsize=(10, 4))
-                    colors = plt.get_cmap("tab10").colors
-                    for idx, sid in enumerate(stay_ids):
-                        color = colors[idx % len(colors)]
-                        src_df = src_series.get(sid)
-                        trans_df = trans_series.get(sid)
-                        if src_df is not None and not src_df.empty:
-                            plt.plot(src_df["time"], src_df[feature], color=color, linestyle="--", linewidth=1.5, label=f"{sid} source")
-                        if trans_df is not None and not trans_df.empty:
-                            plt.plot(trans_df["time"], trans_df[feature], color=color, linestyle="-", linewidth=1.5, label=f"{sid} translated")
-
-                    plt.xlabel("time")
-                    plt.ylabel(feature)
-                    plt.title(f"{feature}: {len(stay_ids)} random stays")
-                    plt.legend(ncol=2, fontsize=8)
-                    plt.tight_layout()
-                    plt.savefig(plot_dir / f"smoothness_{feature}.png")
-                    plt.close()
+            if smoothness_source_space not in {"normalized", "physical"}:
+                raise ValueError("--smoothness-source-space must be 'normalized' or 'physical'.")
+            denorm_source = smoothness_source_space == "normalized"
+            delta_source = _compute_temporal_delta(src_path, dyn_cols, chunksize, means, scales, apply_denorm=denorm_source)
+            delta_trans = _compute_temporal_delta(path_t, dyn_cols, chunksize, means, scales, apply_denorm=True)
 
         stats_rows = []
         for c in common:
@@ -736,12 +892,28 @@ def compute_correlations(
         if verbose:
             print(f"Saved correlation delta matrix to {out_corr_delta_path}")
 
+    if smoothness_recipe_path is not None and smoothness_plot_path is not None and path_t is not None:
+        src_path = smoothness_source_path or path_b
+        run_smoothness(
+            source_path=src_path,
+            translated_path=path_t,
+            recipe_path=smoothness_recipe_path,
+            out_dir=smoothness_plot_path,
+            chunksize=chunksize,
+            stay_id=smoothness_stay_id,
+            feature=smoothness_feature,
+            samples=smoothness_samples,
+            seed=smoothness_seed,
+            source_space=smoothness_source_space,
+            verbose=verbose,
+        )
+
 
 def main():
     ap = argparse.ArgumentParser(description="Compute column-wise Pearson correlation between two CSVs with matching columns.")
-    ap.add_argument("--a", required=True, help="Path to first CSV")
-    ap.add_argument("--b", required=True, help="Path to second CSV")
-    ap.add_argument("--out", required=True, help="Output CSV path")
+    ap.add_argument("--a", help="Path to first dataset (CSV)")
+    ap.add_argument("--b", help="Path to second dataset (CSV)")
+    ap.add_argument("--out", help="Output CSV path")
     ap.add_argument("--chunksize", type=int, default=200_000, help="Rows per chunk (default: 200000)")
     ap.add_argument("--out-stats", help="Output CSV for per-feature means/stds (optional)")
     ap.add_argument("--t", help="Path to translated dataset (parquet or CSV, optional)")
@@ -752,9 +924,42 @@ def main():
     ap.add_argument("--smoothness-feature", help="Feature name for temporal smoothness plot (optional)")
     ap.add_argument("--smoothness-samples", type=int, default=5, help="Number of random stays to plot (default: 5)")
     ap.add_argument("--smoothness-seed", type=int, default=2222, help="Random seed for stay sampling (default: 2222)")
+    ap.add_argument("--smoothness-source", help="Source dataset for smoothness (default: --b)")
+    ap.add_argument(
+        "--smoothness-source-space",
+        choices=["normalized", "physical"],
+        default="normalized",
+        help="Whether --smoothness-source values are already in physical units (default: normalized).",
+    )
+    ap.add_argument("--smoothness-only", action="store_true", help="Run only smoothness plots/samples and exit.")
     ap.add_argument("--bins", type=int, default=200, help="Histogram bins for distribution metrics (default: 200)")
     ap.add_argument("--quiet", action="store_true", help="Disable progress prints")
     args = ap.parse_args()
+
+    if args.smoothness_only:
+        if not args.t or not args.smoothness_recipe or not args.smoothness_plot:
+            raise ValueError("--smoothness-only requires --t, --smoothness-recipe and --smoothness-plot.")
+        src = args.smoothness_source or args.b
+        if not src:
+            raise ValueError("--smoothness-only requires --smoothness-source or --b.")
+        run_smoothness(
+            source_path=Path(src),
+            translated_path=Path(args.t),
+            recipe_path=Path(args.smoothness_recipe),
+            out_dir=Path(args.smoothness_plot),
+            chunksize=args.chunksize,
+            stay_id=args.smoothness_stay_id,
+            feature=args.smoothness_feature,
+            samples=args.smoothness_samples,
+            seed=args.smoothness_seed,
+            source_space=args.smoothness_source_space,
+            write_delta_csv=True,
+            verbose=not args.quiet,
+        )
+        return
+
+    if not args.a or not args.b or not args.out:
+        raise ValueError("Missing required args: --a, --b, --out (unless --smoothness-only is used).")
 
     compute_correlations(
         Path(args.a),
@@ -772,6 +977,8 @@ def main():
         smoothness_feature=args.smoothness_feature,
         smoothness_samples=args.smoothness_samples,
         smoothness_seed=args.smoothness_seed,
+        smoothness_source_path=Path(args.smoothness_source) if args.smoothness_source else None,
+        smoothness_source_space=args.smoothness_source_space,
     )
 
 

@@ -1,10 +1,10 @@
 
 {
-  "data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu_sepsis_test_subset",
-  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/GRU/repetition_0/fold_0",
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/LSTM/repetition_0/fold_0",
   "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
-  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/GRU.gin",
-  "model_name": "GRU",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "model_name": "LSTM",
   "vars": {
     "GROUP": "stay_id",
     "LABEL": "label",
@@ -28,7 +28,10 @@
   "training": {
     "lr": 1e-4,
     "epochs": 20,
-    "batch_size": 64
+    "batch_size": 64,
+    "lambda_fidelity": 0.1,
+    "lambda_range": 0.5,
+    "best_metric": "val_total"
   },
   "output": {
     "run_dir": "checkpoints/transformer"

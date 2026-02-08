@@ -209,7 +209,12 @@ class TransformerTranslatorEvaluator:
         self.schema_resolver = schema_resolver
         self.device = device
 
-    def translate_to_parquet(self, test_loader: DataLoader, output_parquet_path: Path) -> None:
+    def translate_to_parquet(
+        self,
+        test_loader: DataLoader,
+        output_parquet_path: Path,
+        export_full_sequence: bool = True,
+    ) -> None:
         self.translator.eval()
         batches = []
         translated_batches = []
@@ -230,7 +235,12 @@ class TransformerTranslatorEvaluator:
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
-                batches.append(batch)
+                if export_full_sequence:
+                    # Export all non-padded steps, not just the label mask (which is often only last-timestep).
+                    export_mask = (~parts["M_pad"]).to(dtype=torch.bool)
+                    batches.append((batch[0], batch[1], export_mask))
+                else:
+                    batches.append(batch)
                 translated_batches.append(x_yaib_translated)
                 stay_id_batches.append(None)
                 sample_indices.append(batch[0].shape[0])
@@ -301,6 +311,7 @@ class TransformerTranslatorEvaluator:
         output_parquet_path: Optional[Path] = None,
         sample_output_dir: Optional[Path] = None,
         sample_size: int = 1000,
+        export_full_sequence: bool = True,
     ) -> Dict[str, float]:
         self.translator.eval()
         all_probs = []
@@ -349,7 +360,11 @@ class TransformerTranslatorEvaluator:
                 num_batches += 1
 
                 if output_parquet_path is not None:
-                    batches.append(batch)
+                    if export_full_sequence:
+                        export_mask = (~parts["M_pad"]).to(dtype=torch.bool)
+                        batches.append((batch[0], batch[1], export_mask))
+                    else:
+                        batches.append(batch)
                     translated_batches.append(x_yaib_translated)
                     stay_id_batches.append(None)
                     sample_indices.append(batch[0].shape[0])
@@ -406,6 +421,7 @@ class TransformerTranslatorEvaluator:
         output_parquet_path: Optional[Path] = None,
         sample_output_dir: Optional[Path] = None,
         sample_size: int = 1000,
+        export_full_sequence: bool = True,
     ) -> Dict[str, Dict[str, float]]:
         logging.info("Evaluating original test data...")
         original_metrics = self.evaluate_original(test_loader)
@@ -415,6 +431,7 @@ class TransformerTranslatorEvaluator:
             output_parquet_path,
             sample_output_dir=sample_output_dir,
             sample_size=sample_size,
+            export_full_sequence=export_full_sequence,
         )
         return {"original": original_metrics, "translated": translated_metrics}
 

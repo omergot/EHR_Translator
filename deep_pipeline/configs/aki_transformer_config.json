@@ -1,9 +1,9 @@
 {
-  "data_dir": "/bigdata/omerg/Thesis/cohort_data/aki/eicu_sepsis_test_subset",
-  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/AKI/GRU/repetition_0/fold_0",
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/aki/eicu",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/AKI/LSTM/repetition_0/fold_0",
   "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
-  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/GRU.gin",
-  "model_name": "GRU",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "model_name": "LSTM",
   "vars": {
     "GROUP": "stay_id",
     "LABEL": "label",

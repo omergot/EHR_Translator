@@ -612,6 +612,7 @@ def translate_and_eval(args):
             output_path,
             sample_output_dir=Path(sample_dir) if sample_dir else None,
             sample_size=sample_size,
+            export_full_sequence=getattr(args, "export_full_sequence", True),
         )
 
     elif translator_type == "linear_regression":
@@ -744,12 +745,14 @@ def main():
     eval_parser.add_argument("--input_test_parquet", type=str, help="Input test parquet (optional, uses config data_dir)")
     eval_parser.add_argument("--output_parquet", type=str, required=True, help="Output path for translated parquet")
     eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
+    eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     train_eval_parser = subparsers.add_parser("train_and_eval", help="Train translator then translate and evaluate")
     train_eval_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
     train_eval_parser.add_argument("--output_parquet", type=str, required=True, help="Output path for translated parquet")
     train_eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
+    train_eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     train_eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()

@@ -28,8 +28,7 @@ def verify_baseline_determinism(
 
     print("\n[Safety Check] Verifying baseline determinism (cuDNN Enabled)...")
 
-    x, _, _ = sample_batch
-    x = x.to(device)
+    x = sample_batch[0].to(device)
 
     with torch.no_grad():
         out1 = model(x)

@@ -19,7 +19,8 @@
   },
   "translator": {
     "type": "transformer",
-    "d_model": 128
+    "d_model": 128,
+    "temporal_attention_mode": "bidirectional"
   },
   "paths": {
     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv",

@@ -305,7 +305,7 @@ class LinearRegressionTranslator(Translator):
 
 
 class AxialBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int):
+    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int, use_causal_temporal_attention: bool):
         super().__init__()
         self.var_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.temp_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
@@ -313,6 +313,7 @@ class AxialBlock(nn.Module):
         self.norm_var = nn.LayerNorm(d_model)
         self.norm_temp = nn.LayerNorm(d_model)
         self.norm_ffn = nn.LayerNorm(d_model)
+        self.use_causal_temporal_attention = use_causal_temporal_attention
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_ff),
             nn.GELU(),
@@ -352,10 +353,14 @@ class AxialBlock(nn.Module):
             key_padding_mask[all_pad, 0] = False
             if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
                 logging.warning("All-padded sequences in temporal attention: %d", int(all_pad.sum().item()))
+        temporal_attn_mask = None
+        if self.use_causal_temporal_attention:
+            temporal_attn_mask = torch.ones((seq_len, seq_len), device=h_temp.device, dtype=torch.bool).triu(diagonal=1)
         attn_out, _ = self.temp_attn(
             h_temp,
             h_temp,
             h_temp,
+            attn_mask=temporal_attn_mask,
             key_padding_mask=key_padding_mask,
             need_weights=False,
         )
@@ -380,6 +385,7 @@ class EHRTranslator(nn.Module):
         dropout: float = 0.2,
         out_dropout: float = 0.1,
         static_dim: int = 4,
+        temporal_attention_mode: str = "bidirectional",
     ):
         super().__init__()
         if d_time % 2 != 0:
@@ -389,6 +395,13 @@ class EHRTranslator(nn.Module):
         self.d_model = d_model
         self.d_time = d_time
         self.n_layers = n_layers
+        if temporal_attention_mode not in {"bidirectional", "causal"}:
+            raise ValueError(
+                f"Unsupported temporal_attention_mode '{temporal_attention_mode}'. "
+                "Expected one of: 'bidirectional', 'causal'."
+            )
+        self.temporal_attention_mode = temporal_attention_mode
+        use_causal_temporal_attention = temporal_attention_mode == "causal"
 
         self.triplet_proj = nn.Linear(3, d_latent)
         self.sensor_emb = nn.Parameter(torch.zeros(num_features, d_latent))
@@ -397,7 +410,16 @@ class EHRTranslator(nn.Module):
         self.time_proj = nn.Linear(d_time, d_model)
 
         self.blocks = nn.ModuleList(
-            [AxialBlock(d_model=d_model, n_heads=n_heads, dropout=dropout, d_ff=d_ff) for _ in range(n_layers)]
+            [
+                AxialBlock(
+                    d_model=d_model,
+                    n_heads=n_heads,
+                    dropout=dropout,
+                    d_ff=d_ff,
+                    use_causal_temporal_attention=use_causal_temporal_attention,
+                )
+                for _ in range(n_layers)
+            ]
         )
 
         self.film_mlp = nn.Sequential(

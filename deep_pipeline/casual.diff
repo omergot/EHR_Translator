@@ -1,0 +1,183 @@
+diff --git a/deep_pipeline/checkpoints/current_aki_ongoing.pt b/deep_pipeline/checkpoints/current_aki_ongoing.pt
+index d5ea537..37494e6 100644
+Binary files a/deep_pipeline/checkpoints/current_aki_ongoing.pt and b/deep_pipeline/checkpoints/current_aki_ongoing.pt differ
+diff --git a/deep_pipeline/checkpoints/transformer/best_translator.pt b/deep_pipeline/checkpoints/transformer/best_translator.pt
+index 21e8281..37494e6 100644
+Binary files a/deep_pipeline/checkpoints/transformer/best_translator.pt and b/deep_pipeline/checkpoints/transformer/best_translator.pt differ
+diff --git a/deep_pipeline/configs/aki_transformer_config.json b/deep_pipeline/configs/aki_transformer_config.json
+index 200721b..8d1dd07 100644
+--- a/deep_pipeline/configs/aki_transformer_config.json
++++ b/deep_pipeline/configs/aki_transformer_config.json
+@@ -18,7 +18,8 @@
+   },
+   "translator": {
+     "type": "transformer",
+-    "d_model": 128
++    "d_model": 128,
++    "temporal_attention_mode": "causal"
+   },
+   "paths": {
+     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
+diff --git a/deep_pipeline/configs/ml_mortality24_transformer_config.json b/deep_pipeline/configs/ml_mortality24_transformer_config.json
+index bb25c30..ba44844 100644
+--- a/deep_pipeline/configs/ml_mortality24_transformer_config.json
++++ b/deep_pipeline/configs/ml_mortality24_transformer_config.json
+@@ -18,7 +18,8 @@
+     },
+     "translator": {
+       "type": "transformer",
+-      "d_model": 128
++      "d_model": 128,
++      "temporal_attention_mode": "bidirectional"
+     },
+     "paths": {
+       "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
+@@ -35,4 +36,4 @@
+     "device": "cuda",
+     "debug": false
+   }
+-  
+\ No newline at end of file
++  
+diff --git a/deep_pipeline/configs/mortality24_transformer_config.json b/deep_pipeline/configs/mortality24_transformer_config.json
+index bf86cd7..f3653b3 100644
+--- a/deep_pipeline/configs/mortality24_transformer_config.json
++++ b/deep_pipeline/configs/mortality24_transformer_config.json
+@@ -19,7 +19,8 @@
+   },
+   "translator": {
+     "type": "transformer",
+-    "d_model": 128
++    "d_model": 128,
++    "temporal_attention_mode": "bidirectional"
+   },
+   "paths": {
+     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv",
+diff --git a/deep_pipeline/configs/sample_transformer_config.json b/deep_pipeline/configs/sample_transformer_config.json
+index a7cea3d..c504d23 100644
+--- a/deep_pipeline/configs/sample_transformer_config.json
++++ b/deep_pipeline/configs/sample_transformer_config.json
+@@ -18,7 +18,8 @@
+   },
+   "translator": {
+     "type": "transformer",
+-    "d_model": 128
++    "d_model": 128,
++    "temporal_attention_mode": "causal"
+   },
+   "paths": {
+     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
+diff --git a/deep_pipeline/src/cli.py b/deep_pipeline/src/cli.py
+index 95b8b41..4a27705 100644
+--- a/deep_pipeline/src/cli.py
++++ b/deep_pipeline/src/cli.py
+@@ -94,6 +94,17 @@ def _get_translator_config(config: dict) -> dict:
+ def _get_translator_type(config: dict) -> str:
+     return _get_translator_config(config).get("type", "identity")
+ 
++
++def _get_temporal_attention_mode(translator_cfg: dict) -> str:
++    mode = str(translator_cfg.get("temporal_attention_mode", "bidirectional")).strip().lower()
++    if mode not in {"bidirectional", "causal"}:
++        raise ValueError(
++            f"translator.temporal_attention_mode='{mode}' is invalid. "
++            "Use 'bidirectional' or 'causal'."
++        )
++    return mode
++
++
+ def _get_static_recipe(config: dict) -> str:
+     paths = config.get("paths", {})
+     return paths.get("static_recipe", config.get("static_recipe", ""))
+@@ -416,6 +427,7 @@ def train_translator(args):
+             dropout=translator_cfg.get("dropout", 0.2),
+             out_dropout=translator_cfg.get("out_dropout", 0.1),
+             static_dim=len(static_features),
++            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+         )
+ 
+         trainer = TransformerTranslatorTrainer(
+@@ -584,6 +596,7 @@ def translate_and_eval(args):
+             dropout=translator_cfg.get("dropout", 0.2),
+             out_dropout=translator_cfg.get("out_dropout", 0.1),
+             static_dim=len(static_features),
++            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+         )
+ 
+         checkpoint_path = args.translator_checkpoint
+diff --git a/deep_pipeline/src/core/translator.py b/deep_pipeline/src/core/translator.py
+index f34195c..6d6998b 100644
+--- a/deep_pipeline/src/core/translator.py
++++ b/deep_pipeline/src/core/translator.py
+@@ -305,7 +305,7 @@ class LinearRegressionTranslator(Translator):
+ 
+ 
+ class AxialBlock(nn.Module):
+-    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int):
++    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int, use_causal_temporal_attention: bool):
+         super().__init__()
+         self.var_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+         self.temp_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
+@@ -313,6 +313,7 @@ class AxialBlock(nn.Module):
+         self.norm_var = nn.LayerNorm(d_model)
+         self.norm_temp = nn.LayerNorm(d_model)
+         self.norm_ffn = nn.LayerNorm(d_model)
++        self.use_causal_temporal_attention = use_causal_temporal_attention
+         self.ffn = nn.Sequential(
+             nn.Linear(d_model, d_ff),
+             nn.GELU(),
+@@ -352,10 +353,14 @@ class AxialBlock(nn.Module):
+             key_padding_mask[all_pad, 0] = False
+             if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
+                 logging.warning("All-padded sequences in temporal attention: %d", int(all_pad.sum().item()))
++        temporal_attn_mask = None
++        if self.use_causal_temporal_attention:
++            temporal_attn_mask = torch.ones((seq_len, seq_len), device=h_temp.device, dtype=torch.bool).triu(diagonal=1)
+         attn_out, _ = self.temp_attn(
+             h_temp,
+             h_temp,
+             h_temp,
++            attn_mask=temporal_attn_mask,
+             key_padding_mask=key_padding_mask,
+             need_weights=False,
+         )
+@@ -380,6 +385,7 @@ class EHRTranslator(nn.Module):
+         dropout: float = 0.2,
+         out_dropout: float = 0.1,
+         static_dim: int = 4,
++        temporal_attention_mode: str = "bidirectional",
+     ):
+         super().__init__()
+         if d_time % 2 != 0:
+@@ -389,6 +395,13 @@ class EHRTranslator(nn.Module):
+         self.d_model = d_model
+         self.d_time = d_time
+         self.n_layers = n_layers
++        if temporal_attention_mode not in {"bidirectional", "causal"}:
++            raise ValueError(
++                f"Unsupported temporal_attention_mode '{temporal_attention_mode}'. "
++                "Expected one of: 'bidirectional', 'causal'."
++            )
++        self.temporal_attention_mode = temporal_attention_mode
++        use_causal_temporal_attention = temporal_attention_mode == "causal"
+ 
+         self.triplet_proj = nn.Linear(3, d_latent)
+         self.sensor_emb = nn.Parameter(torch.zeros(num_features, d_latent))
+@@ -397,7 +410,16 @@ class EHRTranslator(nn.Module):
+         self.time_proj = nn.Linear(d_time, d_model)
+ 
+         self.blocks = nn.ModuleList(
+-            [AxialBlock(d_model=d_model, n_heads=n_heads, dropout=dropout, d_ff=d_ff) for _ in range(n_layers)]
++            [
++                AxialBlock(
++                    d_model=d_model,
++                    n_heads=n_heads,
++                    dropout=dropout,
++                    d_ff=d_ff,
++                    use_causal_temporal_attention=use_causal_temporal_attention,
++                )
++                for _ in range(n_layers)
++            ]
+         )
+ 
+         self.film_mlp = nn.Sequential(

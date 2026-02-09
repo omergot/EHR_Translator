@@ -94,6 +94,17 @@ def _get_translator_config(config: dict) -> dict:
 def _get_translator_type(config: dict) -> str:
     return _get_translator_config(config).get("type", "identity")
 
+
+def _get_temporal_attention_mode(translator_cfg: dict) -> str:
+    mode = str(translator_cfg.get("temporal_attention_mode", "bidirectional")).strip().lower()
+    if mode not in {"bidirectional", "causal"}:
+        raise ValueError(
+            f"translator.temporal_attention_mode='{mode}' is invalid. "
+            "Use 'bidirectional' or 'causal'."
+        )
+    return mode
+
+
 def _get_static_recipe(config: dict) -> str:
     paths = config.get("paths", {})
     return paths.get("static_recipe", config.get("static_recipe", ""))
@@ -416,6 +427,7 @@ def train_translator(args):
             dropout=translator_cfg.get("dropout", 0.2),
             out_dropout=translator_cfg.get("out_dropout", 0.1),
             static_dim=len(static_features),
+            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
         )
 
         trainer = TransformerTranslatorTrainer(
@@ -584,6 +596,7 @@ def translate_and_eval(args):
             dropout=translator_cfg.get("dropout", 0.2),
             out_dropout=translator_cfg.get("out_dropout", 0.1),
             static_dim=len(static_features),
+            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
         )
 
         checkpoint_path = args.translator_checkpoint

@@ -18,14 +18,15 @@
   },
   "translator": {
     "type": "transformer",
-    "d_model": 128
+    "d_model": 128,
+    "temporal_attention_mode": "causal"
   },
   "paths": {
     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
   },
   "training": {
-    "lr": 1e-4,
-    "epochs": 20,
+    "lr": 1e-3,
+    "epochs": 10,
     "batch_size": 64
   },
   "output": {

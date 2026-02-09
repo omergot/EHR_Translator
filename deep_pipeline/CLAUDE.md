@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-EHR Translator Deep Pipeline: a system for translating electronic health record (EHR) time-series data between medical datasets (eICU → MIMIC-IV). A translator model learns to transform source-domain ICU data so that a pretrained target-domain baseline model (LSTM/GRU/TCN/Transformer from YAIB) performs well on it, preserving clinical task performance while keeping data plausible.
+**EHR Translator Deep Pipeline** is a domain adaptation system for electronic health record (EHR) time-series data (e.g., eICU → MIMIC-IV). 
+
+**Core Goal:** Train a `Translator` model to transform source-domain data so that a **strictly frozen** target-domain baseline model (from the YAIB framework) performs well on it. The system must preserve clinical task performance (Sepsis/AKI/Mortality) while maintaining data plausibility.
 
 ## Commands
 
@@ -57,6 +59,15 @@ Three translator types, selected via `config["translator"]["type"]`:
 
 - `TranslatorEvaluator` / `TransformerTranslatorEvaluator`: Compute AUROC, AUCPR, loss on translated test data. Export results to parquet.
 
+### Safety & Validation (CRITICAL)
+- Frozen Baseline: The baseline model parameters are set to requires_grad=False. A specific verify_baseline_determinism check runs at startup to ensure no internal noise (Dropout/BatchNorm) affects the training signal.
+
+- Padding Integrity: The translator output is explicitly masked (masked_fill) to ensure padded time steps remain exactly 0.0.
+
+- Time-Travel Rules: - Sepsis/AKI: Must use temporal_attention_mode="causal" to prevent looking ahead.
+
+- Mortality: Can use "bidirectional".
+
 ### Schema Resolution (`src/core/schema.py`)
 
 `SchemaResolver` manages feature indices across the YAIB batch format. `extract()` deconstructs batches into (x_val, x_miss, x_static, t_abs, m_pad); `rebuild()` reconstructs them after translation.
@@ -85,3 +96,9 @@ JSON configs in `configs/` define everything for a run: data paths, baseline mod
 ## Utility Scripts (`scripts/`)
 
 Standalone tools: `generate_static_recipe.py` (build preprocessing recipes), `filter_cohort_by_stay_ids.py` (subset cohorts), `compute_feature_correlation.py` / `compute_feature_ab.py` (feature analysis), `compare_data.py` (dataset comparison), `inspect_linear_regression_pkl.py` (inspect saved linear models).
+
+
+## Coding Standards
+- Logging: Use logging.info() (never print in core modules).
+- Tensors: Always handle device placement explicitly (.to(device)).
+- Config: Managed via JSON files in deep_pipeline/configs/

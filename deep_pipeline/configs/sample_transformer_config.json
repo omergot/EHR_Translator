@@ -25,9 +25,13 @@
     "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
   },
   "training": {
-    "lr": 1e-3,
-    "epochs": 10,
-    "batch_size": 64
+    "lr": 1e-4,
+    "epochs": 20,
+    "batch_size": 64,
+    "lambda_fidelity": 0.1,
+    "lambda_forecast": 0,
+    "early_stopping_patience": 5,
+    "best_metric": "val_task"
   },
   "output": {
     "run_dir": "checkpoints/transformer"

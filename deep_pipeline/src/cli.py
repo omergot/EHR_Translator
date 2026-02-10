@@ -74,6 +74,8 @@ def _get_training_config(config: dict) -> dict:
         "lr": training.get("lr", config.get("learning_rate", 1e-4)),
         "lambda_fidelity": training.get("lambda_fidelity", config.get("lambda_fidelity", 0.01)),
         "lambda_range": training.get("lambda_range", config.get("lambda_range", 1e-3)),
+        "lambda_forecast": training.get("lambda_forecast", 0.0),
+        "early_stopping_patience": training.get("early_stopping_patience", 0),
         "seed": training.get("seed", config.get("seed", 42)),
         "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
     }
@@ -348,9 +350,18 @@ def train_translator(args):
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
     if debug_mode:
-        training_cfg["epochs"] = 1
+        training_cfg["epochs"] = 10
     translator_type = _get_translator_type(config)
 
+    logging.info("=== Training Configuration ===")
+    logging.info("  debug: %s", debug_mode)
+    logging.info("  translator_type: %s", translator_type)
+    for k, v in sorted(training_cfg.items()):
+        logging.info("  %s: %s", k, v)
+    translator_cfg = _get_translator_config(config)
+    for k, v in sorted(translator_cfg.items()):
+        logging.info("  translator.%s: %s", k, v)
+    logging.info("==============================")
 
     if translator_type == "transformer":
         translator_cfg = _get_translator_config(config)
@@ -364,14 +375,14 @@ def train_translator(args):
             'train',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.05 if debug_mode else None,
+            subset_fraction=0.2 if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
         val_loader = yaib_runtime.create_dataloader(
             'val',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.05 if debug_mode else None,
+            subset_fraction=0.2 if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
 
@@ -439,6 +450,8 @@ def train_translator(args):
             weight_decay=translator_cfg.get("weight_decay", 1e-5),
             lambda_fidelity=training_cfg["lambda_fidelity"],
             lambda_range=training_cfg["lambda_range"],
+            lambda_forecast=training_cfg["lambda_forecast"],
+            early_stopping_patience=training_cfg["early_stopping_patience"],
             best_metric=training_cfg["best_metric"],
             run_dir=Path(output_cfg["run_dir"]),
             device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
@@ -480,14 +493,14 @@ def train_translator(args):
         'train',
         shuffle=False,
         ram_cache=True,
-        subset_fraction=0.05 if debug_mode else None,
+        subset_fraction=0.2 if debug_mode else None,
         subset_seed=training_cfg["seed"],
     )
     val_loader = yaib_runtime.create_dataloader(
         'val',
         shuffle=False,
         ram_cache=True,
-        subset_fraction=0.05 if debug_mode else None,
+        subset_fraction=0.2 if debug_mode else None,
         subset_seed=training_cfg["seed"],
     )
     
@@ -540,7 +553,7 @@ def translate_and_eval(args):
             'test',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.05 if debug_mode else None,
+            subset_fraction=0.2 if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
         feature_names = test_loader.dataset.get_feature_names()
@@ -604,7 +617,7 @@ def translate_and_eval(args):
             checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
         if checkpoint_path and Path(checkpoint_path).exists():
             checkpoint = torch.load(checkpoint_path, map_location="cpu")
-            translator.load_state_dict(checkpoint["translator_state_dict"])
+            translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
             logging.info("Loaded transformer translator from %s", checkpoint_path)
         else:
             logging.warning("No transformer checkpoint found at %s", checkpoint_path)
@@ -663,7 +676,7 @@ def translate_and_eval(args):
             'test',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.05 if debug_mode else None,
+            subset_fraction=0.2 if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
 
@@ -673,7 +686,7 @@ def translate_and_eval(args):
 
     if translator_type not in {"linear_regression", "transformer"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
-        translator.load_state_dict(checkpoint["translator_state_dict"])
+        translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
 
     if translator_type != "transformer":
@@ -702,7 +715,7 @@ def translate_and_eval(args):
                     'test',
                     shuffle=False,
                     ram_cache=True,
-                    subset_fraction=0.05 if debug_mode else None,
+                    subset_fraction=0.2 if debug_mode else None,
                     subset_seed=training_cfg["seed"],
                 )
                 evaluator.yaib_runtime = norm_runtime

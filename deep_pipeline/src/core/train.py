@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.cuda.amp import GradScaler
 from torch.optim import Adam, AdamW
+
 from torch.utils.data import DataLoader
 import time
 
@@ -190,6 +191,8 @@ class TransformerTranslatorTrainer:
         weight_decay: float = 1e-5,
         lambda_fidelity: float = 0.01,
         lambda_range: float = 1e-3,
+        lambda_forecast: float = 0.0,
+        early_stopping_patience: int = 0,
         best_metric: str = "val_total",
         run_dir: Path | None = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
@@ -201,6 +204,8 @@ class TransformerTranslatorTrainer:
         self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
         self.lambda_fidelity = lambda_fidelity
         self.lambda_range = lambda_range
+        self.lambda_forecast = lambda_forecast
+        self.early_stopping_patience = early_stopping_patience
         self.best_metric = best_metric
         self.run_dir = Path(run_dir) if run_dir is not None else Path("runs/translator")
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -337,7 +342,8 @@ class TransformerTranslatorTrainer:
 
     def _run_epoch(self, loader: DataLoader) -> dict[str, float]:
         self.translator.train()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0}
+        use_forecast = self.lambda_forecast > 0
         num_batches = 0
         logged_this_epoch = False
         for batch in loader:
@@ -348,13 +354,18 @@ class TransformerTranslatorTrainer:
                 torch.cuda.synchronize()
             t_translator = time.time()
             with torch.amp.autocast(device_type="cuda", enabled=use_amp):
-                x_val_out = self.translator(
+                result = self.translator(
                     parts["X_val"],
                     parts["X_miss"],
                     parts["t_abs"],
                     parts["M_pad"],
                     parts["X_static"],
+                    return_forecast=use_forecast,
                 )
+                if use_forecast:
+                    x_val_out, x_forecast = result
+                else:
+                    x_val_out = result
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
@@ -387,7 +398,16 @@ class TransformerTranslatorTrainer:
             over = torch.relu(x_val_out.float() - upper)
             under = torch.relu(lower - x_val_out.float())
             l_range = self._masked_mean((over ** 2 + under ** 2).sum(dim=-1), mask).float()
-            l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range)
+            l_forecast = x_val_out.new_tensor(0.0)
+            if use_forecast:
+                forecast_target = parts["X_val"][:, 1:, :]
+                forecast_pred = x_forecast[:, :-1, :]
+                valid = ~parts["M_pad"][:, :-1] & ~parts["M_pad"][:, 1:]
+                if valid.any():
+                    l_forecast = self._masked_mean(
+                        (forecast_pred.float() - forecast_target.float()).pow(2).sum(dim=-1), valid
+                    ).float()
+            l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range) + (self.lambda_forecast * l_forecast)
 
             self.optimizer.zero_grad()
             if use_amp:
@@ -435,6 +455,7 @@ class TransformerTranslatorTrainer:
             totals["task"] += l_task.item()
             totals["fidelity"] += l_fidelity.item()
             totals["range"] += l_range.item()
+            totals["forecast"] += l_forecast.item()
             num_batches += 1
 
         if num_batches == 0:
@@ -443,19 +464,25 @@ class TransformerTranslatorTrainer:
 
     def _validate(self, loader: DataLoader) -> dict[str, float]:
         self.translator.eval()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0}
+        use_forecast = self.lambda_forecast > 0
         num_batches = 0
         with torch.no_grad():
             for batch in loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 parts = self.schema_resolver.extract(batch)
-                x_val_out = self.translator(
+                result = self.translator(
                     parts["X_val"],
                     parts["X_miss"],
                     parts["t_abs"],
                     parts["M_pad"],
                     parts["X_static"],
+                    return_forecast=use_forecast,
                 )
+                if use_forecast:
+                    x_val_out, x_forecast = result
+                else:
+                    x_val_out = result
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
@@ -473,12 +500,22 @@ class TransformerTranslatorTrainer:
                 over = torch.relu(x_val_out - self.upper_bounds.view(1, 1, -1))
                 under = torch.relu(self.lower_bounds.view(1, 1, -1) - x_val_out)
                 l_range = self._masked_mean((over ** 2 + under ** 2).sum(dim=-1), mask)
-                l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range)
+                l_forecast = x_val_out.new_tensor(0.0)
+                if use_forecast:
+                    forecast_target = parts["X_val"][:, 1:, :]
+                    forecast_pred = x_forecast[:, :-1, :]
+                    valid = ~parts["M_pad"][:, :-1] & ~parts["M_pad"][:, 1:]
+                    if valid.any():
+                        l_forecast = self._masked_mean(
+                            (forecast_pred - forecast_target).pow(2).sum(dim=-1), valid
+                        )
+                l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range) + (self.lambda_forecast * l_forecast)
 
                 totals["total"] += l_total.item()
                 totals["task"] += l_task.item()
                 totals["fidelity"] += l_fidelity.item()
                 totals["range"] += l_range.item()
+                totals["forecast"] += l_forecast.item()
                 num_batches += 1
 
         if num_batches == 0:
@@ -493,6 +530,7 @@ class TransformerTranslatorTrainer:
                 verify_baseline_determinism(self.yaib_runtime, sample_batch, self.device)
             except StopIteration:
                 logging.warning("Baseline integrity check skipped: empty train_loader.")
+        epochs_without_improvement = 0
         for epoch in range(epochs):
             logging.info("Epoch %d/%d - training", epoch + 1, epochs)
             train_metrics = self._run_epoch(train_loader)
@@ -500,22 +538,24 @@ class TransformerTranslatorTrainer:
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f",
+                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f train_forecast=%.4f",
                 epoch + 1,
                 epochs,
                 train_metrics["total"],
                 train_metrics["task"],
                 train_metrics["fidelity"],
                 train_metrics["range"],
+                train_metrics["forecast"],
             )
             logging.info(
-                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f",
+                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f val_forecast=%.4f",
                 epoch + 1,
                 epochs,
                 val_metrics["total"],
                 val_metrics["task"],
                 val_metrics["fidelity"],
                 val_metrics["range"],
+                val_metrics["forecast"],
             )
 
             self.history.append(
@@ -525,10 +565,12 @@ class TransformerTranslatorTrainer:
                     "train_task": train_metrics["task"],
                     "train_fidelity": train_metrics["fidelity"],
                     "train_range": train_metrics["range"],
+                    "train_forecast": train_metrics["forecast"],
                     "val_total": val_metrics["total"],
                     "val_task": val_metrics["task"],
                     "val_fidelity": val_metrics["fidelity"],
                     "val_range": val_metrics["range"],
+                    "val_forecast": val_metrics["forecast"],
                 }
             )
 
@@ -544,6 +586,13 @@ class TransformerTranslatorTrainer:
                 }
                 torch.save(checkpoint, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
+                logging.info("Early stopping after %d epochs without improvement", epochs_without_improvement)
+                break
 
         if self.best_state is not None:
             self.translator.load_state_dict(self.best_state)

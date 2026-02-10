@@ -429,6 +429,7 @@ class EHRTranslator(nn.Module):
         )
 
         self.delta_head = nn.Linear(d_model, 1)
+        self.forecast_head = nn.Linear(d_model, 1)
         self.out_dropout = nn.Dropout(out_dropout)
         self._last_temporal_key_padding_mask = None
 
@@ -439,7 +440,8 @@ class EHRTranslator(nn.Module):
         t_abs: torch.Tensor,
         m_pad: torch.Tensor,
         x_static: torch.Tensor,
-    ) -> torch.Tensor:
+        return_forecast: bool = False,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         m_pad = m_pad.bool()
         if x_val.shape[-1] != self.num_features:
             raise ValueError(f"Expected {self.num_features} features, got {x_val.shape[-1]}")
@@ -485,7 +487,13 @@ class EHRTranslator(nn.Module):
         delta = self.out_dropout(delta)
         x_val_out = x_val + delta
         x_val_out = x_val_out.masked_fill(m_pad[:, :, None], 0.0)
-        return x_val_out
+
+        if not return_forecast:
+            return x_val_out
+
+        x_forecast = self.forecast_head(h).squeeze(-1)   # (B, T, F)
+        x_forecast = x_forecast.masked_fill(m_pad[:, :, None], 0.0)
+        return x_val_out, x_forecast
 
     def _time_encoding(self, t_abs: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len = t_abs.shape

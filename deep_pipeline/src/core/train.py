@@ -210,8 +210,6 @@ class TransformerTranslatorTrainer:
         self.run_dir = Path(run_dir) if run_dir is not None else Path("runs/translator")
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.scaler = GradScaler(enabled=self.device.startswith("cuda"))
-        if self.device.startswith("cuda"):
-            torch.backends.cudnn.benchmark = True
 
         self.yaib_runtime.load_baseline_model()
         if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
@@ -619,4 +617,16 @@ class TransformerTranslatorTrainer:
         ax.legend()
         fig.tight_layout()
         fig.savefig(self.run_dir / "loss_curve.png", dpi=150)
+        plt.close(fig)
+
+        train_task = [row["train_task"] for row in self.history]
+        val_task = [row["val_task"] for row in self.history]
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.plot(epochs, train_task, label="train_task")
+        ax.plot(epochs, val_task, label="val_task")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("Task Loss")
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(self.run_dir / "task_loss_curve.png", dpi=150)
         plt.close(fig)

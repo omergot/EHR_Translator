@@ -363,6 +363,13 @@ def train_translator(args):
         logging.info("  translator.%s: %s", k, v)
     logging.info("==============================")
 
+    seed = training_cfg["seed"]
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     if translator_type == "transformer":
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
@@ -532,9 +539,6 @@ def translate_and_eval(args):
     config = load_config(args.config)
     training_cfg = _get_training_config(config)
     output_cfg = _get_output_config(config)
-    debug_mode = config.get("debug", False)
-    if debug_mode:
-        training_cfg["epochs"] = 1
     translator_type = _get_translator_type(config)
     eval_baseline_with_target_norm = config.get("eval_baseline_with_target_normalization", False)
 

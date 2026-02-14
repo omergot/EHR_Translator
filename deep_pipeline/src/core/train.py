@@ -13,6 +13,7 @@ import time
 from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
 from ..core.schema import SchemaResolver
+from ..core.mmd import multi_kernel_mmd
 
 
 def verify_baseline_determinism(
@@ -192,6 +193,9 @@ class TransformerTranslatorTrainer:
         lambda_fidelity: float = 0.01,
         lambda_range: float = 1e-3,
         lambda_forecast: float = 0.0,
+        lambda_mmd: float = 0.0,
+        lambda_mmd_transition: float = 0.0,
+        target_train_loader: DataLoader | None = None,
         early_stopping_patience: int = 0,
         best_metric: str = "val_total",
         run_dir: Path | None = None,
@@ -205,6 +209,10 @@ class TransformerTranslatorTrainer:
         self.lambda_fidelity = lambda_fidelity
         self.lambda_range = lambda_range
         self.lambda_forecast = lambda_forecast
+        self.lambda_mmd = lambda_mmd
+        self.lambda_mmd_transition = lambda_mmd_transition
+        self.target_train_loader = target_train_loader
+        self._target_iter = iter(target_train_loader) if target_train_loader is not None else None
         self.early_stopping_patience = early_stopping_patience
         self.best_metric = best_metric
         self.run_dir = Path(run_dir) if run_dir is not None else Path("runs/translator")
@@ -312,6 +320,15 @@ class TransformerTranslatorTrainer:
             assert key_mask is not None and key_mask.shape == expected.shape, "Temporal attention mask not applied"
             assert torch.equal(key_mask, expected), "Temporal attention mask mismatch"
 
+    def _next_target_batch(self) -> tuple:
+        """Get next batch from the cycling target (MIMIC) data iterator."""
+        try:
+            batch = next(self._target_iter)
+        except StopIteration:
+            self._target_iter = iter(self.target_train_loader)
+            batch = next(self._target_iter)
+        return tuple(b.to(self.device) for b in batch)
+
     def _apply_baseline_speed_safe_mode(self) -> None:
         model = getattr(self.yaib_runtime, "_model", None)
         if model is None:
@@ -340,8 +357,10 @@ class TransformerTranslatorTrainer:
 
     def _run_epoch(self, loader: DataLoader) -> dict[str, float]:
         self.translator.train()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0}
         use_forecast = self.lambda_forecast > 0
+        use_mmd = self.lambda_mmd > 0 and self.target_train_loader is not None
+        use_mmd_transition = self.lambda_mmd_transition > 0 and self.target_train_loader is not None
         num_batches = 0
         logged_this_epoch = False
         for batch in loader:
@@ -405,7 +424,38 @@ class TransformerTranslatorTrainer:
                     l_forecast = self._masked_mean(
                         (forecast_pred.float() - forecast_target.float()).pow(2).sum(dim=-1), valid
                     ).float()
-            l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range) + (self.lambda_forecast * l_forecast)
+
+            # MMD losses
+            l_mmd = x_val_out.new_tensor(0.0)
+            l_mmd_trans = x_val_out.new_tensor(0.0)
+            if use_mmd or use_mmd_transition:
+                target_batch = self._next_target_batch()
+                target_parts = self.schema_resolver.extract(target_batch)
+                source_mask = ~parts["M_pad"]
+                target_mask = ~target_parts["M_pad"]
+                if use_mmd:
+                    source_features = x_val_out[source_mask]
+                    target_features = target_parts["X_val"][target_mask]
+                    l_mmd = multi_kernel_mmd(source_features.float(), target_features.float())
+                if use_mmd_transition:
+                    source_delta = x_val_out[:, 1:, :] - x_val_out[:, :-1, :]
+                    target_delta = target_parts["X_val"][:, 1:, :] - target_parts["X_val"][:, :-1, :]
+                    source_trans_mask = source_mask[:, :-1] & source_mask[:, 1:]
+                    target_trans_mask = target_mask[:, :-1] & target_mask[:, 1:]
+                    if source_trans_mask.any() and target_trans_mask.any():
+                        l_mmd_trans = multi_kernel_mmd(
+                            source_delta[source_trans_mask].float(),
+                            target_delta[target_trans_mask].float(),
+                        )
+
+            l_total = (
+                l_task
+                + (self.lambda_fidelity * l_fidelity)
+                + (self.lambda_range * l_range)
+                + (self.lambda_forecast * l_forecast)
+                + (self.lambda_mmd * l_mmd)
+                + (self.lambda_mmd_transition * l_mmd_trans)
+            )
 
             self.optimizer.zero_grad()
             if use_amp:
@@ -454,6 +504,8 @@ class TransformerTranslatorTrainer:
             totals["fidelity"] += l_fidelity.item()
             totals["range"] += l_range.item()
             totals["forecast"] += l_forecast.item()
+            totals["mmd"] += l_mmd.item()
+            totals["mmd_trans"] += l_mmd_trans.item()
             num_batches += 1
 
         if num_batches == 0:
@@ -462,8 +514,10 @@ class TransformerTranslatorTrainer:
 
     def _validate(self, loader: DataLoader) -> dict[str, float]:
         self.translator.eval()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0}
         use_forecast = self.lambda_forecast > 0
+        use_mmd = self.lambda_mmd > 0 and self.target_train_loader is not None
+        use_mmd_transition = self.lambda_mmd_transition > 0 and self.target_train_loader is not None
         num_batches = 0
         with torch.no_grad():
             for batch in loader:
@@ -507,13 +561,46 @@ class TransformerTranslatorTrainer:
                         l_forecast = self._masked_mean(
                             (forecast_pred - forecast_target).pow(2).sum(dim=-1), valid
                         )
-                l_total = l_task + (self.lambda_fidelity * l_fidelity) + (self.lambda_range * l_range) + (self.lambda_forecast * l_forecast)
+
+                # MMD losses (validation uses target train loader for distribution reference)
+                l_mmd = x_val_out.new_tensor(0.0)
+                l_mmd_trans = x_val_out.new_tensor(0.0)
+                if use_mmd or use_mmd_transition:
+                    target_batch = self._next_target_batch()
+                    target_parts = self.schema_resolver.extract(target_batch)
+                    source_mask = ~parts["M_pad"]
+                    target_mask = ~target_parts["M_pad"]
+                    if use_mmd:
+                        source_features = x_val_out[source_mask]
+                        target_features = target_parts["X_val"][target_mask]
+                        l_mmd = multi_kernel_mmd(source_features.float(), target_features.float())
+                    if use_mmd_transition:
+                        source_delta = x_val_out[:, 1:, :] - x_val_out[:, :-1, :]
+                        target_delta = target_parts["X_val"][:, 1:, :] - target_parts["X_val"][:, :-1, :]
+                        source_trans_mask = source_mask[:, :-1] & source_mask[:, 1:]
+                        target_trans_mask = target_mask[:, :-1] & target_mask[:, 1:]
+                        if source_trans_mask.any() and target_trans_mask.any():
+                            l_mmd_trans = multi_kernel_mmd(
+                                source_delta[source_trans_mask].float(),
+                                target_delta[target_trans_mask].float(),
+                            )
+
+                l_total = (
+                    l_task
+                    + (self.lambda_fidelity * l_fidelity)
+                    + (self.lambda_range * l_range)
+                    + (self.lambda_forecast * l_forecast)
+                    + (self.lambda_mmd * l_mmd)
+                    + (self.lambda_mmd_transition * l_mmd_trans)
+                )
 
                 totals["total"] += l_total.item()
                 totals["task"] += l_task.item()
                 totals["fidelity"] += l_fidelity.item()
                 totals["range"] += l_range.item()
                 totals["forecast"] += l_forecast.item()
+                totals["mmd"] += l_mmd.item()
+                totals["mmd_trans"] += l_mmd_trans.item()
                 num_batches += 1
 
         if num_batches == 0:
@@ -536,7 +623,7 @@ class TransformerTranslatorTrainer:
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f train_forecast=%.4f",
+                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f train_forecast=%.4f train_mmd=%.4f train_mmd_trans=%.4f",
                 epoch + 1,
                 epochs,
                 train_metrics["total"],
@@ -544,9 +631,11 @@ class TransformerTranslatorTrainer:
                 train_metrics["fidelity"],
                 train_metrics["range"],
                 train_metrics["forecast"],
+                train_metrics["mmd"],
+                train_metrics["mmd_trans"],
             )
             logging.info(
-                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f val_forecast=%.4f",
+                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f val_forecast=%.4f val_mmd=%.4f val_mmd_trans=%.4f",
                 epoch + 1,
                 epochs,
                 val_metrics["total"],
@@ -554,6 +643,8 @@ class TransformerTranslatorTrainer:
                 val_metrics["fidelity"],
                 val_metrics["range"],
                 val_metrics["forecast"],
+                val_metrics["mmd"],
+                val_metrics["mmd_trans"],
             )
 
             self.history.append(
@@ -564,11 +655,15 @@ class TransformerTranslatorTrainer:
                     "train_fidelity": train_metrics["fidelity"],
                     "train_range": train_metrics["range"],
                     "train_forecast": train_metrics["forecast"],
+                    "train_mmd": train_metrics["mmd"],
+                    "train_mmd_trans": train_metrics["mmd_trans"],
                     "val_total": val_metrics["total"],
                     "val_task": val_metrics["task"],
                     "val_fidelity": val_metrics["fidelity"],
                     "val_range": val_metrics["range"],
                     "val_forecast": val_metrics["forecast"],
+                    "val_mmd": val_metrics["mmd"],
+                    "val_mmd_trans": val_metrics["mmd_trans"],
                 }
             )
 
@@ -630,3 +725,36 @@ class TransformerTranslatorTrainer:
         fig.tight_layout()
         fig.savefig(self.run_dir / "task_loss_curve.png", dpi=150)
         plt.close(fig)
+
+        # Fidelity loss curve
+        train_fidelity = [row.get("train_fidelity", 0) for row in self.history]
+        val_fidelity = [row.get("val_fidelity", 0) for row in self.history]
+        if any(v > 0 for v in train_fidelity + val_fidelity):
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(epochs, train_fidelity, label="train_fidelity")
+            ax.plot(epochs, val_fidelity, label="val_fidelity")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Fidelity Loss")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(self.run_dir / "fidelity_loss_curve.png", dpi=150)
+            plt.close(fig)
+
+        # MMD loss curve (only if MMD was used)
+        if any(row.get("train_mmd", 0) > 0 or row.get("val_mmd", 0) > 0 for row in self.history):
+            train_mmd = [row.get("train_mmd", 0) for row in self.history]
+            val_mmd = [row.get("val_mmd", 0) for row in self.history]
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.plot(epochs, train_mmd, label="train_mmd")
+            ax.plot(epochs, val_mmd, label="val_mmd")
+            train_mmd_trans = [row.get("train_mmd_trans", 0) for row in self.history]
+            val_mmd_trans = [row.get("val_mmd_trans", 0) for row in self.history]
+            if any(v > 0 for v in train_mmd_trans + val_mmd_trans):
+                ax.plot(epochs, train_mmd_trans, label="train_mmd_trans", linestyle="--")
+                ax.plot(epochs, val_mmd_trans, label="val_mmd_trans", linestyle="--")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("MMD Loss")
+            ax.legend()
+            fig.tight_layout()
+            fig.savefig(self.run_dir / "mmd_loss_curve.png", dpi=150)
+            plt.close(fig)

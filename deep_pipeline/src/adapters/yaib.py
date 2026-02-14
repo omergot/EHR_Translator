@@ -302,10 +302,9 @@ class YAIBRuntime:
         dataset = self.create_dataset(split, ram_cache=base_ram_cache)
         dataset_to_use = dataset
         if subset_fraction is not None and subset_fraction < 1.0:
-            subset_size = max(1, int(len(dataset) * subset_fraction))
             generator = torch.Generator()
             generator.manual_seed(subset_seed)
-            indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+            indices = self._stratified_subset_indices(dataset, subset_fraction, generator)
             if ram_cache:
                 dataset_to_use = _CachedSubsetDataset(dataset, indices)
             else:
@@ -415,6 +414,51 @@ class YAIBRuntime:
             logging.info("[debug] wrote stay_id list to %s", output_path)
         except Exception as exc:
             logging.info(f"[debug] split={split} stay_id_hash=unavailable ({exc})")
+
+    def _stratified_subset_indices(
+        self,
+        dataset: PredictionPolarsDataset,
+        fraction: float,
+        generator: torch.Generator,
+    ) -> list[int]:
+        """Return subset indices using the original uniform random selection
+        (backward compatible), then log the actual positive/negative ratio.
+
+        The main generator is consumed identically to the old code so the
+        same stays are selected for any given seed.
+        """
+        # Step 1: Original uniform random selection (backward compatible)
+        subset_size = max(1, int(len(dataset) * fraction))
+        indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+
+        # Step 2: Log the subset's actual positive rate
+        group_col = self.vars.get("GROUP")
+        label_col = self.vars.get("LABEL")
+        if (
+            hasattr(dataset, "outcome_df")
+            and group_col
+            and label_col
+            and label_col in dataset.outcome_df.columns
+        ):
+            stay_ids = dataset.outcome_df[group_col].unique().to_list()
+            stay_label_df = dataset.outcome_df.group_by(group_col).agg(
+                pl.col(label_col).max().alias("_pos")
+            )
+            label_map = dict(
+                zip(stay_label_df[group_col].to_list(), stay_label_df["_pos"].to_list())
+            )
+            n_pos_full = sum(1 for sid in stay_ids if label_map.get(sid, 0) == 1)
+            n_pos_sub = sum(1 for i in indices if label_map.get(stay_ids[i], 0) == 1)
+            n_total = len(indices)
+            pos_rate_full = n_pos_full / len(stay_ids) if stay_ids else 0
+            pos_rate_sub = n_pos_sub / n_total if n_total > 0 else 0
+            logging.info(
+                "[debug] subset: %d stays -> %d (pos=%d neg=%d) "
+                "pos_rate_full=%.4f pos_rate_subset=%.4f",
+                len(stay_ids), n_total, n_pos_sub, n_total - n_pos_sub,
+                pos_rate_full, pos_rate_sub,
+            )
+        return indices
 
     def _log_test_batch_stats(self, loader: DataLoader) -> None:
         try:

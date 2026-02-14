@@ -98,6 +98,15 @@ JSON configs in `configs/` define everything for a run: data paths, baseline mod
 Standalone tools: `generate_static_recipe.py` (build preprocessing recipes), `filter_cohort_by_stay_ids.py` (subset cohorts), `compute_feature_correlation.py` / `compute_feature_ab.py` (feature analysis), `compare_data.py` (dataset comparison), `inspect_linear_regression_pkl.py` (inspect saved linear models).
 
 
+## Experiments
+
+Documentation of experiment plans, results, and investigations:
+
+- **[docs/mmd_mlm_implementation_plan.md](docs/mmd_mlm_implementation_plan.md)** — Implementation plan for MMD domain matching + MLM pretraining stages
+- **[docs/mmd_mlm_experiment_results.md](docs/mmd_mlm_experiment_results.md)** — Results from MMD + MLM debug runs (Sepsis, 5 experiments A-E, 10 and 30 epochs)
+- **[docs/attention_and_capacity_investigation.md](docs/attention_and_capacity_investigation.md)** — Investigation: why mortality improves (+0.025 AUCROC) but sepsis doesn't (+0.002). Control experiments isolating attention mode, d_model, data size, sequence length, and task structure.
+- **[docs/translator_architecture.md](docs/translator_architecture.md)** — EHRTranslator architecture: component diagram, embedding/backbone/heads details, MLM pretraining learning breakdown, temporal attention modes.
+
 ## Coding Standards
 - Logging: Use logging.info() (never print in core modules).
 - Tensors: Always handle device placement explicitly (.to(device)).

@@ -75,6 +75,8 @@ def _get_training_config(config: dict) -> dict:
         "lambda_fidelity": training.get("lambda_fidelity", config.get("lambda_fidelity", 0.01)),
         "lambda_range": training.get("lambda_range", config.get("lambda_range", 1e-3)),
         "lambda_forecast": training.get("lambda_forecast", 0.0),
+        "lambda_mmd": training.get("lambda_mmd", 0.0),
+        "lambda_mmd_transition": training.get("lambda_mmd_transition", 0.0),
         "early_stopping_patience": training.get("early_stopping_patience", 0),
         "seed": training.get("seed", config.get("seed", 42)),
         "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
@@ -350,7 +352,7 @@ def train_translator(args):
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
     if debug_mode:
-        training_cfg["epochs"] = 10
+        training_cfg["epochs"] = min(training_cfg["epochs"], 30)
     translator_type = _get_translator_type(config)
 
     logging.info("=== Training Configuration ===")
@@ -430,6 +432,48 @@ def train_translator(args):
             group_col=group_col,
         )
 
+        # Load MIMIC target data if target_data_dir is specified (for MMD loss)
+        target_train_loader = None
+        target_data_dir = config.get("target_data_dir")
+        if target_data_dir:
+            logging.info("Loading target (MIMIC) data from %s", target_data_dir)
+            target_runtime = _build_runtime_from_config(
+                config,
+                data_dir_override=target_data_dir,
+                batch_size_override=training_cfg["batch_size"],
+                seed_override=training_cfg["seed"],
+            )
+            target_runtime.load_data()
+            target_train_loader = target_runtime.create_dataloader(
+                'train',
+                shuffle=True,
+                ram_cache=True,
+                subset_fraction=0.2 if debug_mode else None,
+                subset_seed=training_cfg["seed"],
+            )
+            # Augment with static features (same handling as eICU)
+            target_feature_names = target_train_loader.dataset.get_feature_names()
+            target_static_in_features = all(name in target_feature_names for name in static_features)
+            if not target_static_in_features:
+                if use_static:
+                    static_recipe_target = _get_static_recipe(config)
+                    if static_recipe_target:
+                        target_static_df = load_static_with_recipe(
+                            data_dir=Path(target_data_dir),
+                            file_names=config["file_names"],
+                            group_col=group_col,
+                            static_features=static_features,
+                            recipe_path=Path(static_recipe_target),
+                        )
+                        target_train_loader = _augment_loader_with_static(
+                            target_train_loader, target_static_df, group_col, static_features
+                        )
+                    else:
+                        target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+                else:
+                    target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+            logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
+
         bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for transformer translator.")
@@ -448,6 +492,34 @@ def train_translator(args):
             temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
         )
 
+        # MLM pretraining phase (optional, controlled by config)
+        mlm_pretrain_epochs = translator_cfg.get("mlm_pretrain_epochs", 0)
+        if mlm_pretrain_epochs > 0:
+            from .core.pretrain import MLMPretrainer
+
+            logging.info("Starting MLM pretraining (%d epochs, bidirectional)", mlm_pretrain_epochs)
+            translator.set_temporal_mode("bidirectional")
+
+            pretrainer = MLMPretrainer(
+                translator=translator,
+                schema_resolver=schema_resolver,
+                mask_prob=translator_cfg.get("mlm_mask_prob", 0.15),
+                learning_rate=translator_cfg.get("mlm_lr", 1e-4),
+                weight_decay=translator_cfg.get("weight_decay", 1e-5),
+                device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            )
+            pretrainer.train(
+                epochs=mlm_pretrain_epochs,
+                train_loader=train_loader,
+            )
+
+            # Switch back to causal for translator fine-tuning
+            original_mode = _get_temporal_attention_mode(translator_cfg)
+            translator.set_temporal_mode(original_mode)
+            translator.discard_mlm_head()
+            translator.delta_head.reset_parameters()
+            logging.info("MLM pretraining completed. Switched to %s mode for fine-tuning.", original_mode)
+
         trainer = TransformerTranslatorTrainer(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -458,6 +530,9 @@ def train_translator(args):
             lambda_fidelity=training_cfg["lambda_fidelity"],
             lambda_range=training_cfg["lambda_range"],
             lambda_forecast=training_cfg["lambda_forecast"],
+            lambda_mmd=training_cfg["lambda_mmd"],
+            lambda_mmd_transition=training_cfg["lambda_mmd_transition"],
+            target_train_loader=target_train_loader,
             early_stopping_patience=training_cfg["early_stopping_patience"],
             best_metric=training_cfg["best_metric"],
             run_dir=Path(output_cfg["run_dir"]),
@@ -540,6 +615,7 @@ def translate_and_eval(args):
     training_cfg = _get_training_config(config)
     output_cfg = _get_output_config(config)
     translator_type = _get_translator_type(config)
+    debug_mode = config.get("debug", False)
     eval_baseline_with_target_norm = config.get("eval_baseline_with_target_normalization", False)
 
     lr_target_loader = None

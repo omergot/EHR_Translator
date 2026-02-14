@@ -433,6 +433,10 @@ class EHRTranslator(nn.Module):
         self.out_dropout = nn.Dropout(out_dropout)
         self._last_temporal_key_padding_mask = None
 
+        # MLM pretraining components (lazy-initialized)
+        self.mask_embedding: nn.Parameter | None = None
+        self.reconstruction_head: nn.Linear | None = None
+
     def forward(
         self,
         x_val: torch.Tensor,
@@ -494,6 +498,86 @@ class EHRTranslator(nn.Module):
         x_forecast = self.forecast_head(h).squeeze(-1)   # (B, T, F)
         x_forecast = x_forecast.masked_fill(m_pad[:, :, None], 0.0)
         return x_val_out, x_forecast
+
+    def set_temporal_mode(self, mode: str) -> None:
+        """Switch all AxialBlocks between 'causal' and 'bidirectional' attention."""
+        if mode not in {"causal", "bidirectional"}:
+            raise ValueError(f"Invalid temporal mode: {mode}")
+        causal = mode == "causal"
+        for block in self.blocks:
+            block.use_causal_temporal_attention = causal
+        self.temporal_attention_mode = mode
+
+    def init_mlm_head(self) -> None:
+        """Initialize MLM-specific parameters (mask embedding + reconstruction head)."""
+        if self.mask_embedding is None:
+            self.mask_embedding = nn.Parameter(torch.zeros(self.d_model))
+            nn.init.normal_(self.mask_embedding, mean=0.0, std=0.02)
+        if self.reconstruction_head is None:
+            self.reconstruction_head = nn.Linear(self.d_model, 1)
+
+    def discard_mlm_head(self) -> None:
+        """Free MLM-specific parameters after pretraining."""
+        self.mask_embedding = None
+        self.reconstruction_head = None
+
+    def forward_mlm(
+        self,
+        x_val: torch.Tensor,
+        x_miss: torch.Tensor,
+        t_abs: torch.Tensor,
+        m_pad: torch.Tensor,
+        x_static: torch.Tensor,
+        mlm_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass for MLM pretraining. Returns reconstructed feature values.
+
+        Args:
+            x_val: (B, T, F) feature values (masked timesteps zeroed out).
+            x_miss: (B, T, F) missingness indicators.
+            t_abs: (B, T) absolute timestamps.
+            m_pad: (B, T) padding mask.
+            x_static: (B, S) static features.
+            mlm_mask: (B, T) bool — True for timesteps to reconstruct.
+
+        Returns:
+            x_reconstructed: (B, T, F) reconstructed feature values.
+        """
+        m_pad = m_pad.bool()
+        t_abs = t_abs.to(dtype=x_val.dtype)
+        time_delta = torch.zeros_like(t_abs)
+        time_delta[:, 1:] = t_abs[:, 1:] - t_abs[:, :-1]
+        time_delta = time_delta.masked_fill(m_pad, 0.0)
+
+        time_delta_feat = time_delta.unsqueeze(-1).expand(-1, -1, self.num_features)
+        x_trip = torch.stack([x_val, x_miss, time_delta_feat], dim=-1)
+        h = self.triplet_proj(x_trip)
+        h = h + self.sensor_emb.view(1, 1, self.num_features, self.d_latent)
+        h = self.lift(h)
+
+        # Add mask embedding at masked positions (broadcast across features)
+        if self.mask_embedding is not None:
+            mask_expand = mlm_mask[:, :, None, None].expand_as(h)
+            h = h + mask_expand * self.mask_embedding.view(1, 1, 1, self.d_model)
+
+        time_enc = self._time_encoding(t_abs)
+        time_enc = self.time_proj(time_enc)
+        h = h + time_enc[:, :, None, :]
+        h = h.masked_fill(m_pad[:, :, None, None], 0.0)
+
+        context = self.film_mlp(x_static)
+        context = context.view(x_static.shape[0], self.n_layers, 2, self.d_model)
+
+        for layer_idx, block in enumerate(self.blocks):
+            h, _ = block(h, m_pad)
+            gamma = context[:, layer_idx, 0, :].unsqueeze(1).unsqueeze(1)
+            beta = context[:, layer_idx, 1, :].unsqueeze(1).unsqueeze(1)
+            h = gamma * h + beta
+            h = h.masked_fill(m_pad[:, :, None, None], 0.0)
+
+        x_reconstructed = self.reconstruction_head(h).squeeze(-1)  # (B, T, F)
+        x_reconstructed = x_reconstructed.masked_fill(m_pad[:, :, None], 0.0)
+        return x_reconstructed
 
     def _time_encoding(self, t_abs: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len = t_abs.shape

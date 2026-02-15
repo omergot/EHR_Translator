@@ -1,0 +1,6 @@
+experiments/
+runs/
+__pycache__/
+*.pyc
+.agents/
+.claude/

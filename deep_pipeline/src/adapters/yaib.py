@@ -117,8 +117,14 @@ class YAIBRuntime:
         self._trained_columns_set = False
         self._logged_test_stats = False
         self._is_ml_model = False
+        self._custom_loss_fn = None
 
         self.setup_yaib_environment()
+
+    def set_custom_loss(self, loss_fn):
+        """Set a custom loss function to replace the default model loss."""
+        self._custom_loss_fn = loss_fn
+        logging.info("[yaib] Custom loss function set: %s", type(loss_fn).__name__)
 
     def setup_yaib_environment(self):
         gin.clear_config()
@@ -509,10 +515,13 @@ class YAIBRuntime:
                 target = torch.masked_select(labels, mask)
                 run_mode = getattr(self._model, "run_mode", RunMode.classification)
                 if outputs.shape[-1] > 1 and run_mode == RunMode.classification:
-                    loss_weights = getattr(self._model, "loss_weights", None)
-                    if loss_weights is not None:
-                        loss_weights = loss_weights.to(device)
-                    loss = self._model.loss(prediction, target.long(), weight=loss_weights)
+                    if self._custom_loss_fn is not None:
+                        loss = self._custom_loss_fn(prediction, target.long())
+                    else:
+                        loss_weights = getattr(self._model, "loss_weights", None)
+                        if loss_weights is not None:
+                            loss_weights = loss_weights.to(device)
+                        loss = self._model.loss(prediction, target.long(), weight=loss_weights)
                 elif run_mode == RunMode.regression:
                     loss = self._model.loss(prediction[:, 0], target.float())
                 else:

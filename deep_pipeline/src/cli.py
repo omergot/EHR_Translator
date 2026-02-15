@@ -20,6 +20,9 @@ from icu_benchmarks.data.constants import DataSplit
 import pandas as pd
 
 def setup_logging(verbose: bool = False, log_file: str | None = "run.log"):
+    import os as _os
+    # Allow environment variable override for experiment orchestration
+    log_file = _os.environ.get("EHR_LOG_FILE", log_file)
     level = logging.DEBUG if verbose else logging.INFO
     handlers = [logging.StreamHandler()]
     if log_file:
@@ -81,6 +84,40 @@ def _get_training_config(config: dict) -> dict:
         "seed": training.get("seed", config.get("seed", 42)),
         "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
         "oversampling_factor": training.get("oversampling_factor", 0),
+        # C1: Focal loss
+        "focal_gamma": training.get("focal_gamma", 0),
+        "focal_alpha": training.get("focal_alpha", 0.75),
+        # C2: GradNorm dynamic weighting
+        "use_gradnorm": training.get("use_gradnorm", False),
+        "gradnorm_alpha": training.get("gradnorm_alpha", 0.3),
+        # C3: Cosine fidelity
+        "cosine_fidelity": training.get("cosine_fidelity", False),
+        # A1: Variable-length batching
+        "variable_length_batching": training.get("variable_length_batching", False),
+        # A2: Sequence chunking
+        "chunk_size": training.get("chunk_size", 0),
+        "chunk_overlap": training.get("chunk_overlap", 5),
+        # A3: Padding-aware fidelity
+        "padding_aware_fidelity": training.get("padding_aware_fidelity", False),
+        "fidelity_proximity_alpha": training.get("fidelity_proximity_alpha", 1.0),
+        # A4: Truncate-and-pack
+        "max_seq_len": training.get("max_seq_len", 0),
+        # B1: Hidden-state MMD
+        "lambda_hidden_mmd": training.get("lambda_hidden_mmd", 0.0),
+        # B2: Shared encoder
+        "lambda_shared_encoder": training.get("lambda_shared_encoder", 0.0),
+        # B3: kNN translation
+        "lambda_knn": training.get("lambda_knn", 0.0),
+        "knn_k": training.get("knn_k", 5),
+        "knn_temperature": training.get("knn_temperature", 0.1),
+        # B4: Contrastive domain alignment
+        "lambda_contrastive": training.get("lambda_contrastive", 0.0),
+        "contrastive_temperature": training.get("contrastive_temperature", 0.07),
+        # B5: Optimal transport
+        "lambda_ot": training.get("lambda_ot", 0.0),
+        "ot_reg": training.get("ot_reg", 0.1),
+        # B6: Domain-adversarial (DANN)
+        "lambda_adversarial": training.get("lambda_adversarial", 0.0),
     }
 
 
@@ -901,9 +938,17 @@ def main():
     train_eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     
     args = parser.parse_args()
-    
-    setup_logging(args.verbose)
-    
+
+    # Load config early to get log_file setting
+    _log_file = "run.log"
+    if hasattr(args, "config") and args.config:
+        try:
+            _cfg = load_config(Path(args.config))
+            _log_file = _cfg.get("output", {}).get("log_file", "run.log")
+        except Exception:
+            pass
+    setup_logging(getattr(args, "verbose", False), log_file=_log_file)
+
     if args.command == "train_translator":
         train_translator(args)
     elif args.command == "translate_and_eval":

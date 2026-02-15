@@ -201,6 +201,7 @@ class TransformerTranslatorTrainer:
         best_metric: str = "val_total",
         run_dir: Path | None = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        training_config: dict | None = None,
     ) -> None:
         self.yaib_runtime = yaib_runtime
         self.schema_resolver = schema_resolver
@@ -236,6 +237,9 @@ class TransformerTranslatorTrainer:
         self.history: list[dict[str, float]] = []
         self._logged_train_batch = False
         self._logged_val_batch = False
+
+        # Store training config for experiment-specific features
+        self._training_config = training_config or {}
 
     def _load_feature_bounds(self, bounds_csv: Path, feature_names: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         import pandas as pd

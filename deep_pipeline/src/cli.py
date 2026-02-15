@@ -612,6 +612,7 @@ def train_translator(args):
             best_metric=training_cfg["best_metric"],
             run_dir=Path(output_cfg["run_dir"]),
             device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            training_config=training_cfg,
         )
         trainer.train(
             epochs=training_cfg["epochs"],

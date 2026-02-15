@@ -305,7 +305,9 @@ Cosine similarity is scale-invariant: it only measures whether the *direction* o
 
 ## D. Evaluation and Diagnostics
 
-### D1. Calibration Metrics
+### D1. Calibration Metrics — **Implemented**
+
+> **Status**: Implemented in `src/core/eval.py`. Brier score and ECE are computed in all evaluator paths (`TranslatorEvaluator`, `TransformerTranslatorEvaluator`). Results appear automatically in evaluation logs.
 
 **Problem**: AUROC measures discrimination (ranking) but not calibration (absolute probability accuracy). Domain adaptation can preserve ranking while destroying calibration: the translator might shift all predictions up or down without changing their order.
 
@@ -322,7 +324,9 @@ ece = np.mean(np.abs(fraction_pos - mean_pred))  # Expected Calibration Error
 
 This is ~10 lines of code and immediately reveals if translations preserve the baseline's probability estimates. Critical for clinical deployment arguments in a thesis.
 
-### D2. Per-Feature Delta Analysis
+### D2. Per-Feature Delta Analysis — **Implemented**
+
+> **Status**: Implemented in `src/core/eval.py` (`TransformerTranslatorEvaluator.translate_and_evaluate`). Running-stats accumulators track per-feature mean, std, abs_max, and fraction near zero. Logs top-5 most/least modified features with `[delta-analysis]` prefix.
 
 **Problem**: We know the translator produces small deltas overall, but not *which* features it changes or whether those changes are clinically sensible.
 
@@ -339,7 +343,9 @@ per_feature_max = deltas[~M_pad].abs().max(dim=0).values
 
 This tells you: is the translator modifying clinically relevant features (labs, vitals) or just noise features? Are the modifications in a plausible range? Combined with SHAP analysis on the baseline model before/after translation, this reveals whether the translator is doing something clinically meaningful.
 
-### D3. Gradient Dynamics Over Training (Extend Current Diagnostic)
+### D3. Gradient Dynamics Over Training (Extend Current Diagnostic) — **Implemented**
+
+> **Status**: Implemented in `src/core/train.py`. Gradient diagnostics now run periodically (epoch 0 detailed + batch 0 at `epochs // 4` intervals). Cosine similarity between task/fidelity gradients added (`cos_task_fid`). All `[grad-diag]` and `[grad-ts]` messages include `epoch=`.
 
 **Problem**: Gradient norms are logged only for batches 0-3 of epoch 0. The gradient landscape changes as the translator learns.
 
@@ -368,6 +374,8 @@ logging.info("[grad-diag] task_fid_cosine=%.4f", cos_sim.item())
 This is essential for thesis credibility. A result of +0.0059 +/- 0.003 (p=0.04) is publishable. A result of +0.0059 +/- 0.008 (p=0.3) is not.
 
 ### D5. Oracle Noise Bound
+
+> **Deferred**: Oracle Noise Bound Multi-seed significance testing is deferred to the final results phase, after the best model/training configuration is identified.
 
 **Problem**: No lower bound to contextualize results. Is +0.006 good or bad?
 
@@ -419,15 +427,15 @@ A method that improves all three tasks is a much stronger thesis contribution th
 | # | Recommendation | Section | Effort | Impact | Notes |
 |---|---|---|---|---|---|
 | 1 | Focal loss | C1 | Low (15 lines) | High | Directly amplifies sparse task signal |
-| 2 | Calibration metrics | D1 | Low (10 lines) | High | Catches silent failures |
+| 2 | ~~Calibration metrics~~ | D1 | ~~Low (10 lines)~~ | ~~High~~ | **Done** — Brier + ECE in all evaluators |
 | 3 | Variable-length batching | A1 | Low (30 lines) | High | Eliminates 73% padding waste |
 | 4 | Sequence chunking | A2 | Medium | High | Transforms sepsis to mortality-like structure |
 | 5 | Penultimate-layer alignment | B1 | Medium | High | Model-agnostic, dense signal |
 | 6 | GradNorm dynamic weighting | C2 | Medium | High | Eliminates lambda tuning |
 | 7 | kNN translation in latent space | B3 | Medium | High | Per-sample supervision, label-free |
-| 8 | Gradient dynamics over training | D3 | Low (20 lines) | Medium | Understand training trajectory |
+| 8 | ~~Gradient dynamics over training~~ | D3 | ~~Low (20 lines)~~ | ~~Medium~~ | **Done** — Periodic + cosine similarity |
 | 9 | Multi-seed significance | D4 | Low (scripting) | Critical | Required for thesis validity |
-| 10 | Per-feature delta analysis | D2 | Low (15 lines) | Medium | Interpretability, sanity check |
+| 10 | ~~Per-feature delta analysis~~ | D2 | ~~Low (15 lines)~~ | ~~Medium~~ | **Done** — Top-5 most/least modified features |
 | 11 | Padding-aware fidelity | A3 | Low (10 lines) | Medium | Reduces gradient conflict at key timesteps |
 | 12 | Optimal transport | B5 | Medium | Medium | Principled alternative to MMD |
 | 13 | Cosine fidelity | C3 | Low (3 lines) | Medium | Better cross-feature gradient balance |
@@ -436,4 +444,4 @@ A method that improves all three tasks is a much stronger thesis contribution th
 | 16 | Ablation matrix | E1 | High (compute) | Critical | Required for thesis completeness |
 | 17 | Oracle noise bound | D5 | Low | Medium | Frames contribution |
 
-**Recommended execution order**: Start with 1-3 (one day, immediate signal improvement), then 4-5 (transform the problem structure), then 6-7 (training signal and latent alignment), then 8-10 (diagnostics). Items 9 and 16 should run in parallel with development as final validation.
+**Recommended execution order**: D1-D3 diagnostics are done. Start with 1 and 3 (focal loss + variable-length batching), then 4-5 (transform the problem structure), then 6-7 (training signal and latent alignment). Items 9 and 16 should run in parallel with development as final validation.

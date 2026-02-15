@@ -102,6 +102,7 @@ Standalone tools: `generate_static_recipe.py` (build preprocessing recipes), `fi
 
 ### Current State & Key Findings (start here)
 - **[docs/gradient_bottleneck_analysis.md](docs/gradient_bottleneck_analysis.md)** — **Main findings document.** Consolidated experiment results table, confirmed gradient bottleneck (fidelity 3-10x task), per-timestep gradient analysis comparing sepsis vs mortality, and ranked next-step recommendations. Start here for current project status.
+- **[docs/recommendations_next_steps.md](docs/recommendations_next_steps.md)** — Comprehensive recommendations: input shaping (eliminate padding, sequence chunking), latent-space alignment (model-agnostic hidden representations, kNN translation, optimal transport, contrastive), training signal (focal loss, GradNorm, cosine fidelity), evaluation methodology (calibration, significance testing, ablations). **D1 (calibration), D2 (delta analysis), D3 (extended grad diagnostics) are implemented.**
 
 ### Architecture
 - **[docs/architecture.md](docs/architecture.md)** — EHRTranslator architecture: triplet embedding, AxialBlock backbone, delta/forecast/reconstruction heads, FiLM static conditioning, temporal attention modes, MLM pretraining breakdown.

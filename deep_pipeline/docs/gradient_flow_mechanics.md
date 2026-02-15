@@ -1,5 +1,8 @@
 # Gradient Flow in the Translator Training Loop
 
+> **Role**: Foundational reference — traces a concrete forward/backward pass step-by-step. Explains *why* the task gradient is weak.
+> **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (quantified findings and next steps), [architecture.md](architecture.md) (model structure)
+
 This document traces exactly how a weight update occurs for a single training step, using a concrete example of a sepsis patient with a 30-timestep stay (padded to 169).
 
 ## Forward Pass

@@ -1,5 +1,8 @@
 # EHRTranslator Architecture
 
+> **Role**: Model architecture reference. Describes the transformer translator's components, data flow, and attention modes.
+> **See also**: [gradient_flow_mechanics.md](gradient_flow_mechanics.md) (how gradients pass through this architecture), [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (current findings and next steps)
+
 **Date**: Feb 14, 2026
 **File**: `src/core/translator.py` (class `EHRTranslator`)
 

@@ -1,4 +1,7 @@
-# Experiment Results — MMD + MLM Debug Runs
+# Experiment Results: MMD + MLM Debug Runs
+
+> **Role**: Historical — detailed per-experiment logs from MMD/MLM phase. All variants produced +0.001-0.002 AUCROC.
+> **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (consolidated results table including these + later experiments), [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) (follow-up investigation)
 
 **Task**: Sepsis (Binary Classification, eICU → MIMIC-IV)
 **Mode**: Debug (20% data subset, seed=2222)

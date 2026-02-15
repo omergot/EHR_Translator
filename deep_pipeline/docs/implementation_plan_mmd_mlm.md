@@ -1,5 +1,8 @@
 # Implementation Plan: MMD Domain Matching + MLM Pretraining
 
+> **Role**: Historical — implementation blueprint for MMD+MLM stages. Code is implemented; experiments showed limited benefit (+0.001-0.002).
+> **See also**: [strategy_evaluation_mmd_mlm.md](strategy_evaluation_mmd_mlm.md) (why this approach was chosen), [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) (results)
+
 ## Overview
 
 Add two complementary techniques to improve the causal translator:
@@ -546,4 +549,4 @@ All new config keys and their defaults (absent = same as current behavior):
 
 ## Experiment Log
 
-All experiment results (configs, tables, per-experiment details, analysis, and next steps) are maintained in **[docs/mmd_mlm_experiment_results.md](mmd_mlm_experiment_results.md)**.
+All experiment results (configs, tables, per-experiment details, analysis, and next steps) are maintained in **[docs/experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md)**.

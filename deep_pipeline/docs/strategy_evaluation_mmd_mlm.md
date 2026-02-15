@@ -1,4 +1,7 @@
-# Improving Causal Translator Performance: Ideas Analysis
+# Strategy Evaluation: MMD + MLM Approach
+
+> **Role**: Historical — documents why MMD+MLM was chosen over alternatives (forecasting, distillation). Written before experiments.
+> **See also**: [implementation_plan_mmd_mlm.md](implementation_plan_mmd_mlm.md) (how it was built), [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) (results: +0.001-0.002), [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (why it didn't help enough)
 
 ## Context
 

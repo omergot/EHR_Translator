@@ -98,14 +98,26 @@ JSON configs in `configs/` define everything for a run: data paths, baseline mod
 Standalone tools: `generate_static_recipe.py` (build preprocessing recipes), `filter_cohort_by_stay_ids.py` (subset cohorts), `compute_feature_correlation.py` / `compute_feature_ab.py` (feature analysis), `compare_data.py` (dataset comparison), `inspect_linear_regression_pkl.py` (inspect saved linear models).
 
 
-## Experiments
+## Documentation (`docs/`)
 
-Documentation of experiment plans, results, and investigations:
+### Current State & Key Findings (start here)
+- **[docs/gradient_bottleneck_analysis.md](docs/gradient_bottleneck_analysis.md)** — **Main findings document.** Consolidated experiment results table, confirmed gradient bottleneck (fidelity 3-10x task), per-timestep gradient analysis comparing sepsis vs mortality, and ranked next-step recommendations. Start here for current project status.
 
-- **[docs/mmd_mlm_implementation_plan.md](docs/mmd_mlm_implementation_plan.md)** — Implementation plan for MMD domain matching + MLM pretraining stages
-- **[docs/mmd_mlm_experiment_results.md](docs/mmd_mlm_experiment_results.md)** — Results from MMD + MLM debug runs (Sepsis, 5 experiments A-E, 10 and 30 epochs)
-- **[docs/attention_and_capacity_investigation.md](docs/attention_and_capacity_investigation.md)** — Investigation: why mortality improves (+0.025 AUCROC) but sepsis doesn't (+0.002). Control experiments isolating attention mode, d_model, data size, sequence length, and task structure.
-- **[docs/translator_architecture.md](docs/translator_architecture.md)** — EHRTranslator architecture: component diagram, embedding/backbone/heads details, MLM pretraining learning breakdown, temporal attention modes.
+### Architecture
+- **[docs/architecture.md](docs/architecture.md)** — EHRTranslator architecture: triplet embedding, AxialBlock backbone, delta/forecast/reconstruction heads, FiLM static conditioning, temporal attention modes, MLM pretraining breakdown.
+- **[docs/gradient_flow_mechanics.md](docs/gradient_flow_mechanics.md)** — Step-by-step trace of forward/backward pass through translator→LSTM→loss, explaining how gradients reach the translator and why the task signal is weak.
+
+### Experiment History (chronological)
+- **[docs/strategy_evaluation_mmd_mlm.md](docs/strategy_evaluation_mmd_mlm.md)** — Evaluation of 4 competing approaches (forecasting, distillation, MMD, MLM). Chose MMD+MLM. Explains reasoning.
+- **[docs/implementation_plan_mmd_mlm.md](docs/implementation_plan_mmd_mlm.md)** — Implementation plan for MMD domain matching + MLM pretraining (stages 0-5).
+- **[docs/experiment_results_mmd_mlm.md](docs/experiment_results_mmd_mlm.md)** — Results from MMD+MLM experiments A-E (Sepsis, debug, 10 and 30 epochs). All variants near +0.001-0.002 AUCROC.
+- **[docs/investigation_mortality_vs_sepsis.md](docs/investigation_mortality_vs_sepsis.md)** — Controlled experiments isolating why mortality (+0.025) works but sepsis (+0.002) doesn't. Rules out attention mode, capacity, data size. Identifies sequence length + task structure as root cause.
+
+### Best Results Summary
+| Task | Best AUCROC Delta | Config |
+|---|---|---|
+| Mortality24 | **+0.0264** | Bidirectional, d128, full data, 30ep |
+| Sepsis | **+0.0059** | Causal, d64, debug, f=20, W=25 |
 
 ## Coding Standards
 - Logging: Use logging.info() (never print in core modules).

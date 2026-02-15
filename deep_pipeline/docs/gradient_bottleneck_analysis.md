@@ -1,5 +1,8 @@
 # Gradient Bottleneck Analysis and Next Steps
 
+> **Role**: Main findings document — start here for current project status.
+> **See also**: [architecture.md](architecture.md) (model reference), [gradient_flow_mechanics.md](gradient_flow_mechanics.md) (how gradients flow), [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) (controlled factor isolation experiments)
+
 ## Summary of All Experiments
 
 ### Results Table (Sepsis, debug=20%, d_model=64 unless noted)

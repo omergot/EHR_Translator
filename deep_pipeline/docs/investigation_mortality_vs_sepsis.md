@@ -1,5 +1,8 @@
 # Investigation: Why Mortality Works But Sepsis Doesn't
 
+> **Role**: Controlled experiments systematically ruling out hypotheses (attention mode, capacity, data size). Identifies sequence length + task structure as the root cause.
+> **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (quantified gradient evidence confirming this), [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) (earlier MMD/MLM results that motivated this investigation)
+
 **Date**: Feb 13-14, 2026
 **Question**: The mortality24 task with bidirectional attention achieves +0.023 AUCROC, while sepsis with causal attention barely moves (+0.002). What causes this gap?
 
@@ -7,7 +10,7 @@
 
 ## Background
 
-Prior work established that the causal transformer translator on sepsis produces minimal improvement (+0.001 to +0.002 AUCROC) across all loss configurations (baseline, MMD, MLM, MLM+MMD). See [mmd_mlm_experiment_results.md](mmd_mlm_experiment_results.md) for full details.
+Prior work established that the causal transformer translator on sepsis produces minimal improvement (+0.001 to +0.002 AUCROC) across all loss configurations (baseline, MMD, MLM, MLM+MMD). See [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) for full details.
 
 Meanwhile, a mortality24 run with bidirectional attention had achieved AUCROC 0.8079 -> 0.8309 (+0.0230). This investigation isolates which factors explain the gap.
 

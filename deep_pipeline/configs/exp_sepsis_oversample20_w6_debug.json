@@ -1,0 +1,45 @@
+{
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/sepsis/eicu",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Sepsis/LSTM/repetition_0/fold_0",
+  "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "model_name": "LSTM",
+  "vars": {
+    "GROUP": "stay_id",
+    "LABEL": "label",
+    "SEQUENCE": "time",
+    "DYNAMIC": ["alb", "alp", "alt", "ast", "be", "bicar", "bili", "bili_dir", "bnd", "bun", "ca", "cai", "ck", "ckmb", "cl", "crea", "crp", "dbp", "fgn", "fio2", "glu", "hgb", "hr", "inr_pt", "k", "lact", "lymph", "map", "mch", "mchc", "mcv", "methb", "mg", "na", "neut", "o2sat", "pco2", "ph", "phos", "plt", "po2", "ptt", "resp", "sbp", "temp", "tnt", "urine", "wbc"],
+    "STATIC": ["age", "sex", "height", "weight"]
+  },
+  "file_names": {
+    "DYNAMIC": "dyn.parquet",
+    "OUTCOME": "outc.parquet",
+    "STATIC": "sta.parquet"
+  },
+  "translator": {
+    "type": "transformer",
+    "d_model": 64,
+    "temporal_attention_mode": "causal",
+    "temporal_attention_window": 6
+  },
+  "paths": {
+    "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv"
+  },
+  "training": {
+    "lr": 1e-4,
+    "epochs": 30,
+    "batch_size": 64,
+    "lambda_fidelity": 0.1,
+    "lambda_forecast": 0,
+    "lambda_range": 0.001,
+    "early_stopping_patience": 5,
+    "best_metric": "val_task",
+    "oversampling_factor": 20
+  },
+  "output": {
+    "run_dir": "runs/exp_sepsis_oversample20_w6_debug"
+  },
+  "seed": 2222,
+  "device": "cuda",
+  "debug": true
+}

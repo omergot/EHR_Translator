@@ -355,7 +355,7 @@ class TransformerTranslatorTrainer:
 
         model.apply(force_stateless)
 
-    def _run_epoch(self, loader: DataLoader) -> dict[str, float]:
+    def _run_epoch(self, loader: DataLoader, epoch: int = 0) -> dict[str, float]:
         self.translator.train()
         totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0}
         use_forecast = self.lambda_forecast > 0
@@ -386,6 +386,9 @@ class TransformerTranslatorTrainer:
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
+            # Retain grad on translator output for per-timestep gradient analysis
+            if epoch == 0 and num_batches <= 3:
+                x_val_out.retain_grad()
             if self.device.startswith("cuda"):
                 torch.cuda.synchronize()
             translator_time = time.time() - t_translator
@@ -456,6 +459,66 @@ class TransformerTranslatorTrainer:
                 + (self.lambda_mmd * l_mmd)
                 + (self.lambda_mmd_transition * l_mmd_trans)
             )
+
+            # Gradient magnitude diagnostic (first 4 batches of epoch 0)
+            _do_grad_diag = epoch == 0 and num_batches <= 3
+
+            if _do_grad_diag:
+                # Measure per-component gradient norms before the real step
+                def _grad_norm(loss_val):
+                    self.optimizer.zero_grad()
+                    if x_val_out.grad is not None:
+                        x_val_out.grad = None
+                    loss_val.backward(retain_graph=True)
+                    gn = sum(
+                        p.grad.detach().norm().item() ** 2
+                        for p in self.translator.parameters()
+                        if p.grad is not None
+                    ) ** 0.5
+                    return gn
+
+                task_grad = _grad_norm(l_task)
+                fid_grad = _grad_norm(self.lambda_fidelity * l_fidelity)
+                range_grad = _grad_norm(self.lambda_range * l_range)
+
+                logging.info(
+                    "[grad-diag] batch=%d task_grad=%.6f fid_grad=%.6f range_grad=%.6f "
+                    "ratio_fid/task=%.2f ratio_range/task=%.2f",
+                    num_batches, task_grad, fid_grad, range_grad,
+                    fid_grad / (task_grad + 1e-12),
+                    range_grad / (task_grad + 1e-12),
+                )
+
+                # Per-timestep gradient analysis on x_val_out
+                if x_val_out.grad is not None:
+                    x_val_out.grad = None
+                self.optimizer.zero_grad()
+                l_task.backward(retain_graph=True)
+                if x_val_out.grad is not None:
+                    grad = x_val_out.grad.detach().float()  # (B, T, F)
+                    label_m = parts["M_label"].bool()
+                    pad_m = parts["M_pad"]
+                    y = parts["y"]
+                    pos_mask = (y >= 1) & label_m  # positive labeled timesteps
+                    neg_mask = (y < 1) & label_m   # negative labeled timesteps
+                    unlabeled_mask = (~label_m) & (~pad_m)  # non-padded, unlabeled
+                    grad_per_ts = grad.norm(dim=-1)  # (B, T)
+                    pos_norm = grad_per_ts[pos_mask].mean().item() if pos_mask.any() else 0.0
+                    neg_norm = grad_per_ts[neg_mask].mean().item() if neg_mask.any() else 0.0
+                    unlabeled_norm = grad_per_ts[unlabeled_mask].mean().item() if unlabeled_mask.any() else 0.0
+                    n_pos = pos_mask.sum().item()
+                    n_neg = neg_mask.sum().item()
+                    n_unlab = unlabeled_mask.sum().item()
+                    n_pad = pad_m.sum().item()
+                    logging.info(
+                        "[grad-ts] batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
+                        "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
+                        num_batches, pos_norm, neg_norm, unlabeled_norm,
+                        pos_norm / (neg_norm + 1e-12),
+                        n_pos, n_neg, n_unlab, n_pad,
+                    )
+                else:
+                    logging.info("[grad-ts] batch=%d x_val_out.grad is None (no task grad reached output)", num_batches)
 
             self.optimizer.zero_grad()
             if use_amp:
@@ -618,7 +681,7 @@ class TransformerTranslatorTrainer:
         epochs_without_improvement = 0
         for epoch in range(epochs):
             logging.info("Epoch %d/%d - training", epoch + 1, epochs)
-            train_metrics = self._run_epoch(train_loader)
+            train_metrics = self._run_epoch(train_loader, epoch=epoch)
             logging.info("Epoch %d/%d - validating", epoch + 1, epochs)
             val_metrics = self._validate(val_loader)
 

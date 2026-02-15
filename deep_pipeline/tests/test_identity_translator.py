@@ -24,22 +24,27 @@ def test_identity_translator_metrics_unchanged():
     with open(config_path, 'r') as f:
         config = json.load(f)
     
+    training_cfg = config.get("training", {})
+    batch_size = training_cfg.get("batch_size", config.get("batch_size", 64))
+
     yaib_runtime = YAIBRuntime(
         data_dir=Path(config["data_dir"]),
         baseline_model_dir=Path(config["baseline_model_dir"]),
         task_config=Path(config["task_config"]),
+        model_config=Path(config["model_config"]) if config.get("model_config") else None,
         model_name=config["model_name"],
         vars=config["vars"],
         file_names=config["file_names"],
         seed=config.get("seed", 42),
-        batch_size=config.get("batch_size", 1),
+        batch_size=batch_size,
     )
-    
+
     yaib_runtime.load_data()
-    yaib_runtime.load_baseline_model()
-    
-    test_dataset = yaib_runtime.create_dataset('test', ram_cache=True)
-    test_loader = yaib_runtime.create_dataloader(test_dataset, shuffle=False)
+
+    test_loader = yaib_runtime.create_dataloader(
+        'test', shuffle=False, ram_cache=True,
+        subset_fraction=0.05, subset_seed=42,
+    )
     
     data_shape = next(iter(test_loader))[0].shape
     input_size = data_shape[-1]

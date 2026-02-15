@@ -80,6 +80,7 @@ def _get_training_config(config: dict) -> dict:
         "early_stopping_patience": training.get("early_stopping_patience", 0),
         "seed": training.get("seed", config.get("seed", 42)),
         "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
+        "oversampling_factor": training.get("oversampling_factor", 0),
     }
 
 
@@ -149,6 +150,38 @@ def _augment_loader_with_zero_static(
         pin_memory=getattr(loader, "pin_memory", False),
         collate_fn=loader.collate_fn,
     )
+
+def _get_stay_labels(dataset):
+    """Return list of per-stay binary labels (1 if any timestep is positive)."""
+    labels = []
+    for i in range(len(dataset)):
+        stay_labels = dataset[i][1]  # (data, labels, mask[, static])
+        labels.append(int(stay_labels.max() >= 1))
+    return labels
+
+
+def _apply_oversampling(loader, oversampling_factor):
+    """Replace train DataLoader with one using WeightedRandomSampler for positive oversampling."""
+    from torch.utils.data import WeightedRandomSampler
+
+    stay_labels = _get_stay_labels(loader.dataset)
+    n_pos = sum(stay_labels)
+    n_neg = len(stay_labels) - n_pos
+    weights = [oversampling_factor if lbl == 1 else 1.0 for lbl in stay_labels]
+    sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+    logging.info(
+        "Oversampling: factor=%.1f, %d pos / %d neg, eff_pos_rate=%.1f%%",
+        oversampling_factor, n_pos, n_neg,
+        100 * oversampling_factor * n_pos / (oversampling_factor * n_pos + n_neg),
+    )
+    return DataLoader(
+        loader.dataset,
+        batch_size=loader.batch_size,
+        sampler=sampler,
+        num_workers=loader.num_workers,
+        drop_last=loader.drop_last,
+    )
+
 
 def _get_bounds_csv(config: dict) -> str:
     paths = config.get("paths", {})
@@ -423,6 +456,10 @@ def train_translator(args):
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
                 logging.info("Static conditioning disabled; using zero static features for translator.")
 
+        oversampling_factor = training_cfg.get("oversampling_factor", 0)
+        if oversampling_factor > 0:
+            train_loader = _apply_oversampling(train_loader, oversampling_factor)
+
         schema_resolver = SchemaResolver(
             feature_names=feature_names,
             dynamic_features=config["vars"]["DYNAMIC"],
@@ -490,6 +527,7 @@ def train_translator(args):
             out_dropout=translator_cfg.get("out_dropout", 0.1),
             static_dim=len(static_features),
             temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
         )
 
         # MLM pretraining phase (optional, controlled by config)
@@ -690,6 +728,7 @@ def translate_and_eval(args):
             out_dropout=translator_cfg.get("out_dropout", 0.1),
             static_dim=len(static_features),
             temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
         )
 
         checkpoint_path = args.translator_checkpoint

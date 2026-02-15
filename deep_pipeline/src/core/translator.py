@@ -305,7 +305,8 @@ class LinearRegressionTranslator(Translator):
 
 
 class AxialBlock(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int, use_causal_temporal_attention: bool):
+    def __init__(self, d_model: int, n_heads: int, dropout: float, d_ff: int, use_causal_temporal_attention: bool,
+                 temporal_attention_window: int = 0):
         super().__init__()
         self.var_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
         self.temp_attn = nn.MultiheadAttention(d_model, n_heads, dropout=dropout, batch_first=True)
@@ -314,6 +315,7 @@ class AxialBlock(nn.Module):
         self.norm_temp = nn.LayerNorm(d_model)
         self.norm_ffn = nn.LayerNorm(d_model)
         self.use_causal_temporal_attention = use_causal_temporal_attention
+        self.temporal_attention_window = temporal_attention_window
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_ff),
             nn.GELU(),
@@ -355,7 +357,10 @@ class AxialBlock(nn.Module):
                 logging.warning("All-padded sequences in temporal attention: %d", int(all_pad.sum().item()))
         temporal_attn_mask = None
         if self.use_causal_temporal_attention:
-            temporal_attn_mask = torch.ones((seq_len, seq_len), device=h_temp.device, dtype=torch.bool).triu(diagonal=1)
+            temporal_attn_mask = torch.ones((seq_len, seq_len), device=h_temp.device, dtype=torch.bool).triu_(1)
+            if self.temporal_attention_window > 0:
+                # Block positions more than W-1 steps in the past
+                temporal_attn_mask |= torch.ones((seq_len, seq_len), device=h_temp.device, dtype=torch.bool).tril_(-self.temporal_attention_window)
         attn_out, _ = self.temp_attn(
             h_temp,
             h_temp,
@@ -386,6 +391,7 @@ class EHRTranslator(nn.Module):
         out_dropout: float = 0.1,
         static_dim: int = 4,
         temporal_attention_mode: str = "bidirectional",
+        temporal_attention_window: int = 0,
     ):
         super().__init__()
         if d_time % 2 != 0:
@@ -395,6 +401,7 @@ class EHRTranslator(nn.Module):
         self.d_model = d_model
         self.d_time = d_time
         self.n_layers = n_layers
+        self.temporal_attention_window = temporal_attention_window
         if temporal_attention_mode not in {"bidirectional", "causal"}:
             raise ValueError(
                 f"Unsupported temporal_attention_mode '{temporal_attention_mode}'. "
@@ -417,6 +424,7 @@ class EHRTranslator(nn.Module):
                     dropout=dropout,
                     d_ff=d_ff,
                     use_causal_temporal_attention=use_causal_temporal_attention,
+                    temporal_attention_window=temporal_attention_window,
                 )
                 for _ in range(n_layers)
             ]

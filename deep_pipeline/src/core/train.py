@@ -4,6 +4,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.cuda.amp import GradScaler
 from torch.optim import Adam, AdamW
 
@@ -387,7 +388,10 @@ class TransformerTranslatorTrainer:
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
             # Retain grad on translator output for per-timestep gradient analysis
-            if epoch == 0 and num_batches <= 3:
+            _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
+            _do_grad_diag = (epoch == 0 and num_batches <= 3) or \
+                            (epoch > 0 and epoch % _grad_diag_interval == 0 and num_batches == 0)
+            if _do_grad_diag:
                 x_val_out.retain_grad()
             if self.device.startswith("cuda"):
                 torch.cuda.synchronize()
@@ -460,33 +464,41 @@ class TransformerTranslatorTrainer:
                 + (self.lambda_mmd_transition * l_mmd_trans)
             )
 
-            # Gradient magnitude diagnostic (first 4 batches of epoch 0)
-            _do_grad_diag = epoch == 0 and num_batches <= 3
-
+            # Gradient magnitude diagnostic (periodic: epoch 0 detailed, then batch 0 at intervals)
             if _do_grad_diag:
                 # Measure per-component gradient norms before the real step
-                def _grad_norm(loss_val):
+                def _grad_vec(loss_val):
                     self.optimizer.zero_grad()
                     if x_val_out.grad is not None:
                         x_val_out.grad = None
                     loss_val.backward(retain_graph=True)
-                    gn = sum(
-                        p.grad.detach().norm().item() ** 2
+                    vec = torch.cat([
+                        p.grad.detach().flatten()
                         for p in self.translator.parameters()
                         if p.grad is not None
-                    ) ** 0.5
-                    return gn
+                    ])
+                    return vec
 
-                task_grad = _grad_norm(l_task)
-                fid_grad = _grad_norm(self.lambda_fidelity * l_fidelity)
-                range_grad = _grad_norm(self.lambda_range * l_range)
+                task_grad_vec = _grad_vec(l_task)
+                fid_grad_vec = _grad_vec(self.lambda_fidelity * l_fidelity)
+                range_grad_vec = _grad_vec(self.lambda_range * l_range)
+
+                task_grad = task_grad_vec.norm().item()
+                fid_grad = fid_grad_vec.norm().item()
+                range_grad = range_grad_vec.norm().item()
+
+                # Cosine similarity between task and fidelity gradient directions
+                cos_task_fid = F.cosine_similarity(
+                    task_grad_vec.unsqueeze(0), fid_grad_vec.unsqueeze(0)
+                ).item()
 
                 logging.info(
-                    "[grad-diag] batch=%d task_grad=%.6f fid_grad=%.6f range_grad=%.6f "
-                    "ratio_fid/task=%.2f ratio_range/task=%.2f",
-                    num_batches, task_grad, fid_grad, range_grad,
+                    "[grad-diag] epoch=%d batch=%d task_grad=%.6f fid_grad=%.6f range_grad=%.6f "
+                    "ratio_fid/task=%.2f ratio_range/task=%.2f cos_task_fid=%.4f",
+                    epoch, num_batches, task_grad, fid_grad, range_grad,
                     fid_grad / (task_grad + 1e-12),
                     range_grad / (task_grad + 1e-12),
+                    cos_task_fid,
                 )
 
                 # Per-timestep gradient analysis on x_val_out
@@ -511,14 +523,14 @@ class TransformerTranslatorTrainer:
                     n_unlab = unlabeled_mask.sum().item()
                     n_pad = pad_m.sum().item()
                     logging.info(
-                        "[grad-ts] batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
+                        "[grad-ts] epoch=%d batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
                         "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
-                        num_batches, pos_norm, neg_norm, unlabeled_norm,
+                        epoch, num_batches, pos_norm, neg_norm, unlabeled_norm,
                         pos_norm / (neg_norm + 1e-12),
                         n_pos, n_neg, n_unlab, n_pad,
                     )
                 else:
-                    logging.info("[grad-ts] batch=%d x_val_out.grad is None (no task grad reached output)", num_batches)
+                    logging.info("[grad-ts] epoch=%d batch=%d x_val_out.grad is None (no task grad reached output)", epoch, num_batches)
 
             self.optimizer.zero_grad()
             if use_amp:
@@ -678,6 +690,8 @@ class TransformerTranslatorTrainer:
                 verify_baseline_determinism(self.yaib_runtime, sample_batch, self.device)
             except StopIteration:
                 logging.warning("Baseline integrity check skipped: empty train_loader.")
+        self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
+        logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
         for epoch in range(epochs):
             logging.info("Epoch %d/%d - training", epoch + 1, epochs)

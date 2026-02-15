@@ -7,10 +7,35 @@ import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Subset
 
+import numpy as np
+
 from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
 from ..core.schema import SchemaResolver
 from ..core.io_parquet import reconstruct_parquet_from_batches, write_translated_parquet
+
+
+def _compute_calibration_metrics(targets: np.ndarray, probs: np.ndarray, n_bins: int = 10) -> Dict[str, float]:
+    """Compute Brier score and Expected Calibration Error (ECE)."""
+    from sklearn.metrics import brier_score_loss
+
+    brier = brier_score_loss(targets, probs)
+
+    # ECE: bin predictions, compare mean predicted vs observed fraction of positives
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    ece = 0.0
+    for i in range(n_bins):
+        mask = (probs >= bin_edges[i]) & (probs < bin_edges[i + 1])
+        if i == n_bins - 1:  # last bin includes right edge
+            mask = (probs >= bin_edges[i]) & (probs <= bin_edges[i + 1])
+        if mask.sum() == 0:
+            continue
+        bin_acc = targets[mask].mean()
+        bin_conf = probs[mask].mean()
+        ece += mask.sum() * abs(bin_acc - bin_conf)
+    ece /= len(probs)
+
+    return {"brier": float(brier), "ece": float(ece)}
 
 
 class TranslatorEvaluator:
@@ -88,7 +113,12 @@ class TranslatorEvaluator:
                 "AUCPR": auprc,
                 "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
             }
-        
+            try:
+                cal = _compute_calibration_metrics(targets, probs)
+                avg_metrics.update(cal)
+            except Exception as e:
+                logging.warning("Calibration metrics failed: %s", e)
+
         if output_parquet_path:
             self.export_translated_parquet(
                 all_batches,
@@ -189,11 +219,17 @@ class TranslatorEvaluator:
         except ValueError:
             auprc = 0.0
 
-        return {
+        metrics = {
             "AUCROC": auroc,
             "AUCPR": auprc,
             "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
         }
+        try:
+            cal = _compute_calibration_metrics(targets, probs)
+            metrics.update(cal)
+        except Exception as e:
+            logging.warning("Calibration metrics failed: %s", e)
+        return metrics
 
 
 class TransformerTranslatorEvaluator:
@@ -299,11 +335,17 @@ class TransformerTranslatorEvaluator:
         except ValueError:
             auprc = 0.0
 
-        return {
+        metrics = {
             "AUCROC": auroc,
             "AUCPR": auprc,
             "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
         }
+        try:
+            cal = _compute_calibration_metrics(targets, probs)
+            metrics.update(cal)
+        except Exception as e:
+            logging.warning("Calibration metrics failed: %s", e)
+        return metrics
 
     def translate_and_evaluate(
         self,
@@ -327,6 +369,13 @@ class TransformerTranslatorEvaluator:
         sample_after: List[torch.Tensor] = []
         remaining_samples = sample_size
 
+        # D2: Per-feature delta accumulators (running stats to avoid storing all deltas)
+        all_deltas_sum = None
+        all_deltas_sq_sum = None
+        all_deltas_abs_max = None
+        all_deltas_near_zero_count = None
+        n_valid_timesteps = 0
+
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
@@ -341,6 +390,23 @@ class TransformerTranslatorEvaluator:
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
                 )
+
+                # D2: Accumulate per-feature delta stats
+                delta = (x_val_out - parts["X_val"]).detach()  # (B, T, F)
+                valid = ~parts["M_pad"]  # (B, T)
+                delta_valid = delta[valid]  # (N_valid, F)
+                if delta_valid.shape[0] > 0:
+                    if all_deltas_sum is None:
+                        n_features = delta_valid.shape[1]
+                        all_deltas_sum = torch.zeros(n_features, device=self.device)
+                        all_deltas_sq_sum = torch.zeros(n_features, device=self.device)
+                        all_deltas_abs_max = torch.zeros(n_features, device=self.device)
+                        all_deltas_near_zero_count = torch.zeros(n_features, device=self.device)
+                    all_deltas_sum += delta_valid.sum(dim=0)
+                    all_deltas_sq_sum += (delta_valid ** 2).sum(dim=0)
+                    all_deltas_abs_max = torch.max(all_deltas_abs_max, delta_valid.abs().max(dim=0).values)
+                    all_deltas_near_zero_count += (delta_valid.abs() < 1e-4).sum(dim=0).float()
+                    n_valid_timesteps += delta_valid.shape[0]
 
                 logits = self.yaib_runtime.forward((x_yaib_translated, parts["y"], parts["M_label"]))
                 mask = parts["M_label"].to(logits.device).bool()
@@ -392,6 +458,42 @@ class TransformerTranslatorEvaluator:
         if sample_output_dir is not None and sample_before:
             self._save_translation_samples(sample_before, sample_after, sample_output_dir)
 
+        # D2: Log per-feature delta analysis
+        if all_deltas_sum is not None and n_valid_timesteps > 0:
+            try:
+                mean_delta = all_deltas_sum / n_valid_timesteps
+                var_delta = (all_deltas_sq_sum / n_valid_timesteps) - mean_delta ** 2
+                std_delta = var_delta.clamp(min=0).sqrt()
+                frac_near_zero = all_deltas_near_zero_count / n_valid_timesteps
+                mean_abs_delta = (all_deltas_sq_sum / n_valid_timesteps).sqrt()  # RMS as proxy for mean |delta|
+
+                feature_names = self.schema_resolver.dynamic_features
+                n_features = len(feature_names)
+
+                # Sort by mean |delta| (descending) for top modified
+                sorted_idx = mean_abs_delta.argsort(descending=True)
+                top_k = min(5, n_features)
+
+                logging.info("[delta-analysis] Per-feature translation delta stats (n_timesteps=%d):", n_valid_timesteps)
+                logging.info("[delta-analysis] Top-%d most modified features:", top_k)
+                for i in range(top_k):
+                    idx = sorted_idx[i].item()
+                    logging.info(
+                        "[delta-analysis]   %s: mean=%.6f std=%.6f abs_max=%.6f frac_near_zero=%.4f",
+                        feature_names[idx], mean_delta[idx].item(), std_delta[idx].item(),
+                        all_deltas_abs_max[idx].item(), frac_near_zero[idx].item(),
+                    )
+                logging.info("[delta-analysis] Top-%d least modified features:", top_k)
+                for i in range(top_k):
+                    idx = sorted_idx[n_features - 1 - i].item()
+                    logging.info(
+                        "[delta-analysis]   %s: mean=%.6f std=%.6f abs_max=%.6f frac_near_zero=%.4f",
+                        feature_names[idx], mean_delta[idx].item(), std_delta[idx].item(),
+                        all_deltas_abs_max[idx].item(), frac_near_zero[idx].item(),
+                    )
+            except Exception as e:
+                logging.warning("[delta-analysis] Failed to compute delta stats: %s", e)
+
         if not all_probs:
             return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
 
@@ -409,11 +511,17 @@ class TransformerTranslatorEvaluator:
         except ValueError:
             auprc = 0.0
 
-        return {
+        metrics = {
             "AUCROC": auroc,
             "AUCPR": auprc,
             "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
         }
+        try:
+            cal = _compute_calibration_metrics(targets, probs)
+            metrics.update(cal)
+        except Exception as e:
+            logging.warning("Calibration metrics failed: %s", e)
+        return metrics
 
     def evaluate_original_vs_translated(
         self,

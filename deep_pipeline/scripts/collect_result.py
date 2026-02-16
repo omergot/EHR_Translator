@@ -15,38 +15,58 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def parse_log(log_path: Path) -> dict:
-    """Extract evaluation metrics from log file."""
+    """Extract evaluation metrics from log file.
+
+    Handles logs with duplicate lines (dual handler) and timestamp prefixes.
+    """
     text = log_path.read_text()
 
     result = {"status": "ok", "original": {}, "translated": {}, "difference": {}}
 
-    # Find EVALUATION RESULTS block (between two === lines)
-    # Pattern: === line, EVALUATION RESULTS, === line, content, === line
-    match = re.search(
-        r"EVALUATION RESULTS\s*\n.*?={40,}\s*\n(.*?)={40,}",
-        text,
-        re.DOTALL,
-    )
-    if not match:
+    if "EVALUATION RESULTS" not in text:
         result["status"] = "no_results"
         return result
 
-    block = match.group(1)
+    # Extract everything after the last EVALUATION RESULTS occurrence
+    idx = text.rindex("EVALUATION RESULTS")
+    section = text[idx:]
 
-    # Parse Original
-    orig_section = re.search(r"Original Test Data:(.*?)Translated Test Data:", block, re.DOTALL)
+    # Strip timestamp prefixes and deduplicate consecutive lines
+    lines = []
+    prev = None
+    for raw_line in section.split("\n"):
+        # Strip: "2026-02-16 09:51:19,556 - root - INFO - " prefix
+        clean = re.sub(
+            r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3}\s+-\s+\w+\s+-\s+\w+\s+-\s+",
+            "",
+            raw_line,
+        ).strip()
+        if not clean or clean == prev:
+            continue
+        prev = clean
+        lines.append(clean)
+        # Stop at closing separator (second ==== line)
+        if clean.startswith("=") and len(clean) >= 40 and len(lines) > 3:
+            break
+
+    clean_text = "\n".join(lines)
+
+    # Parse sections from cleaned text
+    orig_section = re.search(
+        r"Original Test Data:(.*?)Translated Test Data:", clean_text, re.DOTALL
+    )
     if orig_section:
         for m in re.finditer(r"(\w+):\s+([\d.]+)", orig_section.group(1)):
             result["original"][m.group(1)] = float(m.group(2))
 
-    # Parse Translated
-    trans_section = re.search(r"Translated Test Data:(.*?)Difference:", block, re.DOTALL)
+    trans_section = re.search(
+        r"Translated Test Data:(.*?)Difference:", clean_text, re.DOTALL
+    )
     if trans_section:
         for m in re.finditer(r"(\w+):\s+([\d.]+)", trans_section.group(1)):
             result["translated"][m.group(1)] = float(m.group(2))
 
-    # Parse Difference
-    diff_section = re.search(r"Difference:(.*)", block, re.DOTALL)
+    diff_section = re.search(r"Difference:(.*?)(?:={40,}|$)", clean_text, re.DOTALL)
     if diff_section:
         for m in re.finditer(r"(\w+):\s+([+-]?[\d.]+)", diff_section.group(1)):
             result["difference"][m.group(1)] = float(m.group(2))

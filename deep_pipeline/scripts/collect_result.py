@@ -20,13 +20,18 @@ def parse_log(log_path: Path) -> dict:
 
     result = {"status": "ok", "original": {}, "translated": {}, "difference": {}}
 
-    # Find EVALUATION RESULTS block
-    match = re.search(r"EVALUATION RESULTS.*?={40,}", text, re.DOTALL)
+    # Find EVALUATION RESULTS block (between two === lines)
+    # Pattern: === line, EVALUATION RESULTS, === line, content, === line
+    match = re.search(
+        r"EVALUATION RESULTS\s*\n.*?={40,}\s*\n(.*?)={40,}",
+        text,
+        re.DOTALL,
+    )
     if not match:
         result["status"] = "no_results"
         return result
 
-    block = match.group(0)
+    block = match.group(1)
 
     # Parse Original
     orig_section = re.search(r"Original Test Data:(.*?)Translated Test Data:", block, re.DOTALL)
@@ -41,7 +46,7 @@ def parse_log(log_path: Path) -> dict:
             result["translated"][m.group(1)] = float(m.group(2))
 
     # Parse Difference
-    diff_section = re.search(r"Difference:(.*?)={40,}", block, re.DOTALL)
+    diff_section = re.search(r"Difference:(.*)", block, re.DOTALL)
     if diff_section:
         for m in re.finditer(r"(\w+):\s+([+-]?[\d.]+)", diff_section.group(1)):
             result["difference"][m.group(1)] = float(m.group(2))

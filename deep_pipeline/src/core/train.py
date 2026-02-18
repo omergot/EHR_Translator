@@ -839,3 +839,332 @@ class TransformerTranslatorTrainer:
             fig.tight_layout()
             fig.savefig(self.run_dir / "mmd_loss_curve.png", dpi=150)
             plt.close(fig)
+
+
+class LatentTranslatorTrainer:
+    """Trainer for SharedLatentTranslator with pretraining + joint alignment training."""
+
+    def __init__(
+        self,
+        yaib_runtime: YAIBRuntime,
+        translator: nn.Module,
+        schema_resolver: SchemaResolver,
+        bounds_csv: Path,
+        target_train_loader: DataLoader,
+        learning_rate: float = 1e-4,
+        weight_decay: float = 1e-5,
+        lambda_align: float = 0.5,
+        lambda_recon: float = 0.1,
+        lambda_range: float = 0.5,
+        pretrain_epochs: int = 10,
+        early_stopping_patience: int = 5,
+        best_metric: str = "val_task",
+        run_dir: Path | None = None,
+        device: str = "cuda",
+    ) -> None:
+        self.yaib_runtime = yaib_runtime
+        self.schema_resolver = schema_resolver
+        self.translator = translator.to(device)
+        self.device = device
+        self.lambda_align = lambda_align
+        self.lambda_recon = lambda_recon
+        self.lambda_range = lambda_range
+        self.pretrain_epochs = pretrain_epochs
+        self.early_stopping_patience = early_stopping_patience
+        self.best_metric = best_metric
+        self.run_dir = Path(run_dir) if run_dir else Path("runs/shared_latent")
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+
+        self.target_train_loader = target_train_loader
+        self._target_iter = iter(target_train_loader)
+
+        self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        self.scaler = GradScaler(enabled=device.startswith("cuda"))
+
+        # Load and freeze baseline
+        self.yaib_runtime.load_baseline_model()
+        if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+            self.yaib_runtime._model = self.yaib_runtime._model.to(device)
+            for param in self.yaib_runtime._model.parameters():
+                param.requires_grad = False
+            model = self.yaib_runtime._model
+            # Must be in train mode for cudnn RNN backward, but force
+            # dropout/batchnorm to eval for deterministic inference
+            for name, module in model.named_modules():
+                if hasattr(module, "dropout") and isinstance(getattr(module, "dropout"), float):
+                    if module.dropout > 0:
+                        module.dropout = 0.0
+            model.train()
+            from torch.nn.modules.dropout import _DropoutNd
+            from torch.nn.modules.batchnorm import _BatchNorm
+            def _force_stateless(m):
+                if isinstance(m, (_DropoutNd, nn.Dropout)):
+                    m.eval()
+                elif isinstance(m, _BatchNorm):
+                    m.eval()
+                    m.track_running_stats = False
+            model.apply(_force_stateless)
+
+        # Feature bounds for range loss
+        self.lower_bounds, self.upper_bounds = self._load_feature_bounds(
+            bounds_csv, schema_resolver.dynamic_features
+        )
+        self.lower_bounds = self.lower_bounds.to(device)
+        self.upper_bounds = self.upper_bounds.to(device)
+
+        self.best_val = float("inf")
+        self.best_state = None
+        self.history: list[dict] = []
+
+    def _load_feature_bounds(self, bounds_csv, feature_names):
+        import pandas as pd
+        df = pd.read_csv(bounds_csv)
+        df = df.set_index("feature")
+        cols = set(df.columns)
+        lower_col = next((c for c in ["p0.1_a", "p0.1", "p_001_a", "q001"] if c in cols), None)
+        upper_col = next((c for c in ["p99.9_a", "p99.9", "p_999_a", "q999"] if c in cols), None)
+        if lower_col is None or upper_col is None:
+            raise ValueError(f"Bounds CSV missing percentile columns. Found: {sorted(cols)}")
+        lower = torch.tensor(df.loc[feature_names, lower_col].to_numpy(), dtype=torch.float32)
+        upper = torch.tensor(df.loc[feature_names, upper_col].to_numpy(), dtype=torch.float32)
+        return lower, upper
+
+    def _next_target_batch(self):
+        try:
+            batch = next(self._target_iter)
+        except StopIteration:
+            self._target_iter = iter(self.target_train_loader)
+            batch = next(self._target_iter)
+        return tuple(b.to(self.device) for b in batch)
+
+    def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
+        """Autoencoder pretraining on MIMIC target data."""
+        self.translator.train()
+        total_loss = 0.0
+        n_batches = 0
+
+        for batch in target_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                x_out = self.translator(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+                mask = ~parts["M_pad"].bool()
+                diff = (x_out.float() - parts["X_val"].float()) ** 2
+                loss = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
+
+            self.optimizer.zero_grad()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            total_loss += loss.item()
+            n_batches += 1
+
+        return {"pretrain_recon": total_loss / max(n_batches, 1)}
+
+    def _run_epoch(self, train_loader: DataLoader, epoch: int = 0) -> dict:
+        """Joint training: task + alignment + reconstruction + range."""
+        self.translator.train()
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0}
+        n_batches = 0
+
+        for batch in train_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                # ── Source (eICU) path ──
+                src_latent = self.translator.encode(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+                x_out = self.translator.decode(src_latent, parts["M_pad"], parts["X_static"])
+
+                # Rebuild YAIB batch and get task loss (cast to float32 for schema rebuild)
+                x_yaib_translated = self.schema_resolver.rebuild(
+                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                )
+                label_mask = parts["M_label"].bool()
+                logits = self.yaib_runtime.forward(
+                    (x_yaib_translated, parts["y"], label_mask)
+                )
+                l_task = self.yaib_runtime.compute_loss(
+                    logits, (x_yaib_translated, parts["y"], label_mask)
+                )
+
+                # ── Target (MIMIC) path ──
+                tgt_batch = self._next_target_batch()
+                tgt_parts = self.schema_resolver.extract(tgt_batch)
+                tgt_latent = self.translator.encode(
+                    tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                    tgt_parts["M_pad"], tgt_parts["X_static"],
+                )
+
+                # Alignment loss: MMD in latent space
+                src_mask = ~parts["M_pad"].bool()
+                tgt_mask = ~tgt_parts["M_pad"].bool()
+                src_z = src_latent[src_mask].float()  # (N, d_latent)
+                tgt_z = tgt_latent[tgt_mask].float()  # (M, d_latent)
+                l_align = multi_kernel_mmd(src_z, tgt_z) if src_z.shape[0] > 1 and tgt_z.shape[0] > 1 else src_z.new_tensor(0.0)
+
+                # Reconstruction loss: decode MIMIC and compare
+                tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
+                tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                # Range loss on source output
+                upper = self.upper_bounds.view(1, 1, -1)
+                lower = self.lower_bounds.view(1, 1, -1)
+                over = torch.relu(x_out.float() - upper)
+                under = torch.relu(lower - x_out.float())
+                range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
+                l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
+
+                l_total = (
+                    l_task
+                    + self.lambda_align * l_align
+                    + self.lambda_recon * l_recon
+                    + self.lambda_range * l_range
+                )
+
+            self.optimizer.zero_grad()
+            self.scaler.scale(l_total).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            totals["total"] += l_total.item()
+            totals["task"] += l_task.item()
+            totals["align"] += l_align.item()
+            totals["recon"] += l_recon.item()
+            totals["range"] += l_range.item()
+            n_batches += 1
+
+        return {k: v / max(n_batches, 1) for k, v in totals.items()}
+
+    @torch.no_grad()
+    def _validate(self, val_loader: DataLoader) -> dict:
+        """Validation pass."""
+        self.translator.eval()
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0}
+        n_batches = 0
+
+        for batch in val_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                src_latent = self.translator.encode(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+                x_out = self.translator.decode(src_latent, parts["M_pad"], parts["X_static"])
+
+                x_yaib_translated = self.schema_resolver.rebuild(
+                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                )
+                label_mask = parts["M_label"].bool()
+                logits = self.yaib_runtime.forward(
+                    (x_yaib_translated, parts["y"], label_mask)
+                )
+                l_task = self.yaib_runtime.compute_loss(
+                    logits, (x_yaib_translated, parts["y"], label_mask)
+                )
+
+                # Alignment with target
+                tgt_batch = self._next_target_batch()
+                tgt_parts = self.schema_resolver.extract(tgt_batch)
+                tgt_latent = self.translator.encode(
+                    tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                    tgt_parts["M_pad"], tgt_parts["X_static"],
+                )
+                src_mask = ~parts["M_pad"].bool()
+                tgt_mask = ~tgt_parts["M_pad"].bool()
+                src_z = src_latent[src_mask].float()
+                tgt_z = tgt_latent[tgt_mask].float()
+                l_align = multi_kernel_mmd(src_z, tgt_z) if src_z.shape[0] > 1 and tgt_z.shape[0] > 1 else src_z.new_tensor(0.0)
+
+                tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
+                tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                upper = self.upper_bounds.view(1, 1, -1)
+                lower = self.lower_bounds.view(1, 1, -1)
+                over = torch.relu(x_out.float() - upper)
+                under = torch.relu(lower - x_out.float())
+                range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
+                l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
+
+                l_total = l_task + self.lambda_align * l_align + self.lambda_recon * l_recon + self.lambda_range * l_range
+
+            totals["total"] += l_total.item()
+            totals["task"] += l_task.item()
+            totals["align"] += l_align.item()
+            totals["recon"] += l_recon.item()
+            totals["range"] += l_range.item()
+            n_batches += 1
+
+        return {k: v / max(n_batches, 1) for k, v in totals.items()}
+
+    def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
+        # Phase 1: Autoencoder pretraining on MIMIC
+        if self.pretrain_epochs > 0:
+            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
+            for ep in range(self.pretrain_epochs):
+                metrics = self._pretrain_epoch(self.target_train_loader)
+                logging.info("Pretrain epoch %d/%d - recon=%.4f", ep + 1, self.pretrain_epochs, metrics["pretrain_recon"])
+
+            # Reset optimizer after pretraining
+            self.optimizer = AdamW(self.translator.parameters(), lr=self.optimizer.defaults["lr"],
+                                   weight_decay=self.optimizer.defaults["weight_decay"])
+            self.scaler = GradScaler(enabled=self.device.startswith("cuda"))
+            logging.info("=== Phase 1 complete. Starting Phase 2: Joint training ===")
+
+        # Phase 2: Joint training
+        logging.info("=== Phase 2: Joint training (%d epochs) ===", epochs)
+        epochs_without_improvement = 0
+        for epoch in range(epochs):
+            train_metrics = self._run_epoch(train_loader, epoch=epoch)
+            val_metrics = self._validate(val_loader)
+
+            logging.info(
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f",
+                epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
+                train_metrics["align"], train_metrics["recon"], train_metrics["range"],
+            )
+            logging.info(
+                "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f",
+                epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
+                val_metrics["align"], val_metrics["recon"], val_metrics["range"],
+            )
+
+            self.history.append({
+                "epoch": epoch + 1,
+                **{f"train_{k}": v for k, v in train_metrics.items()},
+                **{f"val_{k}": v for k, v in val_metrics.items()},
+            })
+
+            candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
+            if candidate < self.best_val:
+                self.best_val = candidate
+                self.best_state = self.translator.state_dict()
+                torch.save({
+                    "epoch": epoch,
+                    "translator_state_dict": self.best_state,
+                    "val_metrics": val_metrics,
+                    "train_metrics": train_metrics,
+                }, self.run_dir / "best_translator.pt")
+                logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
+                logging.info("Early stopping after %d epochs without improvement", epochs_without_improvement)
+                break
+
+        if self.best_state is not None:
+            self.translator.load_state_dict(self.best_state)

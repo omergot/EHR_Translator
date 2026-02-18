@@ -118,6 +118,10 @@ def _get_training_config(config: dict) -> dict:
         "ot_reg": training.get("ot_reg", 0.1),
         # B6: Domain-adversarial (DANN)
         "lambda_adversarial": training.get("lambda_adversarial", 0.0),
+        # Shared latent translator
+        "pretrain_epochs": training.get("pretrain_epochs", 10),
+        "lambda_align": training.get("lambda_align", 0.5),
+        "lambda_recon": training.get("lambda_recon", 0.1),
     }
 
 
@@ -421,12 +425,13 @@ def train_translator(args):
     training_cfg = _get_training_config(config)
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
+    debug_fraction = config.get("debug_fraction", 0.2)
     if debug_mode:
         training_cfg["epochs"] = min(training_cfg["epochs"], 30)
     translator_type = _get_translator_type(config)
 
     logging.info("=== Training Configuration ===")
-    logging.info("  debug: %s", debug_mode)
+    logging.info("  debug: %s (fraction: %s)", debug_mode, debug_fraction if debug_mode else "N/A")
     logging.info("  translator_type: %s", translator_type)
     for k, v in sorted(training_cfg.items()):
         logging.info("  %s: %s", k, v)
@@ -454,14 +459,14 @@ def train_translator(args):
             'train',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.2 if debug_mode else None,
+            subset_fraction=debug_fraction if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
         val_loader = yaib_runtime.create_dataloader(
             'val',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.2 if debug_mode else None,
+            subset_fraction=debug_fraction if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
 
@@ -522,7 +527,7 @@ def train_translator(args):
                 'train',
                 shuffle=True,
                 ram_cache=True,
-                subset_fraction=0.2 if debug_mode else None,
+                subset_fraction=debug_fraction if debug_mode else None,
                 subset_seed=training_cfg["seed"],
             )
             # Augment with static features (same handling as eICU)
@@ -622,12 +627,154 @@ def train_translator(args):
         logging.info("Transformer translator training completed")
         return
 
+    elif translator_type == "shared_latent":
+        from .core.latent_translator import SharedLatentTranslator
+        from .core.train import LatentTranslatorTrainer
+
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        train_loader = yaib_runtime.create_dataloader(
+            'train', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        val_loader = yaib_runtime.create_dataloader(
+            'val', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+
+        feature_names = train_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError("Static features missing; provide paths.static_recipe.")
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                train_loader = _augment_loader_with_static(train_loader, static_df, group_col, static_features)
+                val_loader = _augment_loader_with_static(val_loader, static_df, group_col, static_features)
+            else:
+                train_loader = _augment_loader_with_zero_static(train_loader, static_features)
+                val_loader = _augment_loader_with_zero_static(val_loader, static_features)
+
+        oversampling_factor = training_cfg.get("oversampling_factor", 0)
+        if oversampling_factor > 0:
+            train_loader = _apply_oversampling(train_loader, oversampling_factor)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        # Target (MIMIC) data is REQUIRED for shared latent
+        target_data_dir = config.get("target_data_dir")
+        if not target_data_dir:
+            raise ValueError("shared_latent translator requires target_data_dir in config")
+        logging.info("Loading target (MIMIC) data from %s", target_data_dir)
+        target_runtime = _build_runtime_from_config(
+            config,
+            data_dir_override=target_data_dir,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        target_runtime.load_data()
+        target_train_loader = target_runtime.create_dataloader(
+            'train', shuffle=True, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        target_feature_names = target_train_loader.dataset.get_feature_names()
+        target_static_in_features = all(name in target_feature_names for name in static_features)
+        if not target_static_in_features:
+            if use_static:
+                static_recipe_target = _get_static_recipe(config)
+                if static_recipe_target:
+                    target_static_df = load_static_with_recipe(
+                        data_dir=Path(target_data_dir),
+                        file_names=config["file_names"],
+                        group_col=group_col,
+                        static_features=static_features,
+                        recipe_path=Path(static_recipe_target),
+                    )
+                    target_train_loader = _augment_loader_with_static(
+                        target_train_loader, target_static_df, group_col, static_features
+                    )
+                else:
+                    target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+            else:
+                target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+        logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
+
+        bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
+        if not bounds_csv:
+            raise ValueError("bounds_csv must be provided for shared_latent translator.")
+
+        translator = SharedLatentTranslator(
+            num_features=len(schema_resolver.indices.dynamic),
+            d_latent=translator_cfg.get("d_latent", 64),
+            d_model=translator_cfg.get("d_model", 128),
+            d_time=translator_cfg.get("d_time", 16),
+            n_enc_layers=translator_cfg.get("n_enc_layers", 3),
+            n_dec_layers=translator_cfg.get("n_dec_layers", 2),
+            n_heads=translator_cfg.get("n_heads", 8),
+            d_ff=translator_cfg.get("d_ff", 512),
+            dropout=translator_cfg.get("dropout", 0.2),
+            out_dropout=translator_cfg.get("out_dropout", 0.1),
+            static_dim=len(static_features),
+            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+        )
+
+        trainer = LatentTranslatorTrainer(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            bounds_csv=Path(bounds_csv),
+            target_train_loader=target_train_loader,
+            learning_rate=training_cfg["lr"],
+            lambda_align=training_cfg.get("lambda_align", 0.5),
+            lambda_recon=training_cfg.get("lambda_recon", 0.1),
+            lambda_range=training_cfg.get("lambda_range", 0.5),
+            pretrain_epochs=training_cfg.get("pretrain_epochs", 10),
+            early_stopping_patience=training_cfg["early_stopping_patience"],
+            best_metric=training_cfg["best_metric"],
+            run_dir=Path(output_cfg["run_dir"]),
+            device=config.get("device", "cuda"),
+        )
+        trainer.train(
+            epochs=training_cfg["epochs"],
+            train_loader=train_loader,
+            val_loader=val_loader,
+        )
+        logging.info("Shared latent translator training completed")
+        return
+
     elif translator_type == "linear_regression":
         translator, _, train_loader, target_loader = _prepare_linear_regression(
             config,
             split=DataSplit.train,
             shuffle=False,
             debug_mode=debug_mode,
+            debug_fraction=debug_fraction,
             seed=training_cfg["seed"],
         )
         translator.fit_from_loaders(train_loader, target_loader)
@@ -651,14 +798,14 @@ def train_translator(args):
         'train',
         shuffle=False,
         ram_cache=True,
-        subset_fraction=0.2 if debug_mode else None,
+        subset_fraction=debug_fraction if debug_mode else None,
         subset_seed=training_cfg["seed"],
     )
     val_loader = yaib_runtime.create_dataloader(
         'val',
         shuffle=False,
         ram_cache=True,
-        subset_fraction=0.2 if debug_mode else None,
+        subset_fraction=debug_fraction if debug_mode else None,
         subset_seed=training_cfg["seed"],
     )
     
@@ -692,6 +839,7 @@ def translate_and_eval(args):
     output_cfg = _get_output_config(config)
     translator_type = _get_translator_type(config)
     debug_mode = config.get("debug", False)
+    debug_fraction = config.get("debug_fraction", 0.2)
     eval_baseline_with_target_norm = config.get("eval_baseline_with_target_normalization", False)
 
     lr_target_loader = None
@@ -709,7 +857,7 @@ def translate_and_eval(args):
             'test',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.2 if debug_mode else None,
+            subset_fraction=debug_fraction if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
         feature_names = test_loader.dataset.get_feature_names()
@@ -798,12 +946,97 @@ def translate_and_eval(args):
             export_full_sequence=getattr(args, "export_full_sequence", True),
         )
 
+    elif translator_type == "shared_latent":
+        from .core.latent_translator import SharedLatentTranslator
+
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        test_loader = yaib_runtime.create_dataloader(
+            'test', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        feature_names = test_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if static_recipe:
+                    static_df = load_static_with_recipe(
+                        data_dir=Path(config["data_dir"]),
+                        file_names=config["file_names"],
+                        group_col=group_col,
+                        static_features=static_features,
+                        recipe_path=Path(static_recipe),
+                    )
+                    test_loader = _augment_loader_with_static(test_loader, static_df, group_col, static_features)
+                else:
+                    test_loader = _augment_loader_with_zero_static(test_loader, static_features)
+            else:
+                test_loader = _augment_loader_with_zero_static(test_loader, static_features)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        translator = SharedLatentTranslator(
+            num_features=len(schema_resolver.indices.dynamic),
+            d_latent=translator_cfg.get("d_latent", 64),
+            d_model=translator_cfg.get("d_model", 128),
+            d_time=translator_cfg.get("d_time", 16),
+            n_enc_layers=translator_cfg.get("n_enc_layers", 3),
+            n_dec_layers=translator_cfg.get("n_dec_layers", 2),
+            n_heads=translator_cfg.get("n_heads", 8),
+            d_ff=translator_cfg.get("d_ff", 512),
+            dropout=translator_cfg.get("dropout", 0.2),
+            out_dropout=translator_cfg.get("out_dropout", 0.1),
+            static_dim=len(static_features),
+            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+        )
+
+        checkpoint_path = args.translator_checkpoint
+        if not checkpoint_path:
+            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        if checkpoint_path and Path(checkpoint_path).exists():
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
+            logging.info("Loaded shared_latent translator from %s", checkpoint_path)
+        else:
+            logging.warning("No shared_latent checkpoint found at %s", checkpoint_path)
+
+        evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=config.get("device", "cuda"),
+        )
+        output_path = Path(args.output_parquet)
+        results = evaluator.evaluate_original_vs_translated(
+            test_loader, output_path,
+            export_full_sequence=getattr(args, "export_full_sequence", True),
+        )
+
     elif translator_type == "linear_regression":
         translator, yaib_runtime, test_loader, target_loader = _prepare_linear_regression(
             config,
             split=DataSplit.test,
             shuffle=False,
             debug_mode=debug_mode,
+            debug_fraction=debug_fraction,
             seed=training_cfg["seed"],
         )
         lr_target_loader = target_loader
@@ -833,7 +1066,7 @@ def translate_and_eval(args):
             'test',
             shuffle=False,
             ram_cache=True,
-            subset_fraction=0.2 if debug_mode else None,
+            subset_fraction=debug_fraction if debug_mode else None,
             subset_seed=training_cfg["seed"],
         )
 
@@ -841,12 +1074,12 @@ def translate_and_eval(args):
         input_size = data_shape[-1]
         translator = IdentityTranslator(input_size=input_size)
 
-    if translator_type not in {"linear_regression", "transformer"} and args.translator_checkpoint:
+    if translator_type not in {"linear_regression", "transformer", "shared_latent"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
         translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
 
-    if translator_type != "transformer":
+    if translator_type not in ("transformer", "shared_latent"):
         evaluator = TranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -872,7 +1105,7 @@ def translate_and_eval(args):
                     'test',
                     shuffle=False,
                     ram_cache=True,
-                    subset_fraction=0.2 if debug_mode else None,
+                    subset_fraction=debug_fraction if debug_mode else None,
                     subset_seed=training_cfg["seed"],
                 )
                 evaluator.yaib_runtime = norm_runtime

@@ -1,12 +1,21 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+You are the best data scientist and deep learning engineer in the world who is eager to succeed in our mission to find a translator that improves the metrics.
 
 ## Project Overview
 
-**EHR Translator Deep Pipeline** is a domain adaptation system for electronic health record (EHR) time-series data (e.g., eICU → MIMIC-IV). 
+**EHR Translator Deep Pipeline** is a domain adaptation system for electronic health record (EHR) time-series data (eICU → MIMIC-IV).
 
-**Core Goal:** Train a `Translator` model to transform source-domain data so that a **strictly frozen** target-domain baseline model (from the YAIB framework) performs well on it. The system must preserve clinical task performance (Sepsis/AKI/Mortality) while maintaining data plausibility.
+**Core Goal:** Train a `Translator` model to transform source-domain (eICU) data so that a **strictly frozen** target-domain (MIMIC-IV) LSTM baseline model performs well on it. Two clinical tasks: Mortality24 (per-stay, bidirectional) and Sepsis (per-timestep, causal).
+
+### Current Best Results
+
+| Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
+|---|---|---|---|---|
+| **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | 0.8079 |
+| **Sepsis** | **+0.0025** | **+0.0008** | C2: GradNorm (delta-based) | 0.7159 |
+
+**Critical finding**: Task structure determines which approach works. Mortality benefits from shared latent space translation; sepsis requires delta-based translation. See "Task-Specific Strategy" below.
 
 ## Commands
 
@@ -14,10 +23,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install (editable)
 pip install -e .
 
-# Run pipeline (all three subcommands)
+# Delta-based translator (EHRTranslator)
 python run.py train_translator --config configs/<task>_transformer_config.json
 python run.py translate_and_eval --config configs/<task>_transformer_config.json --output_parquet out.parquet
 python run.py train_and_eval --config configs/<task>_transformer_config.json --output_parquet out.parquet
+
+# Shared latent translator (SharedLatentTranslator) — same CLI, different config
+python run.py train_translator --config experiments/configs/sl_v3_mortality.json
+python run.py translate_and_eval --config experiments/configs/sl_v3_mortality.json --output_parquet out.parquet
 
 # Tests
 pytest tests/
@@ -38,51 +51,155 @@ JSON Config → YAIBRuntime (loads baseline model + data) → DataLoaders
   → Multi-component loss backprop → Checkpoint best → Evaluate → Export parquet
 ```
 
-### Translator Models (`src/core/translator.py`)
+### Translator Models
 
-Three translator types, selected via `config["translator"]["type"]`:
+**Two translation paradigms** — selected via `config["translator"]["type"]`:
 
+#### 1. Delta-Based: `EHRTranslator` (`src/core/translator.py`)
+
+Outputs deltas added to input features (starts near identity). Best for sepsis.
+
+- Triplet projection (value + missingness + time-delta) → per-feature sensor embeddings
+- Sinusoidal temporal encoding → stacked `AxialBlock` layers (variable-wise + temporal attention)
+- FiLM modulation from static features → delta output head
+- `set_temporal_mode()` flips between causal/bidirectional attention
+
+#### 2. Shared Latent Space: `SharedLatentTranslator` (`src/core/latent_translator.py`)
+
+Maps both domains into a shared latent space, decodes to target-like features. Best for mortality.
+
+```
+Source eICU features → [Shared Encoder] → Latent z (B,T,d_latent) → [Decoder] → Translated features
+Target MIMIC features → [Shared Encoder] → Latent z → [Decoder] → Reconstructed features
+```
+
+- Encoder: triplet proj → AxialBlocks → mean pool over features → MLP to latent
+- Decoder: MLP from latent → broadcast + learned feature embeddings → AxialBlocks → output
+- Outputs absolute values (not deltas) — decoder learns full target distribution
+- Reuses `AxialBlock` from translator.py with FiLM static conditioning
+
+#### Other translators
 - **`IdentityTranslator`**: Pass-through baseline (no transformation)
 - **`LinearRegressionTranslator`**: Per-feature affine mapping fitted from data statistics
-- **`EHRTranslator`** (transformer): The main model. Uses triplet projection (value + missingness + time-delta), per-feature sensor embeddings, sinusoidal temporal encoding, stacked `AxialBlock` layers (variable-wise + temporal attention), and FiLM modulation from static features. Outputs deltas added to input.
 
 ### Training (`src/core/train.py`)
 
-- **`TranslatorTrainer`**: Basic trainer for identity/linear translators
-- **`TransformerTranslatorTrainer`**: Advanced trainer with three loss components:
-  - **Task loss**: Classification loss from baseline model on translated data
-  - **Fidelity loss**: MSE between input and output (preserve data integrity)
-  - **Range loss**: Penalty for values outside feature bounds from a CSV
-- Supports mixed-precision (AMP), gradient accumulation, and debug logging
+**`TransformerTranslatorTrainer`** — for delta-based EHRTranslator:
+- **Task loss**: Classification loss from frozen LSTM on translated data
+- **Fidelity loss**: MSE between input and output (preserve data integrity). Essential — without it, training diverges catastrophically.
+- **Range loss**: Penalty for out-of-bounds feature values
+- Supports mixed-precision (AMP), gradient accumulation, debug logging
+
+**`LatentTranslatorTrainer`** — for SharedLatentTranslator:
+- **Phase 1 (Pretraining)**: Autoencoder reconstruction on MIMIC target data only
+- **Phase 2 (Joint training)**: Task loss + MMD alignment in latent space + reconstruction loss + range loss
+- Config keys: `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_range`
+- Saves pretrain checkpoints for OOM recovery between phases
 
 ### Evaluation (`src/core/eval.py`)
 
-- `TranslatorEvaluator` / `TransformerTranslatorEvaluator`: Compute AUROC, AUCPR, loss on translated test data. Export results to parquet.
+`TranslatorEvaluator` / `TransformerTranslatorEvaluator`: Compute AUROC, AUCPR, Brier, ECE on translated test data. Export results to parquet.
+
+### Key Supporting Modules
+
+| Module | Purpose |
+|---|---|
+| `src/core/schema.py` | `SchemaResolver` — extract/rebuild YAIB batch format (x_val, x_miss, x_static, t_abs, m_pad) |
+| `src/core/bucket_batching.py` | Variable-length batching — groups sequences by length, truncates padding per batch. 3x speedup for long sequences. Config: `training.variable_length_batching: true` |
+| `src/core/mmd.py` | Multi-kernel MMD with median heuristic, unbiased estimator |
+| `src/core/pretrain.py` | MLM pretrainer with BERT-style masking (80/10/10) |
+| `src/core/hidden_extractor.py` | LSTM hidden state extraction via forward hooks |
+| `src/core/focal_loss.py` | Focal loss for hard-example mining |
+| `src/core/static_utils.py` | `StaticAugmentedDataset` — injects static features as 4th batch element |
+| `src/adapters/yaib.py` | `YAIBRuntime` — wraps YAIB framework (gin config, data, baseline model, dataloaders) |
 
 ### Safety & Validation (CRITICAL)
-- Frozen Baseline: The baseline model parameters are set to requires_grad=False. A specific verify_baseline_determinism check runs at startup to ensure no internal noise (Dropout/BatchNorm) affects the training signal.
 
-- Padding Integrity: The translator output is explicitly masked (masked_fill) to ensure padded time steps remain exactly 0.0.
+- **Frozen Baseline**: Baseline model parameters `requires_grad=False`. `verify_baseline_determinism` check at startup.
+- **Padding Integrity**: Translator output `masked_fill` ensures padded timesteps remain exactly 0.0.
+- **Time-Travel Rules**: Sepsis/AKI must use `temporal_attention_mode="causal"`. Mortality can use `"bidirectional"`.
+- **Baseline model mode**: Must be in `train()` mode (not eval) for cuDNN RNN backward compatibility.
 
-- Time-Travel Rules: - Sepsis/AKI: Must use temporal_attention_mode="causal" to prevent looking ahead.
+## Task-Specific Strategy (Key Insight)
 
-- Mortality: Can use "bidirectional".
+Mortality and sepsis respond **oppositely** to the same approaches. The translation strategy must be task-specific:
 
-### Schema Resolution (`src/core/schema.py`)
+| Factor | Mortality24 (shared latent works) | Sepsis (delta-based works) |
+|---|---|---|
+| Labels | Per-stay (dense, 5.5% pos) | Per-timestep (sparse, 1.1% pos) |
+| Attention | Bidirectional (full context) | Causal window=25 (limited) |
+| Sequence length | 24 timesteps | 169 (median 42, 73% padding) |
+| Best approach | SharedLatentTranslator (+0.044) | EHRTranslator delta (+0.003) |
+| Worst approach | — | SharedLatentTranslator (-0.017 to -0.043) |
 
-`SchemaResolver` manages feature indices across the YAIB batch format. `extract()` deconstructs batches into (x_val, x_miss, x_static, t_abs, m_pad); `rebuild()` reconstructs them after translation.
+**Why shared latent fails on sepsis:**
+1. Reconstruction bottleneck dominates the weak task signal
+2. Causal attention limits encoder's ability to build rich latent representations
+3. Absolute output (not deltas) starts with significant reconstruction error
+4. Larger model = more harm (more capacity for reconstruction overfitting)
 
-### YAIB Adapter (`src/adapters/yaib.py`)
+**Why shared latent works on mortality:**
+1. MMD alignment in latent space provides direct, dense gradient — no backward through frozen LSTM needed
+2. Reconstruction loss stabilizes latent space through decoder path
+3. Task loss only needs small adjustments on well-structured latent space
+4. Bidirectional attention + short sequences = rich encoder representations
 
-`YAIBRuntime` wraps the external YAIB (icu-benchmarks) framework: handles gin config, data preprocessing, baseline model loading, dataloader creation, and forward/loss computation. This isolates all YAIB complexity behind a clean interface.
+## Gradient Bottleneck (Root Cause of Difficulty)
 
-### Static Feature Handling (`src/core/static_utils.py`)
+The fundamental challenge: **fidelity gradient is 3-10x larger than task gradient**. The task signal must flow backward through the frozen LSTM, producing weak, noisy gradients that the fidelity loss dominates.
 
-`StaticAugmentedDataset` wraps a dataset to inject static features as a 4th batch element. Uses `recipys` for preprocessing recipes.
+- Sepsis: 73% padding, 1.1% positive rate, per-timestep labels → extremely diffuse gradient
+- Mortality: 0% padding, per-stay labels → concentrated gradient signal
+- `lambda_fidelity=0.0` causes catastrophic divergence (AUCROC -0.101)
+- Full analysis in `docs/gradient_bottleneck_analysis.md`
 
 ## Config Structure
 
-JSON configs in `configs/` define everything for a run: data paths, baseline model paths, YAIB gin configs, feature lists (DYNAMIC/STATIC), translator type and hyperparameters, training params (lr, epochs, batch_size), output paths, seed, and device. Task-specific configs exist for Sepsis, AKI, and Mortality.
+JSON configs in `configs/` (base) and `experiments/configs/` (experiments). Key sections:
+
+```json
+{
+  "translator": {"type": "transformer|shared_latent", "d_model": 128, "d_latent": 64, ...},
+  "training": {
+    "epochs": 30, "lr": 1e-4, "batch_size": 64,
+    "lambda_fidelity": 1.0, "lambda_range": 0.5,
+    "oversampling_factor": 20,
+    "variable_length_batching": true,
+    "pretrain_epochs": 10, "lambda_align": 0.5, "lambda_recon": 0.1
+  }
+}
+```
+
+## Experiment Infrastructure
+
+| Component | Purpose |
+|---|---|
+| `experiments/configs/` | Per-experiment JSON configs (debug + full variants) |
+| `experiments/collect_result.py` | Parses training logs → JSON results |
+| `scripts/aggregate_results.py` | Aggregates results → markdown table |
+| `scripts/run_full_parallel.sh` | Runs experiments via git worktrees (one per GPU) |
+| `experiments/.state`, `.state_full` | Tracks completed experiment runs |
+
+Experiment branches follow pattern `exp/<experiment_name>` (e.g., `exp/a3_padding_aware`, `exp/shared_latent`).
+
+## Documentation (`docs/`)
+
+### Start Here
+- **[docs/comprehensive_results_summary.md](docs/comprehensive_results_summary.md)** — **Master results document.** All experiments, rankings, full-data validation, shared latent results, conclusions, and recommendations. Start here for project status.
+- **[docs/shared_latent_results.md](docs/shared_latent_results.md)** — Shared latent space results: mortality (+0.044), sepsis (negative), bucket batching, detailed analysis.
+
+### Architecture & Analysis
+- **[docs/architecture.md](docs/architecture.md)** — EHRTranslator architecture details.
+- **[docs/gradient_flow_mechanics.md](docs/gradient_flow_mechanics.md)** — Forward/backward pass trace explaining weak task signal.
+- **[docs/gradient_bottleneck_analysis.md](docs/gradient_bottleneck_analysis.md)** — Gradient bottleneck analysis with per-timestep data.
+- **[docs/optimization_recommendations.md](docs/optimization_recommendations.md)** — Padding/memory optimization strategies.
+
+### Experiment History
+- **[docs/recommendations_next_steps.md](docs/recommendations_next_steps.md)** — Pre-A/B/C recommendations (input shaping, latent alignment, training signal, evaluation).
+- **[docs/experiment_results_abc.md](docs/experiment_results_abc.md)** — A/B/C series raw results (13 experiments × 2 tasks).
+- **[docs/investigation_mortality_vs_sepsis.md](docs/investigation_mortality_vs_sepsis.md)** — Controlled mortality vs sepsis investigation.
+- **[docs/experiment_results_mmd_mlm.md](docs/experiment_results_mmd_mlm.md)** — Early MMD+MLM experiments (minimal gains).
+- **[docs/shared_latent_plan.md](docs/shared_latent_plan.md)** — Shared latent architecture design and implementation plan.
 
 ## Key Dependencies
 
@@ -93,34 +210,10 @@ JSON configs in `configs/` define everything for a run: data paths, baseline mod
 - **gin-config**: YAIB configuration management
 - **scikit-learn**: Evaluation metrics (AUROC, AUCPR)
 
-## Utility Scripts (`scripts/`)
-
-Standalone tools: `generate_static_recipe.py` (build preprocessing recipes), `filter_cohort_by_stay_ids.py` (subset cohorts), `compute_feature_correlation.py` / `compute_feature_ab.py` (feature analysis), `compare_data.py` (dataset comparison), `inspect_linear_regression_pkl.py` (inspect saved linear models).
-
-
-## Documentation (`docs/`)
-
-### Current State & Key Findings (start here)
-- **[docs/gradient_bottleneck_analysis.md](docs/gradient_bottleneck_analysis.md)** — **Main findings document.** Consolidated experiment results table, confirmed gradient bottleneck (fidelity 3-10x task), per-timestep gradient analysis comparing sepsis vs mortality, and ranked next-step recommendations. Start here for current project status.
-- **[docs/recommendations_next_steps.md](docs/recommendations_next_steps.md)** — Comprehensive recommendations: input shaping (eliminate padding, sequence chunking), latent-space alignment (model-agnostic hidden representations, kNN translation, optimal transport, contrastive), training signal (focal loss, GradNorm, cosine fidelity), evaluation methodology (calibration, significance testing, ablations). **D1 (calibration), D2 (delta analysis), D3 (extended grad diagnostics) are implemented.**
-
-### Architecture
-- **[docs/architecture.md](docs/architecture.md)** — EHRTranslator architecture: triplet embedding, AxialBlock backbone, delta/forecast/reconstruction heads, FiLM static conditioning, temporal attention modes, MLM pretraining breakdown.
-- **[docs/gradient_flow_mechanics.md](docs/gradient_flow_mechanics.md)** — Step-by-step trace of forward/backward pass through translator→LSTM→loss, explaining how gradients reach the translator and why the task signal is weak.
-
-### Experiment History (chronological)
-- **[docs/strategy_evaluation_mmd_mlm.md](docs/strategy_evaluation_mmd_mlm.md)** — Evaluation of 4 competing approaches (forecasting, distillation, MMD, MLM). Chose MMD+MLM. Explains reasoning.
-- **[docs/implementation_plan_mmd_mlm.md](docs/implementation_plan_mmd_mlm.md)** — Implementation plan for MMD domain matching + MLM pretraining (stages 0-5).
-- **[docs/experiment_results_mmd_mlm.md](docs/experiment_results_mmd_mlm.md)** — Results from MMD+MLM experiments A-E (Sepsis, debug, 10 and 30 epochs). All variants near +0.001-0.002 AUCROC.
-- **[docs/investigation_mortality_vs_sepsis.md](docs/investigation_mortality_vs_sepsis.md)** — Controlled experiments isolating why mortality (+0.025) works but sepsis (+0.002) doesn't. Rules out attention mode, capacity, data size. Identifies sequence length + task structure as root cause.
-
-### Best Results Summary
-| Task | Best AUCROC Delta | Config |
-|---|---|---|
-| Mortality24 | **+0.0264** | Bidirectional, d128, full data, 30ep |
-| Sepsis | **+0.0059** | Causal, d64, debug, f=20, W=25 |
-
 ## Coding Standards
-- Logging: Use logging.info() (never print in core modules).
-- Tensors: Always handle device placement explicitly (.to(device)).
-- Config: Managed via JSON files in deep_pipeline/configs/
+
+- Logging: Use `logging.info()` (never `print` in core modules).
+- Tensors: Always handle device placement explicitly (`.to(device)`).
+- AMP: Cast hidden states to `.float()` before passing to discriminators, loss functions, or MLPs to avoid float16/float32 dtype mismatches.
+- Config: All new config keys must default to disabled (0/None/False) for backward compatibility.
+- Config files: JSON in `configs/` (base) and `experiments/configs/` (experiments).

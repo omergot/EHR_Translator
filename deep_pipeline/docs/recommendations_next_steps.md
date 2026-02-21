@@ -3,9 +3,15 @@
 > **Role**: Forward-looking recommendations doc. Combines literature review, codebase analysis, and lessons from all experiments to date.
 > **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (current status), [architecture.md](architecture.md) (model reference), [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) (what we've ruled out)
 
-## Context: Where We Are
+## Context: Where We Are (Updated Feb 20)
 
-Current results are far from the goal: mortality shows +0.026 AUCROC and sepsis only +0.006, both insufficient for a meaningful domain adaptation contribution. The root cause is a gradient bottleneck: fidelity gradient is 3-10x stronger than task gradient, and the task signal itself is sparse (1.1% positive rate per-timestep, 73% padding waste). We've ruled out attention mode, model capacity, data size, and attention span. Oversampling (f=20) helped by 3x, confirming gradient density matters. Substantial architectural and training changes are needed to achieve clinically meaningful improvements.
+**Mortality is solved**: Shared Latent v3 achieves +0.0441 AUCROC (+0.0456 AUCPR), a clinically meaningful improvement. All 3 shared latent variants outperform the best delta-based approach (A3: +0.0285) by 40-55%.
+
+**Sepsis remains fundamentally limited**: Best result +0.0025 AUCROC (C2 GradNorm, full data). Shared latent actively hurts (-0.017 to -0.043). Root cause analysis identified **label density / gradient coherence** as the definitive primary factor: sepsis's 1.1% per-timestep positive rate produces incoherent, destructive gradient interference (cos(task,fidelity) = -0.21).
+
+**AKI confirms label density as root cause**: AKI (per-timestep, causal, 11.95% positive rate) succeeds with both delta-based (+0.0107) and shared latent (+0.0160). This definitively rules out per-timestep structure and causal attention as bottlenecks, confirming label sparsity as the primary obstacle for sepsis.
+
+See [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) for the full root cause analysis with AKI results.
 
 ---
 
@@ -301,6 +307,53 @@ l_fidelity = 1.0 - F.cosine_similarity(x_val_out, x_val, dim=-1).mean()
 
 Cosine similarity is scale-invariant: it only measures whether the *direction* of the feature vector changed. This produces more balanced gradients across features with different magnitudes. DynaGraph (Nature npj Digital Medicine, 2025) validated this substitution for clinical EHR multi-loss training.
 
+### C4. Supervised Domain Adaptation (Use Target Labels During Training)
+
+**Observation**: Currently we do **unsupervised** domain adaptation — target (MIMIC) features are used for MMD alignment and reconstruction, but **target labels are never used** during translator training. The task loss is computed exclusively on source (eICU) labels.
+
+**Why this is legal and not leaky**:
+1. The frozen baseline model was **already trained on MIMIC labels** — they're baked into its weights. Using them during translator training doesn't introduce new information about the test set.
+2. We only use MIMIC **training split** labels. The train/val/test split is enforced by the YAIB data pipeline, so no test leakage occurs.
+3. **Supervised domain adaptation** is a well-established research setting (distinct from unsupervised DA). Both are valid; supervised DA simply has access to more signal.
+
+**Approach options (from simplest to most involved)**:
+
+**(a) Auxiliary Task Loss on Target Data**:
+```python
+# During training, also run target MIMIC features through frozen LSTM
+z_target = encoder(x_mimic)  # or identity for delta-based
+logits_target = frozen_lstm(x_mimic_features)
+l_task_target = compute_loss(logits_target, y_mimic)  # MIMIC training labels
+# Total task loss = l_task_source + lambda_target * l_task_target
+```
+For the shared latent translator, this is especially powerful: it verifies that the latent space preserves task-relevant information for the target domain, not just feature-level reconstruction. For the delta-based translator, running raw MIMIC through the frozen LSTM provides a direct reference gradient — the translator learns what "correct" gradients look like.
+
+**(b) Label-Conditioned MMD Alignment**:
+Instead of aligning source and target distributions globally (which may conflate positive and negative cases), align them **per-class**:
+```python
+# Separate by label
+src_pos, src_neg = split_by_label(z_source, y_source)
+tgt_pos, tgt_neg = split_by_label(z_target, y_mimic)
+l_align = mmd(src_pos, tgt_pos) + mmd(src_neg, tgt_neg)
+```
+This prevents the pathological case where MMD alignment pushes source positives toward target negatives (or vice versa), which is especially harmful for sepsis with 1.1% positive rate where the class centroids are very different.
+
+**(c) Cross-Domain Contrastive with Label Supervision**:
+Use labels to define positive/negative pairs across domains:
+- Positive pair: eICU positive + MIMIC positive (same clinical outcome)
+- Negative pair: eICU positive + MIMIC negative (different outcome)
+```python
+l_contrastive = InfoNCE(z_source, z_target, same_label_mask)
+```
+This provides dense, per-sample alignment signal that respects clinical semantics.
+
+**Why this could be transformative for sepsis**: The fundamental sepsis problem is weak, conflicting gradients (task-fidelity cosine = -0.21). Adding target labels provides:
+- A **second source of task gradient** that doesn't flow through the frozen LSTM (for shared latent approach)
+- **Class-conditional alignment** that prevents positive/negative confusion during distribution matching
+- **Direct supervision of target-domain performance** rather than hoping alignment transfers
+
+**Expected impact**: High for both approaches. For shared latent mortality (already +0.044), target task loss provides a direct check that latent representations remain discriminative. For delta-based sepsis, label-conditioned MMD or auxiliary target loss could resolve the gradient alignment issue by providing coherent target-domain signal.
+
 ---
 
 ## D. Evaluation and Diagnostics
@@ -414,34 +467,68 @@ Run each with 3 seeds minimum. This reveals which improvements are additive vs. 
 
 Don't only optimize for sepsis. Run the top 2-3 configurations on all three tasks:
 
-- **Sepsis**: The hard case (per-timestep, long sequences, sparse labels)
-- **Mortality24**: The working case (per-stay, short sequences, higher positive rate)
-- **AKI**: Middle ground (per-timestep but different dynamics)
+- **Sepsis**: The hard case (per-timestep, sparse labels — 1.1% per-timestep positive rate)
+- **Mortality24**: The working case (per-stay, short sequences, 5.5% positive rate)
+- **AKI**: Per-timestep with dense labels (11.95% positive rate) — confirmed to work with both translators
 
 A method that improves all three tasks is a much stronger thesis contribution than one tuned to a single task.
 
 ---
 
-## Priority Ranking
+## Priority Ranking (Updated Feb 20)
+
+Based on the root cause analysis, gradient alignment finding, AKI confirmation, and experiment history, priorities have been reorganized. Items marked **Done** were implemented and tested. Items marked **Tested** were run as experiments with known outcomes.
+
+### Tier 0: Highest Priority — Improve Sepsis
+
+| # | Recommendation | Effort | Impact | Notes |
+|---|---|---|---|---|
+| **1** | **Per-stay aggregation for sepsis** | Medium | **Very High** | Aggregate per-timestep predictions to per-stay before loss. Changes gradient from 1.1% sparse → 4.57% dense. AKI confirms label density is the root cause — this directly addresses it. Expected to fix gradient alignment (cos -0.21 → positive). |
+| **2** | ~~AKI baseline + delta + shared latent~~ | ~~Low~~ | ~~Critical~~ | **Done (Feb 20)**: Delta +0.0107, Shared Latent +0.0160. Confirmed label density as root cause. See [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md). |
+
+### Tier 1: Sepsis-Specific Interventions
 
 | # | Recommendation | Section | Effort | Impact | Notes |
 |---|---|---|---|---|---|
-| 1 | Focal loss | C1 | Low (15 lines) | High | Directly amplifies sparse task signal |
-| 2 | ~~Calibration metrics~~ | D1 | ~~Low (10 lines)~~ | ~~High~~ | **Done** — Brier + ECE in all evaluators |
-| 3 | Variable-length batching | A1 | Low (30 lines) | High | Eliminates 73% padding waste |
-| 4 | Sequence chunking | A2 | Medium | High | Transforms sepsis to mortality-like structure |
-| 5 | Penultimate-layer alignment | B1 | Medium | High | Model-agnostic, dense signal |
-| 6 | GradNorm dynamic weighting | C2 | Medium | High | Eliminates lambda tuning |
-| 7 | kNN translation in latent space | B3 | Medium | High | Per-sample supervision, label-free |
-| 8 | ~~Gradient dynamics over training~~ | D3 | ~~Low (20 lines)~~ | ~~Medium~~ | **Done** — Periodic + cosine similarity |
-| 9 | Multi-seed significance | D4 | Low (scripting) | Critical | Required for thesis validity |
-| 10 | ~~Per-feature delta analysis~~ | D2 | ~~Low (15 lines)~~ | ~~Medium~~ | **Done** — Top-5 most/least modified features |
-| 11 | Padding-aware fidelity | A3 | Low (10 lines) | Medium | Reduces gradient conflict at key timesteps |
-| 12 | Optimal transport | B5 | Medium | Medium | Principled alternative to MMD |
-| 13 | Cosine fidelity | C3 | Low (3 lines) | Medium | Better cross-feature gradient balance |
-| 14 | Contrastive alignment | B4 | High | Medium | Needs pseudo-pair construction |
-| 15 | Shared encoder | B2 | High | High | Most ambitious; strong thesis contribution |
-| 16 | Ablation matrix | E1 | High (compute) | Critical | Required for thesis completeness |
-| 17 | Oracle noise bound | D5 | Low | Medium | Frames contribution |
+| 3 | **Supervised DA: use target labels** | C4 | Medium | **Very High** | Auxiliary target task loss + label-conditioned MMD. Legal (no test leakage). Provides second task gradient source and class-aware alignment. |
+| 4 | **Fidelity weight scheduling** | New | Medium | High | Start high fidelity (stable), decay over training. Addresses destructive interference directly. |
+| 5 | **Unfreeze final LSTM layer** | New | Medium | High | More gradient signal at cost of domain-specificity guarantee. |
+| 6 | ~~Focal loss~~ | C1 | ~~Low~~ | ~~High~~ | **Tested: Hurts** — C1 experiment: negative on both tasks. Hard-example mining doesn't address gradient alignment. |
+| 7 | ~~GradNorm dynamic weighting~~ | C2 | ~~Medium~~ | ~~High~~ | **Tested: Mixed** — Best sepsis on full data (+0.0025) but collapsed mortality (+0.0086 vs +0.0264). |
+| 8 | ~~Cosine fidelity~~ | C3 | ~~Low~~ | ~~Medium~~ | **Tested: Task-dependent** — Helps mortality (+0.016), destroys sepsis (-0.094). |
 
-**Recommended execution order**: D1-D3 diagnostics are done. Start with 1 and 3 (focal loss + variable-length batching), then 4-5 (transform the problem structure), then 6-7 (training signal and latent alignment). Items 9 and 16 should run in parallel with development as final validation.
+### Tier 2: Mortality Validation
+
+| # | Recommendation | Effort | Impact | Notes |
+|---|---|---|---|---|
+| 9 | Multi-seed validation of SL v3 | Low (scripting) | **Critical** | Required for thesis validity. Confirm +0.0441 is stable. |
+| 10 | Extended training for SL v2 | Low | Medium | v2 (no pretrain) still improving at epoch 30. Try 50+ epochs. |
+| 11 | Hyperparameter sweep (λ_align, λ_recon) | Medium | Medium | Try λ_align=1.0 with pretrain. |
+
+### Tier 3: Previously Tested (Results Known)
+
+| # | Recommendation | Section | Result | Notes |
+|---|---|---|---|---|
+| — | ~~Variable-length batching~~ | A1 | **Done** | Implemented in `src/core/bucket_batching.py`. 3x speedup, no AUCROC change. |
+| — | ~~Padding-aware fidelity~~ | A3 | **Tested** | Best delta mortality (+0.0285). Sepsis +0.0007 full. |
+| — | ~~Sequence chunking~~ | A2 | **Tested** | Small help mortality (+0.0084), zero sepsis. |
+| — | ~~Truncate-and-pack~~ | A4 | **Tested** | Neutral mortality, hurts sepsis (-0.0055). |
+| — | ~~Hidden-state MMD~~ | B1 | **Tested** | +0.0049 mortality, +0.0026 sepsis. Modest. |
+| — | ~~kNN translation~~ | B3 | **Tested** | +0.0059 mortality, +0.0029 sepsis. |
+| — | ~~Optimal transport~~ | B5 | **Tested** | +0.0054 mortality, +0.0010 sepsis. |
+| — | ~~DANN adversarial~~ | B6 | **Tested** | +0.0045 mortality, +0.0010 sepsis. AMP issues. |
+| — | ~~Contrastive alignment~~ | B4 | **Tested** | -0.0006 mortality, +0.0008 sepsis. AMP issues. |
+| — | ~~Shared encoder~~ | B2 | **Tested** | Subsumed by shared latent (much better). |
+| — | ~~Calibration metrics~~ | D1 | **Done** | Brier + ECE in all evaluators. |
+| — | ~~Per-feature delta analysis~~ | D2 | **Done** | Top-5 most/least modified features logged. |
+| — | ~~Gradient dynamics~~ | D3 | **Done** | Periodic + cosine similarity between task/fidelity. |
+
+### Tier 4: Deferred to Final Phase
+
+| # | Recommendation | Effort | Impact | Notes |
+|---|---|---|---|---|
+| 12 | Multi-seed significance (all tasks) | Medium (compute) | Critical | Required for thesis. Run after best configs identified. |
+| 13 | Ablation matrix | High (compute) | Critical | Factorial design on best approach. Required for thesis completeness. |
+| 14 | Oracle noise bound | Low | Medium | Random translator baseline to frame contribution. |
+
+**Recommended execution order**: **#1 (per-stay aggregation for sepsis)** is now the top priority — AKI confirmed label density as root cause, and per-stay aggregation directly addresses it. **#3 (supervised DA with target labels)** is high-impact and can run in parallel — start with auxiliary target task loss (simplest variant). In parallel, run **#9 (multi-seed SL v3)** for mortality validation. Defer Tier 4 to final phase.

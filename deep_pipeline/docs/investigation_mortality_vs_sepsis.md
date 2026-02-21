@@ -1,9 +1,9 @@
 # Investigation: Why Mortality Works But Sepsis Doesn't
 
-> **Role**: Controlled experiments systematically ruling out hypotheses (attention mode, capacity, data size). Identifies sequence length + task structure as the root cause.
-> **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (quantified gradient evidence confirming this), [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) (earlier MMD/MLM results that motivated this investigation)
+> **Role**: Controlled experiments systematically ruling out hypotheses (attention mode, capacity, data size). Identifies sequence length + task structure as the root cause. Updated Feb 2026 with gradient alignment analysis and AKI comparison.
+> **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (quantified gradient evidence confirming this), [comprehensive_results_summary.md](comprehensive_results_summary.md) (master results), [experiment_results_mmd_mlm.md](experiment_results_mmd_mlm.md) (earlier MMD/MLM results that motivated this investigation)
 
-**Date**: Feb 13-14, 2026
+**Date**: Feb 13-14, 2026 (updated Feb 19)
 **Question**: The mortality24 task with bidirectional attention achieves +0.023 AUCROC, while sepsis with causal attention barely moves (+0.002). What causes this gap?
 
 ---
@@ -42,7 +42,7 @@ All experiments use:
 - best_metric=val_total, 20 epochs, no early stopping
 - seed=2222, deterministic training
 
-### Results
+### Results (Full Data, 20 Epochs)
 
 | Experiment | Attention | d_model | AUCROC | delta | AUCPR | delta | val_task (best) |
 |---|---|---|---|---|---|---|---|
@@ -51,15 +51,29 @@ All experiments use:
 | Causal d128 | causal | 128 | 0.8320 | **+0.0240** | 0.3238 | +0.0273 | 0.4919 |
 | Causal d64 | causal | 64 | 0.8149 | **+0.0070** | 0.3096 | +0.0131 | 0.5147 |
 
+### Results (Debug 20%, 20 Epochs, Shuffle Comparison — Feb 20)
+
+| Experiment | Attention | d_model | Shuffle | AUCROC delta | AUCPR delta | Epochs | Best Ep | Early Stop? |
+|---|---|---|---|---|---|---|---|---|
+| Baseline (debug) | - | - | - | 0.8215 baseline | 0.3204 baseline | - | - | - |
+| Bidir d128 | bidir | 128 | False | **+0.0059** | +0.0055 | 20/20 | 20 | No |
+| Bidir d128 | bidir | 128 | True | **+0.0064** | +0.0064 | 20/20 | 20 | No |
+| Bidir d64 | bidir | 64 | False | **+0.0042** | +0.0063 | 20/20 | 20 | No |
+| Bidir d64 | bidir | 64 | True | **+0.0046** | +0.0061 | 20/20 | 18 | No |
+
+**Shuffle effect**: Marginal for delta-based (~+0.0005 AUCROC). All debug runs were still improving at epoch 20.
+
 ### Configs
-- `configs/mortality24_bidir_repro_config.json` — Bidirectional d128
-- `configs/mortality24_causal_config.json` — Causal d128
-- `configs/mortality24_causal_d64_config.json` — Causal d64
+- `configs/mortality24_bidir_repro_config.json` — Bidirectional d128 (full)
+- `configs/mortality24_causal_config.json` — Causal d128 (full)
+- `configs/mortality24_causal_d64_config.json` — Causal d64 (full)
+- `configs/mortality24_delta_d{128,64}_debug_shuf{0,1}.json` — Debug shuffle variants
 
 ### Run outputs
 - `runs/mortality24_bidir_repro/` — loss curves + checkpoint
 - `runs/mortality24_causal/` — loss curves + checkpoint
 - `runs/mortality24_causal_d64/` — loss curves + checkpoint
+- `runs/mortality24_delta_d{128,64}_debug_shuf{0,1}/` — debug shuffle experiment runs
 
 ---
 
@@ -88,9 +102,20 @@ d_model=64 reduces mortality improvement from +0.024 to +0.007 (3.4x reduction).
 
 However, even mortality d64 (+0.007) is 3.5x better than sepsis d64 (+0.002). And sepsis d128 full data (+0.001) is even worse. So capacity alone doesn't explain the gap.
 
-### Factor 3: Data Size — NOT the bottleneck
+### Factor 3: Data Size — NOT the bottleneck for sepsis, IS the bottleneck for mortality
 
-Full-data sepsis (+0.0006) performed worse than debug sepsis (+0.0017). More data didn't help. This rules out the 20% subsetting as a limiting factor.
+Full-data sepsis (+0.0006) performed worse than debug sepsis (+0.0017). More data didn't help sepsis. This rules out the 20% subsetting as a limiting factor for sepsis.
+
+However, for mortality, data scaling experiments (Feb 20) show near-linear improvement with data volume:
+
+| Data % | Train Stays | ΔAUCROC | ΔAUCPR |
+|---|---|---|---|
+| 20% | 15,873 | +0.0064 | +0.0064 |
+| 40% | 31,746 | +0.0134 | +0.0120 |
+| 60% | 47,619 | +0.0218 | +0.0226 |
+| 80% | 63,492 | +0.0282 | +0.0276 |
+
+All d128, causal, shuffle=true, 30 epochs. The 20% result comes from a 20-epoch run. Extended training (40 epochs) at 20% scale caused overfitting (AUCROC dropped from +0.0064 to +0.0048), confirming that the data volume—not epoch count—is the binding constraint for mortality.
 
 ### Factor 4: Sequence Length + Task Structure — Primary bottleneck
 
@@ -130,3 +155,138 @@ After ruling out attention mode, capacity, and data size, the remaining differen
    - Investigate whether the translator makes meaningful feature-level changes on sepsis (delta analysis)
    - Consider alternative architectures better suited for long-sequence per-timestep tasks
    - Focus on mortality task where the translator demonstrably works (+0.025 AUCROC)
+
+---
+
+## Update (Feb 19): Gradient Alignment Analysis
+
+After completing all A/B/C experiments, full-data validation, and shared latent experiments (mortality +0.0441, sepsis -0.017 to -0.043), we revisited the original investigation question with new quantitative evidence. The gradient alignment discovery provides the clearest explanation yet.
+
+### The Gradient Alignment Finding
+
+The gradient diagnostic code (implemented in `src/core/train.py`) logs cosine similarity between task and fidelity gradient vectors. This reveals **cooperative vs destructive interference**:
+
+| Metric | Mortality | Sepsis | Interpretation |
+|---|---|---|---|
+| Task grad norm | 2.163 | 1.052 | Mortality 2x stronger |
+| Fidelity grad norm | 6.728 | 6.996 | Similar magnitude |
+| Fid/Task ratio | **2.81x** | **5.73x** | Sepsis 2x harder to overcome |
+| **cos(task, fidelity)** | **+0.84** | **-0.21** | **Cooperative vs destructive** |
+
+**Key discovery**: In mortality, task and fidelity gradients point in the **same direction** (cos=+0.84). They cooperate — fidelity regularizes magnitude while task guides direction. In sepsis, they point in **opposite directions** (cos=-0.21). They cancel each other — the parameter update is dominated by destructive interference.
+
+This is arguably the single most important finding explaining the performance gap. It means:
+- **Mortality**: Fidelity acts as a *helpful regularizer* (same direction, limits step size)
+- **Sepsis**: Fidelity acts as an *active adversary* (opposite direction, fights the task signal)
+
+### Why Gradients Align for Mortality but Not Sepsis
+
+**Mortality (per-stay label)**: All 24 timesteps contribute to one prediction. The task gradient says "adjust the entire stay trajectory" — this is structurally similar to "preserve the overall pattern" (what fidelity wants). Both losses push toward coherent, small adjustments.
+
+**Sepsis (per-timestep labels)**: Each timestep has its own label. ~35 negative timesteps say "decrease prediction" while ~1-2 positive timesteps say "increase prediction." The net task gradient is a confused mix of opposing directions that happens to be roughly orthogonal to (or opposing) the fidelity direction of "don't change anything."
+
+### Comprehensive Factor Comparison (Updated)
+
+| Factor | Mortality24 | Sepsis | Impact |
+|---|---|---|---|
+| **Labels** | 1 per stay | 1 per timestep (1.1% pos) | Gradient coherence vs contradiction |
+| **Positive rate** | 5.5% per-stay | 1.1% per-timestep | 5x sparser |
+| **Sequence length** | Fixed 24 | Median 37, max 169 | 0% vs 73% padding |
+| **Attention** | Bidirectional (full) | Causal window=25 | Rich vs limited context |
+| **Task grad norm** | 2.163 | 1.052 | 2x weaker |
+| **Fidelity/Task ratio** | 2.81x | 5.73x | 2x harder to overcome |
+| **Gradient alignment** | **cos = +0.84** | **cos = -0.21** | **Cooperative vs destructive** |
+| **Best ΔAUCROC** | +0.0441 (shared latent) | +0.0025 (C2 GradNorm) | 18x gap |
+
+### Does More Labels = More Signal? No — the Opposite
+
+A natural intuition is that sepsis, with labels at every timestep, should have *more* training signal than mortality's single per-stay label. **This is wrong.** More labels means more *contradictory* gradients:
+
+- Within a single positive sepsis stay: ~1-2 positive timesteps generate "increase sepsis" gradients while ~35 negative timesteps generate "decrease sepsis" gradients. These largely cancel.
+- Mortality's single per-stay label creates one coherent signal across all 24 timesteps — no internal contradiction.
+
+Oversampling (f=20) increased per-stay positive frequency to 48.8% but didn't change the per-timestep rate (still 1.1%). Each positive stay still has ~35 negative timesteps per 1-2 positive ones. This is why oversampling helped (+0.006) but didn't solve the problem.
+
+### Shared Latent Results Confirm the Pattern
+
+The shared latent experiments (Feb 18-19) provide the strongest confirmation:
+
+| Approach | Mortality ΔAUCROC | Sepsis ΔAUCROC |
+|---|---|---|
+| Shared Latent v3 | **+0.0441** | **-0.0325** |
+| Shared Latent v1 | +0.0415 | -0.0172 |
+| Best delta-based | +0.0285 (A3) | +0.0025 (C2) |
+
+Shared latent works for mortality because MMD alignment provides dense gradient that bypasses the frozen LSTM bottleneck. It fails for sepsis because reconstruction loss (dense, strong) overwhelms the weak task signal, and the model optimizes for reconstruction rather than task performance. The training dynamics show this clearly: sepsis shared latent has best AUCROC at epoch 1 and deteriorates from there.
+
+---
+
+## Update (Feb 19): AKI Hypothesis
+
+AKI (Acute Kidney Injury) was identified as the ideal controlled experiment: per-timestep + causal like sepsis, but with 11.95% positive rate (10.6x higher). If AKI translation succeeds → label density is the bottleneck. If it fails → per-timestep structure itself is the issue.
+
+---
+
+## AKI Experiment Results (Feb 20): Label Density Confirmed as Root Cause
+
+### AKI Debug Results
+
+| Metric | Baseline | Delta-based (d128) | Shared Latent (d128/latent128) |
+|---|---|---|---|
+| **AUCROC** | 0.8600 | 0.8707 (**+0.0107**) | 0.8760 (**+0.0160**) |
+| **AUCPR** | 0.5718 | 0.6231 (**+0.0513**) | 0.6207 (**+0.0489**) |
+| Brier | 0.1340 | 0.1240 (-0.0100) | 0.1245 (-0.0095) |
+
+Configs: `configs/aki_delta_debug.json`, `configs/aki_shared_latent_debug.json`. Both causal attention, VLB, no oversampling.
+
+### AKI Full-Data Validation (Feb 20-21)
+
+| Metric | Baseline (full) | Delta Full (d128) | Delta Δ | **SL Full (v3)** | **SL Δ** |
+|---|---|---|---|---|---|
+| **AUCROC** | 0.8558 | 0.8800 | **+0.0242** | 0.8928 | **+0.0370** |
+| **AUCPR** | 0.5678 | 0.6460 | **+0.0781** | 0.6699 | **+0.1021** |
+| Brier | 0.1365 | 0.1253 | **-0.0112** | 0.1253 | **-0.0111** |
+| ECE | 0.1913 | 0.1880 | **-0.0032** | 0.1925 | +0.0012 |
+
+Configs: `configs/aki_delta_full.json` (d128, causal, VLB, 20 epochs), `configs/aki_shared_latent_full.json` (v3, VLB, shuffle=true, 15 pretrain + 30 joint epochs).
+
+**Delta debug → full**: +0.0107 → **+0.0242** AUCROC (2.3x). **SL debug → full**: +0.0160 → **+0.0370** AUCROC (2.3x). Both methods show identical 2.3x scaling.
+
+The shared latent AUCPR improvement (**+0.1021**) is the **largest across any task or method** in the project. Both translators also improve calibration (Brier -0.011).
+
+### Updated Three-Task Comparison (Full-Data Results)
+
+| Dimension | Sepsis | **AKI** | Mortality24 |
+|---|---|---|---|
+| **Task structure** | Per-timestep | Per-timestep | Per-stay |
+| **Per-timestep pos rate** | **1.13%** | **11.95%** | 5.52% |
+| **Per-stay pos rate** | **4.57%** | **37.79%** | 5.52% |
+| **Median seq length** | 38 | **28** | 25 |
+| **Max seq length** | 169 | 169 | 25 |
+| **Padding** | ~73% | ~58% | 0% |
+| **Attention mode** | Causal | Causal | Bidirectional |
+| **Delta-based ΔAUCROC (full)** | +0.003 | **+0.0242** | **+0.0329** |
+| **Shared latent ΔAUCROC (full)** | -0.017 to -0.043 | **+0.0370** | **+0.0441** |
+| **Shared latent ΔAUCPR (full)** | -0.001 to -0.009 | **+0.1021** | **+0.0456** |
+
+### What AKI Proved
+
+1. **Per-timestep structure is NOT the bottleneck**: AKI is per-timestep like sepsis, and both translators work.
+2. **Causal attention is NOT the bottleneck**: AKI uses causal attention and both translators work.
+3. **Label density IS the bottleneck**: AKI's 11.95% per-timestep rate (vs sepsis 1.13%) is the key difference.
+4. **Shared latent works on per-timestep tasks with dense labels**: AKI shared latent +0.016, vs sepsis -0.017 to -0.043.
+5. **In-stay positive ratio is the mechanism**: AKI has ~10 positive per 25 negative timesteps per stay (coherent signal). Sepsis has ~1-2 positive per 35 negative (contradictory gradients).
+
+---
+
+## Definitive Root Cause Ranking (Updated Feb 20)
+
+| Rank | Factor | Evidence | Confirmed by AKI? |
+|---|---|---|---|
+| 1 | **Label density / gradient coherence** | AKI (11.95% pos) works, sepsis (1.13%) fails | **Yes — definitive** |
+| 2 | **Gradient alignment** (cos +0.84 vs -0.21) | Logged diagnostic data | Likely (dense labels → cooperative gradients) |
+| 3 | **Fidelity/task ratio** (5.7x vs 2.8x) | Logged gradient norms | Likely (more task signal → lower ratio) |
+| 4 | **Sequence length** | AKI median=28 (works) vs sepsis median=38 | **Contributing, not primary** |
+| 5 | **Padding waste** (~73% sepsis) | Bucket batching helps speed, not metrics | Mostly addressed |
+| 6 | **Causal attention** | AKI uses causal and works | **Ruled out** |
+| 7 | **Per-timestep structure** | AKI is per-timestep and works | **Ruled out** |

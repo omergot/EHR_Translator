@@ -254,6 +254,7 @@ Also logs counts (n_pos, n_neg, n_unlabeled, n_pad) to reveal batch composition.
 |---|---|---|---|
 | Task grad norm | 0.7-1.0 | **1.3-2.8** | Mortality task gradient 2-3x stronger |
 | Fid/task ratio | 3.2-9.8x | **2.3-4.2x** | Fidelity dominates less in mortality |
+| **cos(task, fidelity)** | **-0.21** | **+0.84** | **Destructive vs cooperative** |
 | pos_norm | ~0.0015 | **~0.017** | Positive gradient 11x stronger per-timestep |
 | neg_norm | ~0.0004 | **~0.001** | Negative gradient 2.5x stronger |
 | pos/neg ratio | 3.5-5.4x | **3.7-36.7x** | Class weight much more effective in mortality |
@@ -265,15 +266,35 @@ Also logs counts (n_pos, n_neg, n_unlabeled, n_pad) to reveal batch composition.
 
 **Key Insights:**
 
-1. **Mortality has NO padding** (fixed 24-timestep sequences) — all computation contributes to learning. Sepsis wastes ~73% of computation on zero-padded timesteps.
+1. **Gradient alignment is the strongest predictor of success.** In mortality, task and fidelity gradients point in the same direction (cos=+0.84) — they cooperate, with fidelity regularizing step size while task guides direction. In sepsis, they point in opposite directions (cos=-0.21) — destructive interference. This single metric explains more of the performance gap than any other factor.
 
-2. **Mortality has per-stay labels** — only 64 timesteps per batch (1 per stay) receive labels; the other 1536 are "unlabeled context" that receives gradient only through LSTM temporal propagation. This concentrates the label signal.
+2. **Mortality has NO padding** (fixed 24-timestep sequences) — all computation contributes to learning. Sepsis wastes ~73% of computation on zero-padded timesteps.
 
-3. **The LSTM amplifies positive gradient contrast in mortality** — with only 1-2 positive stays per batch and per-stay labels, the 44x class weight creates 13-37x pos/neg gradient ratio (vs only 3.5-5.4x in sepsis). The LSTM's final hidden state aggregates the full sequence, so the gradient propagates coherently to all timesteps.
+3. **Mortality has per-stay labels** — only 64 timesteps per batch (1 per stay) receive labels; the other 1536 are "unlabeled context" that receives gradient only through LSTM temporal propagation. This concentrates the label signal.
 
-4. **Sepsis per-timestep labels diffuse the gradient** — 380+ positive timesteps each get a tiny gradient that the LSTM attenuates as it propagates. The net effect: despite 44x class weight, the pos/neg ratio at the translator output is only 3.5-5.4x. The gradient signal is spread thin.
+4. **The LSTM amplifies positive gradient contrast in mortality** — with only 1-2 positive stays per batch and per-stay labels, the 44x class weight creates 13-37x pos/neg gradient ratio (vs only 3.5-5.4x in sepsis). The LSTM's final hidden state aggregates the full sequence, so the gradient propagates coherently to all timesteps.
 
-5. **Fidelity dominance is the limiting factor** — even with oversampling and class weighting, the fidelity gradient (3-10x for sepsis, 2-4x for mortality) remains the dominant signal. Mortality succeeds because its task gradient is inherently 2-3x stronger AND the fidelity ratio is lower.
+5. **Sepsis per-timestep labels diffuse the gradient** — 380+ positive timesteps each get a tiny gradient that the LSTM attenuates as it propagates. The net effect: despite 44x class weight, the pos/neg ratio at the translator output is only 3.5-5.4x. The gradient signal is spread thin.
+
+6. **Fidelity dominance is the limiting factor** — even with oversampling and class weighting, the fidelity gradient (3-10x for sepsis, 2-4x for mortality) remains the dominant signal. Mortality succeeds because its task gradient is inherently 2-3x stronger AND the fidelity ratio is lower.
+
+### Why Gradient Alignment Differs: Cooperative vs Destructive
+
+The gradient alignment (cos similarity) difference has a clear structural explanation:
+
+**Mortality (cos = +0.84, cooperative)**:
+- Per-stay label creates one coherent gradient: "adjust the entire stay trajectory to improve the final prediction"
+- Fidelity gradient says: "preserve the overall feature pattern"
+- These are structurally aligned — both want coherent, small, trajectory-preserving adjustments
+- Result: fidelity acts as a *regularizer* (limits magnitude, same direction)
+
+**Sepsis (cos = -0.21, destructive)**:
+- Per-timestep labels create conflicting micro-gradients: ~35 negative timesteps say "decrease prediction" vs ~1-2 positive timesteps say "increase prediction"
+- The net task gradient is a confused mix of opposing directions
+- This confused direction happens to oppose the fidelity direction ("don't change")
+- Result: fidelity acts as an *adversary* (fights the task signal)
+
+**Implication**: Simply reducing lambda_fidelity won't help for sepsis — the task gradient direction itself is poor. The problem is fundamentally that per-timestep labels with 1.1% positive rate produce incoherent gradient directions, not just weak magnitudes.
 
 ## Recommended Next Steps (Ranked by Expected Impact)
 

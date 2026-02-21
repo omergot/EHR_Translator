@@ -427,25 +427,29 @@ class YAIBRuntime:
         fraction: float,
         generator: torch.Generator,
     ) -> list[int]:
-        """Return subset indices using the original uniform random selection
-        (backward compatible), then log the actual positive/negative ratio.
+        """Return a stratified subset of dataset indices that preserves the
+        label positive rate.  Falls back to uniform random if labels are
+        unavailable (e.g. regression tasks).
 
-        The main generator is consumed identically to the old code so the
-        same stays are selected for any given seed.
+        The *generator* is consumed once (for the seed) so callers still
+        advance their RNG state deterministically.
         """
-        # Step 1: Original uniform random selection (backward compatible)
-        subset_size = max(1, int(len(dataset) * fraction))
-        indices = torch.randperm(len(dataset), generator=generator)[:subset_size].tolist()
+        from sklearn.model_selection import StratifiedShuffleSplit
 
-        # Step 2: Log the subset's actual positive rate
+        subset_size = max(1, int(len(dataset) * fraction))
+        # Consume the generator once to derive a deterministic seed
+        rng_seed = int(torch.randint(0, 2**31, (1,), generator=generator).item())
+
         group_col = self.vars.get("GROUP")
         label_col = self.vars.get("LABEL")
-        if (
+        can_stratify = (
             hasattr(dataset, "outcome_df")
             and group_col
             and label_col
             and label_col in dataset.outcome_df.columns
-        ):
+        )
+
+        if can_stratify:
             stay_ids = dataset.outcome_df[group_col].unique().to_list()
             stay_label_df = dataset.outcome_df.group_by(group_col).agg(
                 pl.col(label_col).max().alias("_pos")
@@ -453,17 +457,34 @@ class YAIBRuntime:
             label_map = dict(
                 zip(stay_label_df[group_col].to_list(), stay_label_df["_pos"].to_list())
             )
-            n_pos_full = sum(1 for sid in stay_ids if label_map.get(sid, 0) == 1)
-            n_pos_sub = sum(1 for i in indices if label_map.get(stay_ids[i], 0) == 1)
+            labels = [label_map.get(sid, 0) for sid in stay_ids]
+
+            splitter = StratifiedShuffleSplit(
+                n_splits=1, train_size=subset_size, random_state=rng_seed,
+            )
+            indices, _ = next(splitter.split(range(len(dataset)), labels))
+            indices = indices.tolist()
+
+            n_pos_full = sum(1 for lb in labels if lb == 1)
+            n_pos_sub = sum(1 for i in indices if labels[i] == 1)
             n_total = len(indices)
             pos_rate_full = n_pos_full / len(stay_ids) if stay_ids else 0
             pos_rate_sub = n_pos_sub / n_total if n_total > 0 else 0
             logging.info(
-                "[debug] subset: %d stays -> %d (pos=%d neg=%d) "
+                "[debug] stratified subset: %d stays -> %d (pos=%d neg=%d) "
                 "pos_rate_full=%.4f pos_rate_subset=%.4f",
                 len(stay_ids), n_total, n_pos_sub, n_total - n_pos_sub,
                 pos_rate_full, pos_rate_sub,
             )
+        else:
+            # Fallback: uniform random (regression or missing labels)
+            np_rng = np.random.RandomState(rng_seed)
+            indices = np_rng.choice(len(dataset), size=subset_size, replace=False).tolist()
+            logging.info(
+                "[debug] uniform subset (no labels): %d stays -> %d",
+                len(dataset), len(indices),
+            )
+
         return indices
 
     def _log_test_batch_stats(self, loader: DataLoader) -> None:

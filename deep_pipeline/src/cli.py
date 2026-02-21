@@ -122,6 +122,8 @@ def _get_training_config(config: dict) -> dict:
         "pretrain_epochs": training.get("pretrain_epochs", 10),
         "lambda_align": training.get("lambda_align", 0.5),
         "lambda_recon": training.get("lambda_recon", 0.1),
+        # Training data shuffling
+        "shuffle": training.get("shuffle", False),
     }
 
 
@@ -426,8 +428,7 @@ def train_translator(args):
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
     debug_fraction = config.get("debug_fraction", 0.2)
-    if debug_mode:
-        training_cfg["epochs"] = min(training_cfg["epochs"], 30)
+    # No epoch cap — config controls epochs directly
     translator_type = _get_translator_type(config)
 
     logging.info("=== Training Configuration ===")
@@ -499,7 +500,8 @@ def train_translator(args):
                 logging.info("Static conditioning disabled; using zero static features for translator.")
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
-        if oversampling_factor > 0:
+        vlb = training_cfg.get("variable_length_batching", False)
+        if not vlb and oversampling_factor > 0:
             train_loader = _apply_oversampling(train_loader, oversampling_factor)
 
         schema_resolver = SchemaResolver(
@@ -552,6 +554,49 @@ def train_translator(args):
                 else:
                     target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
             logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
+
+        # Variable-length bucket batching (replaces oversampling if both enabled)
+        if vlb:
+            from .core.bucket_batching import apply_bucket_batching
+            logging.info("Applying variable-length bucket batching...")
+            train_loader = apply_bucket_batching(
+                train_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=oversampling_factor,
+                shuffle=True,
+                drop_last=True,
+            )
+            if target_train_loader:
+                target_train_loader = apply_bucket_batching(
+                    target_train_loader,
+                    batch_size=training_cfg["batch_size"],
+                    oversampling_factor=0,
+                    shuffle=True,
+                    drop_last=True,
+                )
+            val_loader = apply_bucket_batching(
+                val_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=0,
+                shuffle=False,
+                drop_last=False,
+            )
+        elif oversampling_factor == 0:
+            # No VLB and no oversampling — optionally enable shuffling for training
+            should_shuffle = training_cfg.get("shuffle", False)
+            if should_shuffle:
+                train_loader = DataLoader(
+                    train_loader.dataset,
+                    batch_size=train_loader.batch_size,
+                    shuffle=True,
+                    num_workers=train_loader.num_workers,
+                    drop_last=train_loader.drop_last,
+                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    collate_fn=train_loader.collate_fn,
+                )
+                logging.info("Training with shuffle=True (config)")
+            else:
+                logging.info("Training with shuffle=False (default)")
 
         bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
         if not bounds_csv:
@@ -673,7 +718,8 @@ def train_translator(args):
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
-        if oversampling_factor > 0:
+        vlb = training_cfg.get("variable_length_batching", False)
+        if not vlb and oversampling_factor > 0:
             train_loader = _apply_oversampling(train_loader, oversampling_factor)
 
         schema_resolver = SchemaResolver(
@@ -724,6 +770,48 @@ def train_translator(args):
                 target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
         logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
 
+        # Variable-length bucket batching (replaces oversampling if both enabled)
+        if vlb:
+            from .core.bucket_batching import apply_bucket_batching
+            logging.info("Applying variable-length bucket batching...")
+            train_loader = apply_bucket_batching(
+                train_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=oversampling_factor,
+                shuffle=True,
+                drop_last=True,
+            )
+            target_train_loader = apply_bucket_batching(
+                target_train_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=0,
+                shuffle=True,
+                drop_last=True,
+            )
+            val_loader = apply_bucket_batching(
+                val_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=0,
+                shuffle=False,
+                drop_last=False,
+            )
+        elif oversampling_factor == 0:
+            # No VLB and no oversampling — optionally enable shuffling for training
+            should_shuffle = training_cfg.get("shuffle", False)
+            if should_shuffle:
+                train_loader = DataLoader(
+                    train_loader.dataset,
+                    batch_size=train_loader.batch_size,
+                    shuffle=True,
+                    num_workers=train_loader.num_workers,
+                    drop_last=train_loader.drop_last,
+                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    collate_fn=train_loader.collate_fn,
+                )
+                logging.info("Training with shuffle=True (config)")
+            else:
+                logging.info("Training with shuffle=False (default)")
+
         bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for shared_latent translator.")
@@ -765,7 +853,6 @@ def train_translator(args):
             train_loader=train_loader,
             val_loader=val_loader,
         )
-        logging.info("Shared latent translator training completed")
         return
 
     elif translator_type == "linear_regression":

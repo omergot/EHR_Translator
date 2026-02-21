@@ -905,6 +905,12 @@ class LatentTranslatorTrainer:
                     m.track_running_stats = False
             model.apply(_force_stateless)
 
+        # Snapshot frozen baseline parameters for post-training verification
+        self._baseline_param_snapshot = {
+            name: param.detach().clone()
+            for name, param in self.yaib_runtime._model.named_parameters()
+        }
+
         # Feature bounds for range loss
         self.lower_bounds, self.upper_bounds = self._load_feature_bounds(
             bounds_csv, schema_resolver.dynamic_features
@@ -928,6 +934,26 @@ class LatentTranslatorTrainer:
         lower = torch.tensor(df.loc[feature_names, lower_col].to_numpy(), dtype=torch.float32)
         upper = torch.tensor(df.loc[feature_names, upper_col].to_numpy(), dtype=torch.float32)
         return lower, upper
+
+    def _verify_baseline_frozen(self) -> None:
+        """Verify that frozen LSTM parameters are exactly unchanged after training."""
+        model = self.yaib_runtime._model
+        n_params = 0
+        max_diff = 0.0
+        for name, param in model.named_parameters():
+            snapshot = self._baseline_param_snapshot[name]
+            diff = (param.detach() - snapshot.to(param.device)).abs().max().item()
+            max_diff = max(max_diff, diff)
+            n_params += param.numel()
+            if diff > 0:
+                raise RuntimeError(
+                    f"FROZEN LSTM CORRUPTED: parameter '{name}' changed by {diff:.2e} "
+                    f"during training. model.train() mode may have caused weight updates."
+                )
+        logging.info(
+            "[verify] Frozen LSTM integrity OK — %d parameters, max_diff=%.2e",
+            n_params, max_diff,
+        )
 
     def _next_target_batch(self):
         try:
@@ -1111,16 +1137,28 @@ class LatentTranslatorTrainer:
 
     def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
         # Phase 1: Autoencoder pretraining on MIMIC
-        if self.pretrain_epochs > 0:
+        pretrain_path = self.run_dir / "pretrain_checkpoint.pt"
+        if pretrain_path.exists():
+            ckpt = torch.load(pretrain_path, map_location=self.device, weights_only=True)
+            self.translator.load_state_dict(ckpt["translator_state_dict"])
+            logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
+        elif self.pretrain_epochs > 0:
             logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
             for ep in range(self.pretrain_epochs):
                 metrics = self._pretrain_epoch(self.target_train_loader)
                 logging.info("Pretrain epoch %d/%d - recon=%.4f", ep + 1, self.pretrain_epochs, metrics["pretrain_recon"])
 
-            # Reset optimizer after pretraining
+            # Save pretrain checkpoint
+            pretrain_path = self.run_dir / "pretrain_checkpoint.pt"
+            torch.save({"translator_state_dict": self.translator.state_dict()}, pretrain_path)
+            logging.info("Saved pretrain checkpoint to %s", pretrain_path)
+
+            # Reset optimizer after pretraining and free GPU memory
             self.optimizer = AdamW(self.translator.parameters(), lr=self.optimizer.defaults["lr"],
                                    weight_decay=self.optimizer.defaults["weight_decay"])
             self.scaler = GradScaler(enabled=self.device.startswith("cuda"))
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             logging.info("=== Phase 1 complete. Starting Phase 2: Joint training ===")
 
         # Phase 2: Joint training
@@ -1168,3 +1206,7 @@ class LatentTranslatorTrainer:
 
         if self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
+
+        # Verify frozen LSTM stayed exactly the same
+        self._verify_baseline_frozen()
+        logging.info("Shared latent translator training completed")

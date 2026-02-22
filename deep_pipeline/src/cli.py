@@ -124,6 +124,8 @@ def _get_training_config(config: dict) -> dict:
         "lambda_recon": training.get("lambda_recon", 0.1),
         # Training data shuffling
         "shuffle": training.get("shuffle", False),
+        # Negative subsampling (keep N negative stays, all positive stays)
+        "negative_subsample_count": training.get("negative_subsample_count", 0),
         # MIMIC target task loss (for both delta and SL)
         "lambda_target_task": training.get("lambda_target_task", 0.0),
         # Latent label prediction head (SL only)
@@ -227,6 +229,56 @@ def _apply_oversampling(loader, oversampling_factor):
         sampler=sampler,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
+    )
+
+
+def _apply_negative_subsampling(loader, n_keep_negative, seed=42):
+    """Subsample negative stays from training DataLoader to increase effective label density.
+
+    Keeps ALL positive stays and randomly samples n_keep_negative negative stays.
+    Returns a new DataLoader over a Subset of the original dataset.
+    """
+    from torch.utils.data import Subset
+
+    stay_labels = _get_stay_labels(loader.dataset)
+    pos_indices = [i for i, lbl in enumerate(stay_labels) if lbl == 1]
+    neg_indices = [i for i, lbl in enumerate(stay_labels) if lbl == 0]
+
+    n_pos = len(pos_indices)
+    n_neg = len(neg_indices)
+
+    if n_keep_negative >= n_neg:
+        logging.info(
+            "Negative subsampling: requested %d but only %d negatives exist, keeping all",
+            n_keep_negative, n_neg,
+        )
+        return loader
+
+    rng = np.random.RandomState(seed)
+    sampled_neg = rng.choice(neg_indices, size=n_keep_negative, replace=False).tolist()
+    keep_indices = sorted(pos_indices + sampled_neg)
+
+    subset_dataset = Subset(loader.dataset, keep_indices)
+    new_n_pos = n_pos
+    new_n_neg = n_keep_negative
+    new_total = new_n_pos + new_n_neg
+    logging.info(
+        "Negative subsampling: %d pos + %d neg = %d stays (from %d total, removed %d negatives)",
+        new_n_pos, new_n_neg, new_total, n_pos + n_neg, n_neg - n_keep_negative,
+    )
+    logging.info(
+        "  Effective per-stay positive rate: %.1f%% (was %.1f%%)",
+        100 * new_n_pos / new_total, 100 * n_pos / (n_pos + n_neg),
+    )
+
+    return DataLoader(
+        subset_dataset,
+        batch_size=loader.batch_size,
+        shuffle=False,
+        num_workers=loader.num_workers,
+        drop_last=loader.drop_last,
+        pin_memory=getattr(loader, "pin_memory", False),
+        collate_fn=loader.collate_fn,
     )
 
 
@@ -503,6 +555,12 @@ def train_translator(args):
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
                 logging.info("Static conditioning disabled; using zero static features for translator.")
 
+        neg_subsample = training_cfg.get("negative_subsample_count", 0)
+        if neg_subsample > 0:
+            train_loader = _apply_negative_subsampling(
+                train_loader, neg_subsample, seed=config.get("seed", 2222)
+            )
+
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
         vlb = training_cfg.get("variable_length_batching", False)
         if not vlb and oversampling_factor > 0:
@@ -720,6 +778,12 @@ def train_translator(args):
             else:
                 train_loader = _augment_loader_with_zero_static(train_loader, static_features)
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
+
+        neg_subsample = training_cfg.get("negative_subsample_count", 0)
+        if neg_subsample > 0:
+            train_loader = _apply_negative_subsampling(
+                train_loader, neg_subsample, seed=config.get("seed", 2222)
+            )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
         vlb = training_cfg.get("variable_length_batching", False)

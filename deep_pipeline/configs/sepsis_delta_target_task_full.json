@@ -23,8 +23,7 @@
   },
   "seed": 2222,
   "device": "cuda",
-  "debug": true,
-  "debug_fraction": 0.2,
+  "debug": false,
   "translator": {
     "type": "transformer",
     "d_model": 128,
@@ -32,18 +31,18 @@
   },
   "training": {
     "lr": 1e-4,
-    "epochs": 15,
+    "epochs": 30,
     "batch_size": 16,
     "lambda_fidelity": 0.1,
     "lambda_range": 0.5,
     "lambda_target_task": 0.5,
-    "early_stopping_patience": 7,
+    "early_stopping_patience": 10,
     "best_metric": "val_task",
     "variable_length_batching": true,
     "shuffle": true
   },
   "output": {
-    "run_dir": "runs/sepsis_delta_target_task_debug",
-    "log_file": "runs/sepsis_delta_target_task_debug/run.log"
+    "run_dir": "runs/sepsis_delta_target_task_full",
+    "log_file": "runs/sepsis_delta_target_task_full/run.log"
   }
 }

@@ -1,6 +1,6 @@
 # Comprehensive Results & Conclusions: EHR Translator Deep Pipeline
 
-**Date**: 2026-02-17 (updated 2026-02-21)
+**Date**: 2026-02-17 (updated 2026-02-22, D-series MIL experiments added)
 **Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, and full-data validation (delta + shared latent)
 
 ---
@@ -110,22 +110,37 @@ Controlled experiments isolating each factor (attention mode, capacity, data siz
 
 ---
 
-## 4. Full-Data Validation Runs (Feb 17)
+## 4. Full-Data Validation Runs (Feb 17 + Feb 21)
 
 ### 4.1 Design
 
-The top 3 approaches from the debug A/B/C screen (A3, C2, A4) were run on **full data** (100% train, full test) with 30 epochs. 3 experiments × 2 tasks = 6 runs, executed in parallel across 3 GPUs using git worktrees.
+Initially the top 3 approaches from the debug A/B/C screen (A3, C2, A4) were run on **full data** (100% train, full test) with 30 epochs. On Feb 21, the remaining 7 experiments (C3, B1, B3, B5, B2, A1, C1) were also run on full mortality data, completing the full picture. All use 30 epochs, batch_size=64, lr=1e-4, d_model=128, bidirectional.
 
-### 5.2 Results
+### 4.2 Full Mortality Results (All A/B/C Experiments)
 
-| Experiment | Sepsis AUCROC Δ | Sepsis AUCPR Δ | Mortality AUCROC Δ | Mortality AUCPR Δ |
-|---|---|---|---|---|
-| Baseline (prev best) | +0.0059 | — | +0.0264 | +0.0296 |
-| **A3: Padding-Aware Fidelity** | +0.0007 | +0.0006 | **+0.0285** | **+0.0319** |
-| C2: GradNorm Weighting | +0.0025 | +0.0008 | +0.0086 | +0.0150 |
-| A4: Truncate-and-Pack | -0.0055 | -0.0021 | +0.0264 | +0.0296 |
+| Rank | Experiment | ΔAUCROC | ΔAUCPR | ΔBrier | ΔECE | Notes |
+|---|---|---|---|---|---|---|
+| — | Baseline (prev best, 20ep bidir) | +0.0264 | +0.0296 | — | — | Reference |
+| **1** | **C3: Cosine Fidelity** | **+0.0333** | **+0.0392** | **+0.0036** | **+0.0267** | **New delta-based best (AUCPR)** |
+| 2 | B1: Hidden-State MMD | +0.0310 | +0.0308 | +0.0226 | +0.0371 | Hidden MMD adds value |
+| 3 | A3: Padding-Aware Fidelity | +0.0285 | +0.0319 | +0.0279 | +0.0483 | Prev delta-based best |
+| 4 | A4: Truncate-and-Pack | +0.0264 | +0.0296 | +0.0235 | +0.0425 | Matches vanilla baseline |
+| 5 | B5: Optimal Transport | +0.0255 | +0.0283 | +0.0242 | +0.0463 | |
+| 6 | B3: kNN Translation | +0.0253 | +0.0299 | +0.0296 | +0.0546 | |
+| 7 | C2: GradNorm | +0.0086 | +0.0150 | +0.0128 | +0.0196 | Collapsed at scale |
+| 8 | A1: Variable-Length Batching | +0.0001 | -0.0047 | +0.0023 | +0.0018 | VLB incompatible w/ mortality |
+| 5= | B2: Shared Encoder | +0.0255 | +0.0283 | +0.0242 | +0.0463 | Matches B5 exactly |
+| 8 | C1: Focal Loss | +0.0220 | +0.0191 | +0.2156 | +0.2770 | Worst calibration by far |
 
-### 5.3 Training Dynamics
+### 4.3 Sepsis Full Results (Initial 3)
+
+| Experiment | Sepsis AUCROC Δ | Sepsis AUCPR Δ |
+|---|---|---|
+| A3: Padding-Aware Fidelity | +0.0007 | +0.0006 |
+| C2: GradNorm Weighting | +0.0025 | +0.0008 |
+| A4: Truncate-and-Pack | -0.0055 | -0.0021 |
+
+### 4.4 Training Dynamics (Initial 3)
 
 | Experiment / Task | Epochs Run | Best Epoch | Early Stopped? | Notes |
 |---|---|---|---|---|
@@ -136,28 +151,40 @@ The top 3 approaches from the debug A/B/C screen (A3, C2, A4) were run on **full
 | A4 / sepsis | 30/30 | 29 | No | 36 checkpoints, continued improving |
 | A4 / mortality | 28/30 | 23 | Yes (patience 5) | 40 checkpoints, gradual improvement |
 
-### 5.4 Analysis
+### 4.5 Analysis
 
-**Mortality — A3 sets new best:**
-- A3 (Padding-Aware Fidelity) achieves **+0.0285 AUCROC** and **+0.0319 AUCPR**, surpassing the previous best of +0.0264/+0.0296. Excluding padding from fidelity loss focuses regularization on real clinical data, allowing the translator more freedom to adapt.
-- A4 (Truncate-and-Pack) reproduces the baseline exactly (+0.0264/+0.0296). Truncation reduces compute but doesn't improve the signal — mortality sequences are only 24 timesteps, so truncation to 72 has no effect.
-- C2 (GradNorm) significantly underperforms (+0.0086). Dynamic loss reweighting actively hurt on full data. The GradNorm balancer may be over-correcting, pulling weight away from the fidelity anchor that mortality training benefits from.
+**Mortality — C3 (Cosine Fidelity) is the new delta-based AUCPR leader:**
+- C3 achieves **+0.0333 AUCROC** and **+0.0392 AUCPR** — the best AUCPR for any delta-based approach. Notably, C3 also has the **best calibration** (Brier +0.0036, ECE +0.0267), far better than all other experiments.
+- B1 (Hidden-State MMD) is strong at +0.0310 / +0.0308. MMD on LSTM hidden states (not raw features) provides meaningful alignment signal.
+- A3 (Padding-Aware Fidelity) remains solid at +0.0285 / +0.0319.
+- B5 and B3 (latent-space alignment via OT and kNN) cluster together at +0.025, showing that these alignment methods help but are not as effective as C3 or B1.
+- C2 (GradNorm) collapsed at scale (+0.0086) — dynamic loss reweighting over-corrects, reducing the fidelity anchor that mortality benefits from.
+- A1 (VLB) effectively does nothing (+0.0001) — VLB is incompatible with per-stay mortality (truncates to length 1).
+
+**C3's debug result predicted the full-data outcome:** C3 was #1 on debug mortality (+0.0156), and held up as #1 on full data (+0.0333). This is one case where debug rankings accurately predicted full-data performance.
+
+**C3 destroys sepsis but excels at mortality:** This confirms C3 is strongly task-dependent. Cosine fidelity ignores magnitude (only direction), which is harmful for sparse per-timestep sepsis but beneficial for dense per-stay mortality. On mortality, the cosine loss focuses on translating feature *directions* while allowing magnitude adjustments.
 
 **Sepsis — Still fundamentally limited:**
 - All three approaches produce near-zero or negative results on full data: A3 +0.0007, C2 +0.0025, A4 -0.0055.
-- A3's debug result (+0.0060) was within the debug noise band (SE ~0.017) and did not hold up at scale.
-- A4 actively hurt sepsis (-0.0055), likely because truncation to 72 timesteps discards the long-tail sequences (up to 169 timesteps) that may contain late-onset sepsis signals.
-- The sepsis task's per-timestep label sparsity (1.1% positive rate, 73% padding) remains the fundamental bottleneck that input shaping and training signal modifications cannot overcome.
+- The sepsis task's per-timestep label sparsity (1.1% positive rate) is the fundamental bottleneck. Negative subsampling did not help (Section 10.8); per-stay MIL aggregation also did not help per-TS metrics (Section 10.9).
 
-### 4.5 Debug vs Full-Data Comparison
+### 4.6 Debug vs Full-Data Comparison
 
-| Experiment | Sepsis Δ (debug 20%) | Sepsis Δ (full) | Mortality Δ (debug 20%) | Mortality Δ (full) |
-|---|---|---|---|---|
-| A3: Padding-Aware Fidelity | +0.0060 | +0.0007 | +0.0096 | **+0.0285** |
-| C2: GradNorm | +0.0039 | +0.0025 | +0.0094 | +0.0086 |
-| A4: Truncate-and-Pack | +0.0014 | -0.0055 | +0.0094 | +0.0264 |
+| Experiment | Mortality Δ (debug) | Mortality Δ (full) | Debug→Full |
+|---|---|---|---|
+| C3: Cosine Fidelity | +0.0156 | **+0.0333** | 2.1x |
+| B1: Hidden-State MMD | +0.0049 | +0.0310 | 6.3x |
+| A3: Padding-Aware Fidelity | +0.0096 | +0.0285 | 3.0x |
+| A4: Truncate-and-Pack | +0.0094 | +0.0264 | 2.8x |
+| B5: Optimal Transport | +0.0054 | +0.0255 | 4.7x |
+| B3: kNN Translation | +0.0059 | +0.0253 | 4.3x |
+| B2: Shared Encoder | +0.0054 | +0.0255 | 4.7x |
+| C1: Focal Loss | +0.0016 | +0.0220 | 13.8x |
+| C2: GradNorm | +0.0094 | +0.0086 | 0.9x |
+| A1: Variable-Length Batching | +0.0066 | +0.0001 | 0.02x |
 
-**Key insight: Debug rankings were misleading.** For sepsis, the debug screen suggested A3 > C2 > A4, but on full data all are near zero. For mortality, A3 appeared similar to C2 and A4 on debug, but on full data A3 pulls ahead while C2 collapses. The debug experiments correctly identified A3 as promising for mortality but failed to distinguish the approaches for sepsis.
+**Key insight: Debug rankings were partially predictive for mortality.** C3 was correctly identified as #1, and C2's underperformance at scale (0.9x) was the most surprising result. B1 showed the largest debug→full scaling (6.3x), suggesting it benefits most from additional data diversity. A1's near-zero result confirms VLB is incompatible with mortality's fixed 25-timestep format.
 
 ---
 
@@ -252,7 +279,7 @@ From log analysis of individual experiments:
 
 2. **Shared latent space is the best approach for mortality**: +0.0441 AUCROC / +0.0456 AUCPR (v3). By encoding both domains into a shared latent space and aligning via MMD, the gradient bottleneck is bypassed. All 3 variants (+0.040 to +0.044) outperform the previous best (A3: +0.0285). Previous A3 (padding-aware fidelity) remains the best delta-based approach.
 
-3. **Sepsis is limited by label density, not task structure**: Per-timestep labels with 1.1% positive rate produce contradictory gradients. The AKI experiment (Feb 20-21) definitively proved this: AKI is per-timestep + causal like sepsis, but with 11.95% positive rate — and both translators work at full scale (delta: **+0.024**, shared latent: **+0.037** AUCROC). The bottleneck is label density, not per-timestep structure. Per-stay aggregation for sepsis is the clear next step.
+3. **Sepsis remains the hardest task**: Per-timestep labels with 1.1% positive rate produce contradictory gradients. The AKI experiment proved label density was the bottleneck. Initial negative subsampling results (+0.0805 AUCROC) were **invalidated due to train/test data leakage** (separate YAIB splits on filtered vs original cohorts caused 893 train stays to appear in the test set, containing 79% of positive timesteps). A leakage-free implementation (subsampling within YAIB's train split) is being validated — delta subsample shows -0.0016 (no improvement); SL subsample is running. Best confirmed result: +0.0025 (C2 GradNorm, delta-based).
 
 4. **Fidelity regularization is essential**: Without it, training diverges catastrophically. The translator needs a strong anchor to prevent drifting into meaningless transformations.
 
@@ -507,13 +534,15 @@ Both methods show consistent 2.3x debug→full scaling. The shared latent full r
 
 #### Cross-task full-data comparison (shared latent):
 
-| Task | Per-TS Pos Rate | ΔAUCROC (full) | ΔAUCPR (full) | ΔBrier |
-|---|---|---|---|---|
-| **Mortality** | 5.52% | **+0.0441** | +0.0456 | +0.0066 |
-| **AKI** | 11.95% | **+0.0370** | **+0.1021** | **-0.0111** |
-| **Sepsis** | 1.13% | -0.0172 | -0.0011 | — |
+| Task | Per-TS Pos Rate | Training Data | ΔAUCROC (full test) | ΔAUCPR (full test) | ΔBrier |
+|---|---|---|---|---|---|
+| ~~Sepsis (filtered)~~ | ~~12.0% (matched)~~ | ~~Filtered 12.9K~~ | ~~+0.0805~~ | ~~+0.0238~~ | ~~+0.0979~~ | **INVALID — data leakage** |
+| Sepsis (subsampled, clean) | 12.0% (matched) | Full 123K (subsampled train) | -0.0001 (SL) | -0.0009 | +0.1665 | No improvement |
+| **Mortality** | 5.52% | Full 113K | **+0.0441** | +0.0456 | +0.0066 | |
+| **AKI** | 11.95% | Full 165K | **+0.0370** | **+0.1021** | **-0.0111** | |
+| Sepsis (unfiltered) | 1.13% | Full 123K | -0.0172 | -0.0011 | — | |
 
-Both tasks with sufficient label density (mortality >5%, AKI >11%) show substantial improvements with both translators. Shared latent consistently outperforms delta-based for dense-label tasks.
+**Mortality and AKI show substantial improvements with shared latent translation.** Sepsis subsampling showed no improvement after leakage-free re-validation (see Section 10.8).
 
 ### 10.5 Extended Training (40 Epochs) — Overfitting at Debug Scale
 
@@ -561,7 +590,97 @@ Note: The 20% and 100% rows were added on Feb 21 with consistent settings (d128,
 - **20% is clearly underpowered**: At 20%, the translator only achieves ~23% of the 100% result, confirming that the A/B/C debug experiments were severely limited by data volume
 - **Confirmed: 40-epoch overfitting is a data issue**, not a model issue. With 100% data, 30 epochs still improves; at 20%, extended training caused degradation
 
-### 10.7 Infrastructure Changes
+### 10.8 Sepsis Negative Subsampling Experiments (Feb 21)
+
+After AKI confirmed label density as the bottleneck, we attempted negative subsampling to match AKI-like per-timestep positive rate (~12%). Full analysis: [docs/sepsis_label_density_analysis.md](sepsis_label_density_analysis.md).
+
+#### Attempt 1: Separate Filtered Cohort (INVALID — Data Leakage)
+
+Created a filtered eICU cohort at `/bigdata/omerg/Thesis/cohort_data/sepsis/eicu_filtered_aki_density/` (12,939 stays: 5,639 positive + 7,300 negative). Models trained on this filtered cohort were evaluated on the original unfiltered eICU test set.
+
+**DATA LEAKAGE DISCOVERED**: YAIB's `StratifiedShuffleSplit` splits each data_dir independently based on its stay_id set. When training on the filtered cohort and evaluating on the original cohort, YAIB generates different splits for each. Result: **893 filtered-train stays appeared in the original test set**, containing **79.1% of all positive timesteps** (11,506 of 14,540) in that test set. The +0.0805 AUCROC result is therefore **invalid**.
+
+Results on filtered test set (valid — same data_dir for train and eval):
+
+| Method | ΔAUCROC | ΔAUCPR | ΔBrier | ΔECE |
+|---|---|---|---|---|
+| Shared Latent v3 | +0.0450 | +0.0740 | +0.0606 | +0.1259 |
+| Delta-based | +0.0052 | +0.0005 | +0.0639 | +0.1100 |
+
+~~Results on original full test set~~ — **INVALID due to leakage**, not reproduced here.
+
+Configs (deprecated): `configs/sepsis_filtered_{delta,sl}_full.json`, `configs/sepsis_filtered_{delta,sl}_eval_on_original.json`
+
+#### Attempt 2: In-Split Negative Subsampling (Leakage-Free Fix)
+
+Implemented `_apply_negative_subsampling()` in `src/cli.py` — subsamples negative stays **within YAIB's train split** of the original (unfiltered) eICU data. This is leakage-free by construction: train/val/test splits come from a single consistent YAIB split. Config key: `training.negative_subsample_count: 7300`.
+
+After subsampling: 11,247 training stays (3,947 pos + 7,300 neg = 35.1% per-stay positive rate), test set unchanged (24,683 stays, 4.57% positive).
+
+| Method | Baseline AUCROC | Translated AUCROC | **ΔAUCROC** | **ΔAUCPR** | Status |
+|---|---|---|---|---|---|
+| Delta-based (subsampled) | 0.7160 | 0.7144 | **-0.0016** | -0.0002 | Complete |
+| Shared Latent v3 (subsampled) | 0.7159 | 0.7158 | **-0.0001** | -0.0009 | Complete |
+| Previous best (C2 GradNorm, no subsample) | 0.7159 | 0.7184 | +0.0025 | +0.0008 | Confirmed |
+
+**Neither method benefits from negative subsampling.** The +0.0805 was entirely due to leakage. Sepsis best remains +0.0025 (C2 GradNorm, delta-based).
+
+Configs: `configs/sepsis_subsample_{delta,sl}_full.json`
+
+### 10.9 Per-Stay Task Loss / MIL Experiments (Feb 22)
+
+After AKI confirmed label density as the bottleneck, and negative subsampling failed, we tested **Multiple Instance Learning (MIL)** — aggregating per-timestep predictions to per-stay predictions before computing task loss. Each stay is a "bag", each timestep is an "instance". A stay is positive if any timestep is positive.
+
+**Rationale**: By aggregating to per-stay loss, the effective positive rate changes from 1.13% (per-TS) to 4.57% (per-stay), concentrating the gradient signal. Three aggregation methods were implemented: `max` (hard MIL), `mean` (soft MIL), and `logsumexp` (smooth max).
+
+**Implementation**: New module `src/core/stay_loss.py` with `compute_stay_task_loss()` and `compute_stay_pos_weight()`. Integrated into both `TransformerTranslatorTrainer` and `LatentTranslatorTrainer` with three modes: `"none"` (original per-TS), `"stay_only"` (pure MIL), `"multi_scale"` (`α * l_ts + (1-α) * l_stay`). Per-stay evaluation metrics added to `eval.py`.
+
+#### Experiment Design
+
+| ID | Mode | Description | Training | Best Epoch |
+|---|---|---|---|---|
+| D1 | Diagnostic | Eval C2 GradNorm checkpoint with per-stay metrics | N/A (eval only) | N/A |
+| D2 | `stay_only` | Pure MIL max-pool, pos_weight=20.82 | 30ep debug, early stopped @16 | 6 |
+| D3 | `multi_scale` | 50% per-TS + 50% MIL max-pool, pos_weight=20.82 | 30ep debug, ran all 30 | 25 |
+
+All use delta-based translator, d_model=128, causal, sepsis debug 20%, VLB, shuffle=true. Auto-computed `stay_pos_weight`=20.82 (789 pos / 16427 neg stays, 4.6% positive).
+
+#### Results
+
+| Metric | D1: C2 Diagnostic | D2: stay_only | D3: multi_scale |
+|---|---|---|---|
+| **Per-Timestep** | | | |
+| ΔAUCROC | **+0.0022** | -0.0137 | -0.0063 |
+| ΔAUCPR | +0.0007 | -0.0029 | -0.0013 |
+| ΔBrier | +0.1208 | **-0.0435** | -0.0292 |
+| ΔECE | +0.1437 | **-0.0519** | -0.0311 |
+| **Per-Stay** | | | |
+| Δstay_AUCROC_max | -0.0013 | +0.0057 | **+0.0085** |
+| Δstay_AUCPR_max | +0.0002 | +0.0024 | **+0.0043** |
+| Δstay_AUCROC_mean | -0.0045 | -0.0103 | -0.0052 |
+| Δstay_AUCPR_mean | -0.0039 | -0.0211 | -0.0103 |
+
+Note: D1 uses full test set; D2/D3 use debug 20% test subset (different baselines: D1 AUCROC=0.7160, D2/D3 AUCROC=0.7175).
+
+#### Key Findings
+
+1. **MIL creates a tradeoff**: Per-stay max-AUCROC improves (D3: +0.0085) while per-TS AUCROC drops (-0.0063). The translator sharpens the "most informative" timestep per stay at the cost of other timesteps.
+
+2. **Multi-scale (D3) strictly dominates stay-only (D2)**: Half the per-TS damage (-0.0063 vs -0.0137), better stay metrics (+0.0085 vs +0.0057), and longer useful training (25 vs 6 epochs before plateau).
+
+3. **Gradient bottleneck persists**: D2 training logs show task_grad ~1.0-1.5 vs fidelity_grad ~75-104 (ratio ≈ 65-86x). Stay-level aggregation concentrates the signal but doesn't amplify it enough to overcome fidelity dominance.
+
+4. **Calibration improves**: Both D2 and D3 improve Brier/ECE (lower = better), unlike C2 which worsened them. Stay-level objective produces better-calibrated estimates.
+
+5. **Translation deltas are conservative**: D2's top feature delta mean ≈ 0.05 vs D1/C2 ≈ 0.30. The stay-level loss generates smaller, more focused modifications.
+
+6. **Per-stay baseline is much higher than per-TS**: Baseline stay_AUCROC_max ≈ 0.70, stay_AUCROC_mean ≈ 0.77, vs per-TS AUCROC ≈ 0.72. Per-stay aggregation naturally resolves much of the "difficulty" — 96.5% of test timesteps come from all-negative stays that dilute the per-TS metric.
+
+**Conclusion**: Per-stay MIL does not solve sepsis at the per-TS level (the primary metric). The fundamental fidelity gradient bottleneck (65-86x) overwhelms the concentrated stay-level signal. The approach correctly identifies and improves the most informative timesteps within positive stays, but the per-TS metric — dominated by 96.5% of timesteps from negative stays — does not benefit.
+
+Configs: `experiments/configs/d{1,2,3}_*_sepsis*.json`
+
+### 10.10 Infrastructure Changes (Feb 20)
 
 **Variable-length batching (VLB) added to delta pipeline**: VLB was previously only implemented in the shared_latent section of `src/cli.py`. It is now available for the delta pipeline as well, controlled by `training.variable_length_batching: true`.
 
@@ -571,46 +690,52 @@ Note: The 20% and 100% rows were added on Feb 21 with consistent settings (d128,
 
 ---
 
-## 11. Recommendations for Next Phase (Updated Feb 20)
+## 11. Recommendations for Next Phase (Updated Feb 21)
 
-### 11.1 Highest Priority: Sepsis Fix (Informed by AKI Results)
+### 11.1 Sepsis: Still Unsolved — New Directions Needed
 
-AKI confirmed label density is the bottleneck. The next step is clear:
+Negative subsampling does NOT help sepsis (clean results: SL -0.0001, delta -0.0016). Per-stay MIL aggregation also does NOT help per-TS metrics (D3 multi_scale: -0.0063 AUCROC, despite +0.0085 stay_AUCROC_max). Best confirmed: **+0.0025** (C2 GradNorm, delta-based).
 
-| Priority | Action | Rationale |
-|---|---|---|
-| 1 | **Per-stay aggregation for sepsis** | AKI proof: dense labels make translation work. Aggregate per-timestep predictions to per-stay before loss. Changes effective label density from 1.1% to ~4.6%. |
-| 2 | **Fidelity weight scheduling** | High fidelity early (stable), decay over training; addresses destructive interference |
-| ~~3~~ | ~~AKI full-data validation~~ | **Done**: debug +0.0107 → full **+0.0242** (2.3x scaling). See Section 10.4. |
+| Priority | Action | Rationale | Status |
+|---|---|---|---|
+| ~~1~~ | ~~Per-stay aggregation~~ | ~~Aggregate per-TS predictions to per-stay~~ | **Tested (D2/D3) — does not help per-TS metric** |
+| 1 | **Curriculum training** | Start with easy (high-density) batches, gradually introduce harder ones | Not tested |
+| 2 | **Loss reweighting strategies** | Beyond focal loss — try adaptive reweighting based on prediction confidence | Not tested |
 
 ### 11.2 Mortality: Shared Latent v3 is the New Default
 
-Shared Latent v3 is the established best for mortality (+0.0441 AUCROC). Next steps:
+Shared Latent v3 is the established best for mortality (+0.0441 AUCROC). C3 (Cosine Fidelity) is the new delta-based best (+0.0333 AUCROC, +0.0392 AUCPR). Next steps:
 
 | Priority | Action | Rationale |
 |---|---|---|
 | 1 | **Multi-seed validation** | Run v3 with 2-3 seeds to confirm +0.0441 is stable |
 | 2 | **Extended training for v2** | v2 (no pretrain) was still improving at epoch 30 — try 50+ epochs |
-| 3 | **Hyperparameter sweep** | Sweep λ_align, λ_recon; try λ_align=1.0 with pretrain |
+| 3 | **C3 + Shared Latent combination** | C3 has best delta calibration; explore cosine fidelity in SL decoder |
+| 4 | **Hyperparameter sweep** | Sweep λ_align, λ_recon; try λ_align=1.0 with pretrain |
 
-### 11.3 Sepsis: Structural Changes Needed (AKI-Informed)
+### 11.3 All Tasks: Calibration is the Common Theme
 
-The AKI experiment definitively shows that per-timestep structure and causal attention are **not** the bottleneck — label density is. Interventions should focus on changing the effective label density:
+All translation methods show Brier/ECE degradation. The translator shifts predictions but doesn't recalibrate:
 
-| Priority | Approach | Rationale |
-|---|---|---|
-| 1 | **Per-stay aggregation for sepsis** | Aggregate per-timestep predictions to per-stay before loss. AKI's 37.8% per-stay rate works; sepsis's 4.6% should too (mortality works at 5.5%). |
-| 2 | **Unfreeze final LSTM layer** | Allow last LSTM layer to fine-tune. More gradient signal at cost of domain-specificity. |
-| 3 | **Fidelity scheduling** | Start high, decay to near-zero. Addresses destructive interference directly. |
-
-### 11.4 Task-Specific Strategy (Confirmed by AKI Full-Data)
-
-AKI full-data results (both delta +0.024 and shared latent +0.037) confirm that per-timestep tasks with **dense labels** respond to both translation approaches. The task-specific strategy is determined by **label density**, not task structure:
-
-| Label Density | Best Approach | Best Full-Data Result | Tasks |
+| Task | Best ΔAUCROC | ΔBrier | ΔECE |
 |---|---|---|---|
-| Dense (>5% per-timestep) | Shared latent (best), delta-based (also works) | Mortality +0.044, AKI +0.037 (SL) | Mortality, AKI |
-| Sparse (<2% per-timestep) | Delta-based (limited) | Sepsis +0.003 | Sepsis |
+| Mortality (SL v3) | +0.0441 | +0.0066 | +0.0101 |
+| AKI (SL v3) | +0.0370 | -0.0111 | +0.0012 |
+| Sepsis (C2 GradNorm) | +0.0025 | — | — |
+
+Temperature scaling is the recommended post-hoc calibration improvement for mortality and AKI.
+
+### 11.4 Task-Specific Strategy
+
+Mortality and AKI are solved with shared latent. Sepsis remains the hardest task — negative subsampling did not help.
+
+| Task | Training Data | Best Approach | ΔAUCROC (full test) | ΔAUCPR | Status |
+|---|---|---|---|---|---|
+| **Mortality** | Full (113K stays) | Shared Latent v3 | **+0.0441** | +0.0456 | Confirmed |
+| **AKI** | Full (165K stays) | Shared Latent v3 | **+0.0370** | +0.1021 | Confirmed |
+| **Sepsis** | Full (123K stays) | C2 GradNorm (delta) | **+0.0025** | +0.0008 | Best confirmed |
+
+**Key insight**: The sepsis bottleneck is NOT just training label density. Subsampling to match AKI density (~12%) did not help (SL: -0.0001, delta: -0.0016). The difference between AKI (works) and sepsis (fails) likely involves test-time label density, sequence structure, or the interaction between causal attention and sparse labels.
 
 ### 11.5 Completed Diagnostics
 
@@ -624,6 +749,7 @@ AKI full-data results (both delta +0.024 and shared latent +0.037) confirm that 
 | ~~Sepsis d128 debug~~ | **Done** (Feb 20) | +0.0019 AUCROC. Larger d_model doesn't help sepsis. |
 | ~~Extended training (40ep)~~ | **Done** (Feb 20) | Overfitting at debug scale. d128: +0.0064→+0.0048, SL: +0.0032→-0.0069. |
 | ~~Data scaling (20-100%)~~ | **Done** (Feb 20-21) | Near-linear: 20%→+0.008, ..., 100%→+0.033 (new delta-based best). Full curve with consistent settings. |
+| ~~Per-stay MIL (D-series)~~ | **Done** (Feb 22) | D2 (stay_only): -0.0137 AUCROC, D3 (multi_scale): -0.0063 AUCROC. Improves stay_AUCROC_max (+0.0085) but hurts per-TS. |
 
 ---
 
@@ -651,7 +777,20 @@ The shared latent approach (encode both domains → shared latent → decode) wa
 | v3 (larger, VLB, f=20) | **-0.0325** | -0.0054 | 15 ep | d_latent=128, 4enc/3dec |
 | v2 (no pretrain, no f) | -0.0424 | -0.0087 | 0 | d_latent=64, 3enc/2dec |
 
-**All variants hurt sepsis performance.** Best at epoch 1, then early-stopped after 8 epochs. The larger model overfits more. The reconstruction bottleneck + sparse labels make latent space methods ineffective for sepsis.
+**All variants hurt sepsis on unfiltered data.** Negative subsampling experiments are under re-validation (see Section 10.8):
+
+### Sepsis Results — With Negative Subsampling (Feb 21)
+
+**NOTE**: Initial results using a separate filtered cohort were **invalidated due to train/test data leakage**. See Section 10.8 for details.
+
+| Variant | Train Data | Test Set | ΔAUCROC | ΔAUCPR | Status |
+|---|---|---|---|---|---|
+| ~~SL v3 (filtered, eval full)~~ | ~~12.9K filtered~~ | ~~Full original~~ | ~~+0.0805~~ | ~~+0.0238~~ | **INVALID (leakage)** |
+| SL v3 (filtered, eval filtered) | 12.9K filtered | Filtered | +0.0450 | +0.0740 | Valid (same data_dir) |
+| Delta (subsampled, clean) | Full, subsampled train | Full original | -0.0016 | -0.0002 | Complete |
+| SL v3 (subsampled, clean) | Full, subsampled train | Full original | -0.0001 | -0.0009 | Complete |
+
+Clean subsampling implementation uses `_apply_negative_subsampling()` within YAIB's train split. See [docs/sepsis_label_density_analysis.md](sepsis_label_density_analysis.md).
 
 ### AKI Results (Debug + Full Data, Causal, batch_size=16, VLB)
 
@@ -662,17 +801,19 @@ The shared latent approach (encode both domains → shared latent → decode) wa
 
 **Shared latent works on AKI at full scale** — in stark contrast to sepsis. AKI is per-timestep + causal like sepsis, but with 11.95% positive rate (vs 1.13%). The full-data result (+0.0370 AUCROC, +0.1021 AUCPR) is the **largest AUCPR improvement** across the entire project. Debug→full scaling is consistent at 2.3x, matching the delta-based pattern.
 
-### Key Insight: Label Density Determines Approach (Confirmed by AKI)
+### Key Insight: Label Density Determines Approach (Confirmed by AKI + Sepsis Subsampling)
 
-| Factor | Mortality (works) | AKI (works) | Sepsis (fails) |
-|---|---|---|---|
-| Attention | Bidirectional | Causal | Causal |
-| Sequence length | 24 | 169 (median 28) | 169 (median 38) |
-| Padding | 0% | ~58% | ~73% |
-| Per-timestep pos rate | 5.52% | **11.95%** | **1.13%** |
-| Per-stay pos rate | 5.52% | **37.79%** | **4.57%** |
-| Shared latent Δ (full) | **+0.044** | **+0.037** | **-0.017 to -0.043** |
-| Delta-based Δ (full) | **+0.033** | **+0.024** | +0.003 |
+| Factor | Mortality (works) | AKI (works) | Sepsis unfiltered (fails) | Sepsis subsampled (TBD) |
+|---|---|---|---|---|
+| Attention | Bidirectional | Causal | Causal | Causal |
+| Sequence length | 24 | 169 (median 28) | 169 (median 38) | 169 (median 48) |
+| Padding | 0% | ~58% | ~73% | ~73% |
+| Training per-TS pos rate | 5.52% | **11.95%** | **1.13%** | **~12%** (subsampled) |
+| Training per-stay pos rate | 5.52% | **37.79%** | **4.57%** | **35.1%** (subsampled) |
+| Shared latent Δ (full test) | **+0.044** | **+0.037** | -0.017 to -0.043 | -0.0001 |
+| Delta-based Δ (full test) | **+0.033** | **+0.024** | +0.003 | -0.002 |
+
+**Negative subsampling does NOT unlock SL for sepsis.** The label density hypothesis was disproven: matching AKI-like density (~12% per-TS) in training does not help when evaluated on the full unfiltered test set. The bottleneck for sepsis may be structural (causal attention + high padding + sparse per-TS labels at test time) rather than purely about training label density.
 
 ---
 
@@ -681,20 +822,23 @@ The shared latent approach (encode both domains → shared latent → decode) wa
 | Task | Best AUCROC Δ | Best AUCPR Δ | Method | Config |
 |---|---|---|---|---|
 | **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | Bidir, d_latent=128, 4enc/3dec, full data, best@ep9 |
-| Mortality24 (delta best) | **+0.0329** | **+0.0336** | Vanilla delta translator | **Causal, d128, full, 30ep, shuffle, best@ep30** |
-| Mortality24 (prev delta) | +0.0264 | +0.0296 | Vanilla delta translator | Bidir, d128, full data, 20ep |
-| **AKI** (SL, full) | **+0.0370** | **+0.1021** | **Shared Latent v3** | **Causal, d128/lat128, VLB, full, 30ep, shuf, best@ep29** |
+| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | Causal, d128/lat128, VLB, full, 30ep, shuf, best@ep29 |
+| Mortality24 (delta best) | +0.0333 | +0.0392 | **C3: Cosine Fidelity** | **Bidir, d128, full, 30ep** |
+| Mortality24 (delta vanilla) | +0.0329 | +0.0336 | Vanilla delta translator | Causal, d128, full, 30ep, shuffle, best@ep30 |
 | AKI (delta, full) | +0.0242 | +0.0781 | Vanilla delta translator | Causal, d128, VLB, full data, 20ep, best@ep20 |
-| **Sepsis** | **+0.0025** | **+0.0008** | C2: GradNorm (full data) | Causal, d64, full data, 30ep, delta-based |
-| Sepsis (shared latent) | -0.0172 | -0.0011 | Shared Latent v1 | Causal, d_latent=64, full data, VLB, f=20 |
+| **Sepsis (confirmed)** | **+0.0025** | **+0.0008** | C2: GradNorm (full data) | Causal, d64, full data, 30ep, delta-based |
+| Sepsis (subsampled SL) | -0.0001 | -0.0009 | SL v3 + neg subsampling | Causal, d128/lat128, subsampled train — **no improvement** |
 
 **Frozen baseline AUCROC**: Mortality=0.8079, Sepsis=0.7159, AKI=0.8558 (full)
 
-**Key highlights (Feb 21)**:
-- **AKI shared latent full** (+0.0370 / +0.1021) is a major new result — largest AUCPR improvement in the project
-- **Mortality delta 30ep+shuffle** (+0.0329) is the new delta-based best, surpassing the old +0.0264 by 25%
-- Both dense-label tasks (mortality, AKI) show shared latent > delta-based on full data
-- All latest full-data runs were still improving at final epoch — extended training recommended
+**Key highlights (Feb 22)**:
+- **Mortality and AKI solved**: Mortality +0.0441, AKI +0.0370 AUCROC with Shared Latent v3
+- **Sepsis subsampling failed**: Initial +0.0805 had train/test leakage. Clean results: SL -0.0001, delta -0.0016. Best confirmed: **+0.0025** (C2 GradNorm).
+- **Sepsis per-stay MIL failed** (Feb 22): Per-stay aggregation improves stay-level discrimination (D3: +0.0085 stay_AUCROC_max) but hurts per-TS AUCROC (-0.0063). Gradient bottleneck (fidelity 65-86x task) persists.
+- **C3 (Cosine Fidelity) is the new delta-based mortality AUCPR leader** (+0.0392) with best calibration (Brier +0.0036)
+- **B1 (Hidden-State MMD)** emerged as strong at +0.0310 AUCROC on full mortality
+- Shared latent is the winning approach for mortality and AKI; sepsis remains unsolved
+- **Calibration** is the remaining challenge for all tasks
 
 ---
 

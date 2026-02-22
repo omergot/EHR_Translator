@@ -13,9 +13,10 @@ You are the best data scientist and deep learning engineer in the world who is e
 | Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
 |---|---|---|---|---|
 | **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | 0.8079 |
+| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | 0.8558 |
 | **Sepsis** | **+0.0025** | **+0.0008** | C2: GradNorm (delta-based) | 0.7159 |
 
-**Critical finding**: Task structure determines which approach works. Mortality benefits from shared latent space translation; sepsis requires delta-based translation. See "Task-Specific Strategy" below.
+**Critical finding**: Task structure determines which approach works. Mortality and AKI benefit from shared latent space translation; sepsis remains unsolved (best +0.0025 with delta-based C2 GradNorm). See "Task-Specific Strategy" below.
 
 ## Commands
 
@@ -122,27 +123,26 @@ Target MIMIC features → [Shared Encoder] → Latent z → [Decoder] → Recons
 
 ## Task-Specific Strategy (Key Insight)
 
-Mortality and sepsis respond **oppositely** to the same approaches. The translation strategy must be task-specific:
+Mortality and AKI are solved with shared latent translation. Sepsis remains the hardest task — label density (1.1% per-timestep positive rate) is the fundamental bottleneck, and neither negative subsampling nor per-stay aggregation has resolved it.
 
-| Factor | Mortality24 (shared latent works) | Sepsis (delta-based works) |
-|---|---|---|
-| Labels | Per-stay (dense, 5.5% pos) | Per-timestep (sparse, 1.1% pos) |
-| Attention | Bidirectional (full context) | Causal window=25 (limited) |
-| Sequence length | 24 timesteps | 169 (median 42, 73% padding) |
-| Best approach | SharedLatentTranslator (+0.044) | EHRTranslator delta (+0.003) |
-| Worst approach | — | SharedLatentTranslator (-0.017 to -0.043) |
+| Factor | Mortality24 | AKI | Sepsis |
+|---|---|---|---|
+| Labels | Per-stay (5.5% pos) | Per-timestep (11.95% pos) | Per-timestep (1.1% pos) |
+| Attention | Bidirectional | Causal | Causal |
+| Training data | Full (113K stays) | Full (165K stays) | Full (123K stays) |
+| Best approach | SL v3 (+0.044) | SL v3 (+0.037) | C2 GradNorm delta (+0.003) |
+| Delta-based | +0.033 | +0.024 | +0.003 (best confirmed) |
 
-**Why shared latent fails on sepsis:**
-1. Reconstruction bottleneck dominates the weak task signal
-2. Causal attention limits encoder's ability to build rich latent representations
-3. Absolute output (not deltas) starts with significant reconstruction error
-4. Larger model = more harm (more capacity for reconstruction overfitting)
-
-**Why shared latent works on mortality:**
+**Why shared latent works for mortality and AKI:**
 1. MMD alignment in latent space provides direct, dense gradient — no backward through frozen LSTM needed
 2. Reconstruction loss stabilizes latent space through decoder path
 3. Task loss only needs small adjustments on well-structured latent space
-4. Bidirectional attention + short sequences = rich encoder representations
+
+**Why sepsis remains unsolved:**
+1. Per-timestep label sparsity (1.1% positive rate) produces contradictory gradients within positive stays
+2. Fidelity gradient dominates task gradient by 5-10x (cos = -0.21, destructive interference)
+3. Negative subsampling to match AKI density (~12%) did NOT help (SL: -0.0001, delta: -0.0016) — initial +0.081 result was invalidated by data leakage
+4. Per-stay MIL aggregation improves stay-level metrics but hurts per-timestep AUCROC
 
 ## Gradient Bottleneck (Root Cause of Difficulty)
 

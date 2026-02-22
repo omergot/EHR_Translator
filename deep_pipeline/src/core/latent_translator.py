@@ -99,6 +99,14 @@ class SharedLatentTranslator(nn.Module):
         self.output_head = nn.Linear(d_model, 1)
         self.out_dropout = nn.Dropout(out_dropout)
 
+        # Label prediction head: latent → logits (bypasses frozen LSTM)
+        self.label_pred_head = nn.Sequential(
+            nn.Linear(d_latent, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 1),
+        )
+
     def encode(
         self,
         x_val: torch.Tensor,
@@ -211,6 +219,19 @@ class SharedLatentTranslator(nn.Module):
         latent = self.encode(x_val, x_miss, t_abs, m_pad, x_static)
         x_out = self.decode(latent, m_pad, x_static)
         return x_out
+
+    def predict_labels(self, latent: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
+        """Predict labels from latent representation.
+
+        Args:
+            latent: (B, T, d_latent) per-timestep latent
+            m_pad: (B, T) padding mask
+
+        Returns: (B, T) logits for binary classification.
+        """
+        logits = self.label_pred_head(latent.float()).squeeze(-1)  # (B, T)
+        logits = logits.masked_fill(m_pad.bool(), 0.0)
+        return logits
 
     def set_temporal_mode(self, mode: str) -> None:
         """Switch all blocks between 'causal' and 'bidirectional'."""

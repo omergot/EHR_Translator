@@ -241,6 +241,11 @@ class TransformerTranslatorTrainer:
         # Store training config for experiment-specific features
         self._training_config = training_config or {}
 
+        # MIMIC target task loss
+        self.lambda_target_task = self._training_config.get("lambda_target_task", 0.0)
+        if self.lambda_target_task > 0:
+            logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
+
     def _load_feature_bounds(self, bounds_csv: Path, feature_names: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         import pandas as pd
 
@@ -362,10 +367,11 @@ class TransformerTranslatorTrainer:
 
     def _run_epoch(self, loader: DataLoader, epoch: int = 0) -> dict[str, float]:
         self.translator.train()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0, "target_task": 0.0}
         use_forecast = self.lambda_forecast > 0
         use_mmd = self.lambda_mmd > 0 and self.target_train_loader is not None
         use_mmd_transition = self.lambda_mmd_transition > 0 and self.target_train_loader is not None
+        use_target_task = self.lambda_target_task > 0 and self.target_train_loader is not None
         num_batches = 0
         logged_this_epoch = False
         for batch in loader:
@@ -459,6 +465,26 @@ class TransformerTranslatorTrainer:
                             target_delta[target_trans_mask].float(),
                         )
 
+            # Target task loss: pass MIMIC through translator → frozen LSTM → MIMIC labels
+            l_target_task = x_val_out.new_tensor(0.0)
+            if use_target_task:
+                if not (use_mmd or use_mmd_transition):
+                    target_batch = self._next_target_batch()
+                    target_parts = self.schema_resolver.extract(target_batch)
+                tgt_val_out = self.translator(
+                    target_parts["X_val"], target_parts["X_miss"],
+                    target_parts["t_abs"], target_parts["M_pad"], target_parts["X_static"],
+                    return_forecast=False,
+                )
+                tgt_yaib = self.schema_resolver.rebuild(
+                    target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"]
+                )
+                tgt_label_mask = target_parts["M_label"].bool()
+                tgt_logits = self.yaib_runtime.forward((tgt_yaib, target_parts["y"], tgt_label_mask))
+                l_target_task = self.yaib_runtime.compute_loss(
+                    tgt_logits.float(), (tgt_yaib, target_parts["y"], tgt_label_mask)
+                ).float()
+
             l_total = (
                 l_task
                 + (self.lambda_fidelity * l_fidelity)
@@ -466,6 +492,7 @@ class TransformerTranslatorTrainer:
                 + (self.lambda_forecast * l_forecast)
                 + (self.lambda_mmd * l_mmd)
                 + (self.lambda_mmd_transition * l_mmd_trans)
+                + (self.lambda_target_task * l_target_task)
             )
 
             # Gradient magnitude diagnostic (periodic: epoch 0 detailed, then batch 0 at intervals)
@@ -585,6 +612,7 @@ class TransformerTranslatorTrainer:
             totals["forecast"] += l_forecast.item()
             totals["mmd"] += l_mmd.item()
             totals["mmd_trans"] += l_mmd_trans.item()
+            totals["target_task"] += l_target_task.item()
             num_batches += 1
 
         if num_batches == 0:
@@ -593,10 +621,11 @@ class TransformerTranslatorTrainer:
 
     def _validate(self, loader: DataLoader) -> dict[str, float]:
         self.translator.eval()
-        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "forecast": 0.0, "mmd": 0.0, "mmd_trans": 0.0, "target_task": 0.0}
         use_forecast = self.lambda_forecast > 0
         use_mmd = self.lambda_mmd > 0 and self.target_train_loader is not None
         use_mmd_transition = self.lambda_mmd_transition > 0 and self.target_train_loader is not None
+        use_target_task = self.lambda_target_task > 0 and self.target_train_loader is not None
         num_batches = 0
         with torch.no_grad():
             for batch in loader:
@@ -664,6 +693,26 @@ class TransformerTranslatorTrainer:
                                 target_delta[target_trans_mask].float(),
                             )
 
+                # Target task loss (validation)
+                l_target_task = x_val_out.new_tensor(0.0)
+                if use_target_task:
+                    if not (use_mmd or use_mmd_transition):
+                        target_batch = self._next_target_batch()
+                        target_parts = self.schema_resolver.extract(target_batch)
+                    tgt_val_out = self.translator(
+                        target_parts["X_val"], target_parts["X_miss"],
+                        target_parts["t_abs"], target_parts["M_pad"], target_parts["X_static"],
+                        return_forecast=False,
+                    )
+                    tgt_yaib = self.schema_resolver.rebuild(
+                        target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"]
+                    )
+                    tgt_label_mask = target_parts["M_label"].bool()
+                    tgt_logits = self.yaib_runtime.forward((tgt_yaib, target_parts["y"], tgt_label_mask))
+                    l_target_task = self.yaib_runtime.compute_loss(
+                        tgt_logits.float(), (tgt_yaib, target_parts["y"], tgt_label_mask)
+                    ).float()
+
                 l_total = (
                     l_task
                     + (self.lambda_fidelity * l_fidelity)
@@ -671,6 +720,7 @@ class TransformerTranslatorTrainer:
                     + (self.lambda_forecast * l_forecast)
                     + (self.lambda_mmd * l_mmd)
                     + (self.lambda_mmd_transition * l_mmd_trans)
+                    + (self.lambda_target_task * l_target_task)
                 )
 
                 totals["total"] += l_total.item()
@@ -680,6 +730,7 @@ class TransformerTranslatorTrainer:
                 totals["forecast"] += l_forecast.item()
                 totals["mmd"] += l_mmd.item()
                 totals["mmd_trans"] += l_mmd_trans.item()
+                totals["target_task"] += l_target_task.item()
                 num_batches += 1
 
         if num_batches == 0:
@@ -704,7 +755,7 @@ class TransformerTranslatorTrainer:
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f train_forecast=%.4f train_mmd=%.4f train_mmd_trans=%.4f",
+                "Epoch %d/%d - train_total=%.4f train_task=%.4f train_fidelity=%.4f train_range=%.4f train_forecast=%.4f train_mmd=%.4f train_mmd_trans=%.4f train_target_task=%.4f",
                 epoch + 1,
                 epochs,
                 train_metrics["total"],
@@ -714,9 +765,10 @@ class TransformerTranslatorTrainer:
                 train_metrics["forecast"],
                 train_metrics["mmd"],
                 train_metrics["mmd_trans"],
+                train_metrics.get("target_task", 0.0),
             )
             logging.info(
-                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f val_forecast=%.4f val_mmd=%.4f val_mmd_trans=%.4f",
+                "Epoch %d/%d - val_total=%.4f val_task=%.4f val_fidelity=%.4f val_range=%.4f val_forecast=%.4f val_mmd=%.4f val_mmd_trans=%.4f val_target_task=%.4f",
                 epoch + 1,
                 epochs,
                 val_metrics["total"],
@@ -726,6 +778,7 @@ class TransformerTranslatorTrainer:
                 val_metrics["forecast"],
                 val_metrics["mmd"],
                 val_metrics["mmd_trans"],
+                val_metrics.get("target_task", 0.0),
             )
 
             self.history.append(
@@ -738,6 +791,7 @@ class TransformerTranslatorTrainer:
                     "train_forecast": train_metrics["forecast"],
                     "train_mmd": train_metrics["mmd"],
                     "train_mmd_trans": train_metrics["mmd_trans"],
+                    "train_target_task": train_metrics.get("target_task", 0.0),
                     "val_total": val_metrics["total"],
                     "val_task": val_metrics["task"],
                     "val_fidelity": val_metrics["fidelity"],
@@ -745,6 +799,7 @@ class TransformerTranslatorTrainer:
                     "val_forecast": val_metrics["forecast"],
                     "val_mmd": val_metrics["mmd"],
                     "val_mmd_trans": val_metrics["mmd_trans"],
+                    "val_target_task": val_metrics.get("target_task", 0.0),
                 }
             )
 
@@ -861,6 +916,7 @@ class LatentTranslatorTrainer:
         best_metric: str = "val_task",
         run_dir: Path | None = None,
         device: str = "cuda",
+        training_config: dict | None = None,
     ) -> None:
         self.yaib_runtime = yaib_runtime
         self.schema_resolver = schema_resolver
@@ -877,6 +933,15 @@ class LatentTranslatorTrainer:
 
         self.target_train_loader = target_train_loader
         self._target_iter = iter(target_train_loader)
+
+        # MIMIC target task loss and latent label prediction
+        _tc = training_config or {}
+        self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
+        self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
+        if self.lambda_target_task > 0:
+            logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
+        if self.lambda_label_pred > 0:
+            logging.info("Latent label prediction enabled: lambda_label_pred=%.4f", self.lambda_label_pred)
 
         self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
@@ -964,9 +1029,10 @@ class LatentTranslatorTrainer:
         return tuple(b.to(self.device) for b in batch)
 
     def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
-        """Autoencoder pretraining on MIMIC target data."""
+        """Autoencoder pretraining on MIMIC target data, optionally with label prediction."""
         self.translator.train()
-        total_loss = 0.0
+        total_recon = 0.0
+        total_label_pred = 0.0
         n_batches = 0
 
         for batch in target_loader:
@@ -974,28 +1040,48 @@ class LatentTranslatorTrainer:
             parts = self.schema_resolver.extract(batch)
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
-                x_out = self.translator(
+                # Encode → decode for reconstruction
+                latent = self.translator.encode(
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                 )
+                x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
                 mask = ~parts["M_pad"].bool()
                 diff = (x_out.float() - parts["X_val"].float()) ** 2
-                loss = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
+                l_recon = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
+
+                # Label prediction from latent (teaches encoder task-relevant features)
+                l_label_pred = latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    label_logits = self.translator.predict_labels(latent, parts["M_pad"])
+                    label_mask = parts["M_label"].bool()
+                    if label_mask.any():
+                        l_label_pred = F.binary_cross_entropy_with_logits(
+                            label_logits[label_mask].float(),
+                            parts["y"][label_mask].float(),
+                        )
+
+                loss = l_recon + self.lambda_label_pred * l_label_pred
 
             self.optimizer.zero_grad()
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            total_loss += loss.item()
+            total_recon += l_recon.item()
+            total_label_pred += l_label_pred.item()
             n_batches += 1
 
-        return {"pretrain_recon": total_loss / max(n_batches, 1)}
+        return {
+            "pretrain_recon": total_recon / max(n_batches, 1),
+            "pretrain_label_pred": total_label_pred / max(n_batches, 1),
+        }
 
     def _run_epoch(self, train_loader: DataLoader, epoch: int = 0) -> dict:
-        """Joint training: task + alignment + reconstruction + range."""
+        """Joint training: task + alignment + reconstruction + range + target_task + label_pred."""
         self.translator.train()
-        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
+                  "target_task": 0.0, "label_pred": 0.0}
         n_batches = 0
 
         for batch in train_loader:
@@ -1050,11 +1136,50 @@ class LatentTranslatorTrainer:
                 range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
                 l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
 
+                # Target task loss: decoded MIMIC → frozen LSTM → MIMIC labels
+                l_target_task = tgt_out.new_tensor(0.0)
+                if self.lambda_target_task > 0:
+                    tgt_yaib = self.schema_resolver.rebuild(
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                    )
+                    tgt_label_mask = tgt_parts["M_label"].bool()
+                    tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
+                    l_target_task = self.yaib_runtime.compute_loss(
+                        tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
+                    ).float()
+
+                # Label prediction from latent (both domains)
+                l_label_pred = src_latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    # Source labels
+                    src_label_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    src_label_mask = parts["M_label"].bool()
+                    if src_label_mask.any():
+                        l_src_lp = F.binary_cross_entropy_with_logits(
+                            src_label_logits[src_label_mask].float(),
+                            parts["y"][src_label_mask].float(),
+                        )
+                    else:
+                        l_src_lp = src_latent.new_tensor(0.0)
+                    # Target labels
+                    tgt_label_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
+                    tgt_label_mask_lp = tgt_parts["M_label"].bool()
+                    if tgt_label_mask_lp.any():
+                        l_tgt_lp = F.binary_cross_entropy_with_logits(
+                            tgt_label_logits[tgt_label_mask_lp].float(),
+                            tgt_parts["y"][tgt_label_mask_lp].float(),
+                        )
+                    else:
+                        l_tgt_lp = tgt_latent.new_tensor(0.0)
+                    l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
+
                 l_total = (
                     l_task
                     + self.lambda_align * l_align
                     + self.lambda_recon * l_recon
                     + self.lambda_range * l_range
+                    + self.lambda_target_task * l_target_task
+                    + self.lambda_label_pred * l_label_pred
                 )
 
             self.optimizer.zero_grad()
@@ -1067,6 +1192,8 @@ class LatentTranslatorTrainer:
             totals["align"] += l_align.item()
             totals["recon"] += l_recon.item()
             totals["range"] += l_range.item()
+            totals["target_task"] += l_target_task.item()
+            totals["label_pred"] += l_label_pred.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -1075,7 +1202,8 @@ class LatentTranslatorTrainer:
     def _validate(self, val_loader: DataLoader) -> dict:
         """Validation pass."""
         self.translator.eval()
-        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
+                  "target_task": 0.0, "label_pred": 0.0}
         n_batches = 0
 
         for batch in val_loader:
@@ -1124,13 +1252,57 @@ class LatentTranslatorTrainer:
                 range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
                 l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
 
-                l_total = l_task + self.lambda_align * l_align + self.lambda_recon * l_recon + self.lambda_range * l_range
+                # Target task loss (validation)
+                l_target_task = tgt_out.new_tensor(0.0)
+                if self.lambda_target_task > 0:
+                    tgt_yaib = self.schema_resolver.rebuild(
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                    )
+                    tgt_label_mask = tgt_parts["M_label"].bool()
+                    tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
+                    l_target_task = self.yaib_runtime.compute_loss(
+                        tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
+                    ).float()
+
+                # Label prediction (validation)
+                l_label_pred = src_latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    src_label_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    src_label_mask = parts["M_label"].bool()
+                    if src_label_mask.any():
+                        l_src_lp = F.binary_cross_entropy_with_logits(
+                            src_label_logits[src_label_mask].float(),
+                            parts["y"][src_label_mask].float(),
+                        )
+                    else:
+                        l_src_lp = src_latent.new_tensor(0.0)
+                    tgt_label_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
+                    tgt_label_mask_lp = tgt_parts["M_label"].bool()
+                    if tgt_label_mask_lp.any():
+                        l_tgt_lp = F.binary_cross_entropy_with_logits(
+                            tgt_label_logits[tgt_label_mask_lp].float(),
+                            tgt_parts["y"][tgt_label_mask_lp].float(),
+                        )
+                    else:
+                        l_tgt_lp = tgt_latent.new_tensor(0.0)
+                    l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
+
+                l_total = (
+                    l_task
+                    + self.lambda_align * l_align
+                    + self.lambda_recon * l_recon
+                    + self.lambda_range * l_range
+                    + self.lambda_target_task * l_target_task
+                    + self.lambda_label_pred * l_label_pred
+                )
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
             totals["align"] += l_align.item()
             totals["recon"] += l_recon.item()
             totals["range"] += l_range.item()
+            totals["target_task"] += l_target_task.item()
+            totals["label_pred"] += l_label_pred.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -1146,7 +1318,10 @@ class LatentTranslatorTrainer:
             logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
             for ep in range(self.pretrain_epochs):
                 metrics = self._pretrain_epoch(self.target_train_loader)
-                logging.info("Pretrain epoch %d/%d - recon=%.4f", ep + 1, self.pretrain_epochs, metrics["pretrain_recon"])
+                lp_str = ""
+            if self.lambda_label_pred > 0:
+                lp_str = " label_pred=%.4f" % metrics.get("pretrain_label_pred", 0.0)
+            logging.info("Pretrain epoch %d/%d - recon=%.4f%s", ep + 1, self.pretrain_epochs, metrics["pretrain_recon"], lp_str)
 
             # Save pretrain checkpoint
             pretrain_path = self.run_dir / "pretrain_checkpoint.pt"
@@ -1169,14 +1344,16 @@ class LatentTranslatorTrainer:
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
                 train_metrics["align"], train_metrics["recon"], train_metrics["range"],
+                train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
             )
             logging.info(
-                "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f",
+                "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
                 epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
                 val_metrics["align"], val_metrics["recon"], val_metrics["range"],
+                val_metrics.get("target_task", 0.0), val_metrics.get("label_pred", 0.0),
             )
 
             self.history.append({

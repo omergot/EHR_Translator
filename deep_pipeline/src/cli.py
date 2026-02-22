@@ -124,6 +124,10 @@ def _get_training_config(config: dict) -> dict:
         "lambda_recon": training.get("lambda_recon", 0.1),
         # Training data shuffling
         "shuffle": training.get("shuffle", False),
+        # MIMIC target task loss (for both delta and SL)
+        "lambda_target_task": training.get("lambda_target_task", 0.0),
+        # Latent label prediction head (SL only)
+        "lambda_label_pred": training.get("lambda_label_pred", 0.0),
     }
 
 
@@ -847,6 +851,7 @@ def train_translator(args):
             best_metric=training_cfg["best_metric"],
             run_dir=Path(output_cfg["run_dir"]),
             device=config.get("device", "cuda"),
+            training_config=training_cfg,
         )
         trainer.train(
             epochs=training_cfg["epochs"],

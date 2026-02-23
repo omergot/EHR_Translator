@@ -12,11 +12,11 @@ You are the best data scientist and deep learning engineer in the world who is e
 
 | Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
 |---|---|---|---|---|
-| **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | 0.8079 |
+| **Mortality24** | **+0.0441** | **+0.0546** | SL v3 / SL+MIMIC labels | 0.8079 |
 | **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | 0.8558 |
-| **Sepsis** | **+0.0025** | **+0.0008** | C2: GradNorm (delta-based) | 0.7159 |
+| **Sepsis** | **+0.0102** | **+0.0056** | Delta + target task loss | 0.7159 |
 
-**Critical finding**: Task structure determines which approach works. Mortality and AKI benefit from shared latent space translation; sepsis remains unsolved (best +0.0025 with delta-based C2 GradNorm). See "Task-Specific Strategy" below.
+**Critical finding**: Task structure determines which approach works. Mortality and AKI benefit from shared latent space translation; sepsis benefits from delta-based + MIMIC target task loss (+0.0102 AUCROC, 4x previous best). See "Task-Specific Strategy" below.
 
 ## Commands
 
@@ -123,25 +123,31 @@ Target MIMIC features → [Shared Encoder] → Latent z → [Decoder] → Recons
 
 ## Task-Specific Strategy (Key Insight)
 
-Mortality and AKI are solved with shared latent translation. Sepsis remains the hardest task — label density (1.1% per-timestep positive rate) is the fundamental bottleneck, and neither negative subsampling nor per-stay aggregation has resolved it.
+Mortality and AKI are solved with shared latent translation. Sepsis saw a major breakthrough with delta + MIMIC target task loss (+0.0102 AUCROC, 4x previous best).
 
 | Factor | Mortality24 | AKI | Sepsis |
 |---|---|---|---|
 | Labels | Per-stay (5.5% pos) | Per-timestep (11.95% pos) | Per-timestep (1.1% pos) |
 | Attention | Bidirectional | Causal | Causal |
 | Training data | Full (113K stays) | Full (165K stays) | Full (123K stays) |
-| Best approach | SL v3 (+0.044) | SL v3 (+0.037) | C2 GradNorm delta (+0.003) |
-| Delta-based | +0.033 | +0.024 | +0.003 (best confirmed) |
+| Best approach | SL v3 (+0.044) | SL v3 (+0.037) | Delta + target task (+0.010) |
+| Delta-based | +0.033 | +0.024 | +0.010 (target task loss) |
 
 **Why shared latent works for mortality and AKI:**
 1. MMD alignment in latent space provides direct, dense gradient — no backward through frozen LSTM needed
 2. Reconstruction loss stabilizes latent space through decoder path
 3. Task loss only needs small adjustments on well-structured latent space
 
-**Why sepsis remains unsolved:**
-1. Per-timestep label sparsity (1.1% positive rate) produces contradictory gradients within positive stays
-2. Fidelity gradient dominates task gradient by 5-10x (cos = -0.21, destructive interference)
-3. Negative subsampling to match AKI density (~12%) did NOT help (SL: -0.0001, delta: -0.0016) — initial +0.081 result was invalidated by data leakage
+**Why target task loss works for sepsis:**
+1. MIMIC target task loss provides direct task-relevant gradient from MIMIC domain labels
+2. This bypasses the gradient bottleneck (fidelity 5-10x task gradient) by adding a separate task signal
+3. The MIMIC labels (1.1% pos rate) are comparable to eICU, providing consistent task signal
+4. Also improves calibration significantly (Brier -0.046, ECE -0.043)
+
+**What didn't work for sepsis:**
+1. Shared latent: SL always hurts (-0.007 to -0.043). Per-timestep causal structure incompatible with SL.
+2. Negative subsampling: 6 filtered experiments all negative (SL: -0.0001 to -0.0073, delta: -0.0016 to -0.0047)
+3. Cross-task transfer: AKI translators don't generalize to sepsis on full data
 4. Per-stay MIL aggregation improves stay-level metrics but hurts per-timestep AUCROC
 
 ## Gradient Bottleneck (Root Cause of Difficulty)

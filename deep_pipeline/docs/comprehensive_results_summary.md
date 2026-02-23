@@ -1,6 +1,6 @@
 # Comprehensive Results & Conclusions: EHR Translator Deep Pipeline
 
-**Date**: 2026-02-17 (updated 2026-02-22, D-series MIL experiments added)
+**Date**: 2026-02-17 (updated 2026-02-23, MIMIC target task loss + cross-task transfer added)
 **Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, and full-data validation (delta + shared latent)
 
 ---
@@ -831,18 +831,146 @@ Clean subsampling implementation uses `_apply_negative_subsampling()` within YAI
 
 **Frozen baseline AUCROC**: Mortality=0.8079, Sepsis=0.7159, AKI=0.8558 (full)
 
-**Key highlights (Feb 22)**:
+**Key highlights (Feb 23)**:
 - **Mortality and AKI solved**: Mortality +0.0441, AKI +0.0370 AUCROC with Shared Latent v3
-- **Sepsis subsampling failed**: Initial +0.0805 had train/test leakage. Clean results: SL -0.0001, delta -0.0016. Best confirmed: **+0.0025** (C2 GradNorm).
-- **Sepsis per-stay MIL failed** (Feb 22): Per-stay aggregation improves stay-level discrimination (D3: +0.0085 stay_AUCROC_max) but hurts per-TS AUCROC (-0.0063). Gradient bottleneck (fidelity 65-86x task) persists.
-- **C3 (Cosine Fidelity) is the new delta-based mortality AUCPR leader** (+0.0392) with best calibration (Brier +0.0036)
-- **B1 (Hidden-State MMD)** emerged as strong at +0.0310 AUCROC on full mortality
-- Shared latent is the winning approach for mortality and AKI; sepsis remains unsolved
+- **Sepsis breakthrough**: +0.0102 AUCROC with delta + target task loss (4x previous best of +0.0025)
+- **Mortality AUCPR record**: +0.0546 with SL + MIMIC labels (was +0.0456)
+- **Target task loss**: Passing MIMIC through translator → frozen LSTM → MIMIC labels provides crucial task-relevant gradient
+- **Sepsis subsampling failed**: 6 filtered experiments all negative. Initial +0.0805 had leakage.
+- **Cross-task transfer not viable**: AKI translators don't help sepsis on full data
+- Shared latent is the winning approach for mortality and AKI; delta + target task is best for sepsis
 - **Calibration** is the remaining challenge for all tasks
 
 ---
 
-## 13. Appendix: Historical Mortality Full-Data Runs
+## 13. MIMIC Target Task Loss & Latent Label Prediction (Feb 22-23)
+
+### 13.1 Motivation
+
+Two untapped signals in the MIMIC target domain:
+1. **Target Task Loss**: Pass MIMIC data through translator → frozen LSTM → MIMIC labels → loss. Provides direct task-relevant gradient without relying solely on source-domain labels.
+2. **Latent Label Prediction** (SL only): Add MLP head on latent space to predict task labels from both domains. Bypasses frozen LSTM entirely.
+
+### 13.2 Implementation
+
+| Enhancement | Model | Mechanism | Config key |
+|---|---|---|---|
+| **Target Task Loss** | Delta + SL | Translated MIMIC → frozen LSTM → BCE with MIMIC labels | `lambda_target_task: 0.5` |
+| **Latent Label Pred** | SL only | Latent z → MLP → predict labels (both domains) | `lambda_label_pred: 0.1` |
+
+Both features added with backward-compatible defaults (0.0 = disabled).
+
+### 13.3 Results: Full Data
+
+| Experiment | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Best Ep | Notes |
+|---|---|---|---|---|---|---|
+| **Mortality delta + target task** | +0.0319 | +0.0350 | +0.0069 | +0.0141 | 22/30 | Neutral vs plain delta (+0.0329) |
+| **Mortality SL + MIMIC labels** | **+0.0408** | **+0.0546** | +0.0122 | +0.0200 | 12/30 (ES22) | **New AUCPR record!** (was +0.0456) |
+| **Sepsis delta + target task** | **+0.0102** | **+0.0056** | **-0.0460** | **-0.0430** | 22/30 | **New sepsis best by 4x!** |
+| Sepsis SL + MIMIC labels | -0.0071 | -0.0034 | +0.1304 | +0.1002 | 15/30 (ES25) | SL still fails on sepsis |
+
+### 13.4 Results: Filtered (Negative Subsampled, 7300 neg stays)
+
+| Experiment | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Best Ep | Notes |
+|---|---|---|---|---|---|---|
+| Sepsis delta + target task (filtered) | -0.0047 | -0.0009 | +0.0545 | +0.0797 | 2/30 (ES12) | Subsampling hurts |
+| Sepsis SL + MIMIC labels (filtered) | -0.0073 | -0.0020 | +0.1812 | +0.2191 | 1/30 (ES11) | Severe divergence |
+
+### 13.5 Key Findings
+
+**Sepsis breakthrough: +0.0102 AUCROC (4x previous best)**
+- Target task loss on MIMIC data provides the missing task-relevant signal for delta-based translation
+- Previous best was +0.0025 (C2 GradNorm). New result is +0.0102 — a 4x improvement
+- Also achieves major calibration improvement: Brier -0.046, ECE -0.043 (calibration improvement, not degradation)
+- Late convergence pattern (best at ep22, kept improving from ep7→ep15→ep17→ep22)
+
+**Mortality AUCPR record: +0.0546**
+- SL + MIMIC labels achieves new AUCPR best (+0.0546 vs +0.0456 plain SL), +20% improvement
+- AUCROC slightly lower (+0.0408 vs +0.0441 plain SL)
+- The label prediction head and target task loss provide complementary signal for precision
+
+**Target task loss is neutral for mortality delta**
+- +0.0319 vs +0.0329 plain delta — essentially the same
+- For mortality with per-stay labels and bidirectional attention, the existing task signal is already sufficient
+
+**Subsampling consistently hurts**
+- Both filtered experiments are worse than full data, confirming subsampling is harmful
+- SL filtered diverges catastrophically (val_task 0.80 → 2.10 by ep10)
+- Oversampling_factor=20 + subsampling → 91.5% effective positive rate, too aggressive
+
+### 13.6 Training Dynamics
+
+**Sepsis delta + target task (full)** — exemplary training curve:
+- Gradient diagnostics: cos_task_fid = -0.20 (moderate interference, typical for sepsis)
+- Target task loss provides auxiliary gradient from MIMIC domain, stabilizing learning
+- Late-stage improvement: the translator kept finding better solutions well past epoch 15
+
+**Sepsis SL + MIMIC labels (full)** — highly oscillatory:
+- val_task bounced between 0.9 and 1.4 throughout training
+- Best at ep15 (0.9088) despite train_task monotonically decreasing (0.45→0.13)
+- SL architecture remains fundamentally mismatched with per-timestep sepsis
+
+---
+
+## 14. AKI-Sepsis Cross-Task Transfer (Feb 22)
+
+### 14.1 Question
+
+Can translators trained on AKI (which improved +0.037) help sepsis when applied to overlapping patients?
+
+### 14.2 Setup
+
+- **Intersection**: AKI test patients ∩ sepsis all patients ≈ 30K stays
+- **Filtered intersection**: Further subsampled to ~12% per-timestep positive rate (matching AKI density)
+- Evaluated using AKI-trained translator checkpoints (delta + SL) on sepsis MIMIC LSTM
+
+### 14.3 Results
+
+| Experiment | AUCROC Δ | AUCPR Δ | Brier Δ | Notes |
+|---|---|---|---|---|
+| AKI delta → intersection (full) | +0.0008 | +0.0002 | -0.0046 | Negligible |
+| AKI SL → intersection (full) | -0.0202 | -0.0042 | +0.0537 | Hurts significantly |
+| AKI delta → intersection (filtered 12%) | -0.0025 | -0.0002 | -0.0001 | Negligible |
+| **AKI SL → intersection (filtered 12%)** | **+0.0413** | **+0.0157** | +0.0133 | **Strong on filtered subset** |
+
+### 14.4 Analysis
+
+- AKI SL translator dramatically helps the filtered subset (+0.0413) but hurts the full intersection (-0.0202)
+- This suggests the SL translator learns AKI-relevant features that transfer to sepsis *only when the label distribution matches*
+- The AKI delta translator has negligible effect in both settings (domain-specific features don't transfer)
+- Cross-task transfer is not a viable strategy for improving sepsis on full data
+
+---
+
+## 15. Updated Master Results Table
+
+### Current Best Results (Feb 23)
+
+| Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
+|---|---|---|---|---|
+| **Mortality24** | **+0.0441** | **+0.0546** | SL v3 / SL+MIMIC labels | 0.8079 |
+| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | 0.8558 |
+| **Sepsis** | **+0.0102** | **+0.0056** | Delta + target task loss | 0.7159 |
+
+### Sepsis Improvement History
+
+| Date | Method | AUCROC Δ | Status |
+|---|---|---|---|
+| Feb 10 | MMD + MLM | +0.0021 | Baseline approach |
+| Feb 16 | C2 GradNorm | +0.0025 | Previous best |
+| **Feb 23** | **Delta + target task loss** | **+0.0102** | **New best (4x improvement)** |
+
+### Key Highlights (Feb 23)
+
+- **Sepsis finally moves**: +0.0102 AUCROC with target task loss (was stuck at +0.0025 for 7 days)
+- **Mortality AUCPR record**: +0.0546 with SL + MIMIC labels (was +0.0456)
+- **Target task loss mechanism**: MIMIC data → translator → frozen LSTM → MIMIC labels provides task-relevant gradient that bypasses the gradient bottleneck from the source domain
+- **Subsampling definitively disproven**: 6 filtered experiments all negative or neutral across delta/SL/target-task combinations
+- **Cross-task transfer not viable**: AKI translators don't help sepsis on full data
+
+---
+
+## 16. Appendix: Historical Mortality Full-Data Runs
 
 From run.log (Feb 6, all full data, 20 epochs, bidirectional, d128):
 

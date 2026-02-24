@@ -17,6 +17,52 @@ from ..core.schema import SchemaResolver
 from ..core.mmd import multi_kernel_mmd
 
 
+def _compute_loader_stats(loader: DataLoader, schema_resolver: "SchemaResolver", device: str):
+    """Compute per-dynamic-feature mean and std from a DataLoader."""
+    sum_val = None
+    sum_sq = None
+    count = None
+    with torch.no_grad():
+        for batch in loader:
+            batch = tuple(b.to(device) for b in batch)
+            parts = schema_resolver.extract(batch)
+            x = parts["X_val"]        # (B, T, F)
+            mask = (~parts["M_pad"]).unsqueeze(-1).expand_as(x).float()
+            if sum_val is None:
+                sum_val = (x * mask).sum(dim=(0, 1))
+                sum_sq = ((x ** 2) * mask).sum(dim=(0, 1))
+                count = mask.sum(dim=(0, 1))
+            else:
+                sum_val += (x * mask).sum(dim=(0, 1))
+                sum_sq += ((x ** 2) * mask).sum(dim=(0, 1))
+                count += mask.sum(dim=(0, 1))
+    mean = sum_val / count.clamp(min=1)
+    std = ((sum_sq / count.clamp(min=1)) - mean ** 2).clamp(min=1e-8).sqrt()
+    return mean, std
+
+
+def compute_renorm_params(
+    source_loader: DataLoader,
+    target_loader: DataLoader,
+    schema_resolver: "SchemaResolver",
+    device: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute affine transform to renormalize source data to target statistics.
+
+    Returns (scale, offset) such that: x_renorm = x_source * scale + offset
+    transforms source-normalized features into target-normalized space.
+    """
+    src_mean, src_std = _compute_loader_stats(source_loader, schema_resolver, device)
+    tgt_mean, tgt_std = _compute_loader_stats(target_loader, schema_resolver, device)
+    scale = src_std / tgt_std.clamp(min=1e-8)
+    offset = (src_mean - tgt_mean) / tgt_std.clamp(min=1e-8)
+    logging.info(
+        "Renorm params computed: scale range [%.4f, %.4f], offset range [%.4f, %.4f]",
+        scale.min().item(), scale.max().item(), offset.min().item(), offset.max().item(),
+    )
+    return scale.to(device), offset.to(device)
+
+
 def verify_baseline_determinism(
     yaib_runtime: YAIBRuntime,
     sample_batch: tuple[torch.Tensor, ...],
@@ -246,6 +292,10 @@ class TransformerTranslatorTrainer:
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
 
+        # Cross-domain normalization
+        self.renorm_scale = None   # (F,) tensor or None
+        self.renorm_offset = None  # (F,) tensor or None
+
     def _load_feature_bounds(self, bounds_csv: Path, feature_names: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
         import pandas as pd
 
@@ -339,6 +389,17 @@ class TransformerTranslatorTrainer:
             batch = next(self._target_iter)
         return tuple(b.to(self.device) for b in batch)
 
+    def set_renorm_params(self, scale: torch.Tensor, offset: torch.Tensor):
+        self.renorm_scale = scale.to(self.device)
+        self.renorm_offset = offset.to(self.device)
+        logging.info("Cross-domain renormalization enabled for source data")
+
+    def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
+        if self.renorm_scale is None:
+            return x_val
+        x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
+        return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
+
     def _apply_baseline_speed_safe_mode(self) -> None:
         model = getattr(self.yaib_runtime, "_model", None)
         if model is None:
@@ -377,6 +438,7 @@ class TransformerTranslatorTrainer:
         for batch in loader:
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
+            parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
             use_amp = self.scaler.is_enabled()
             if self.device.startswith("cuda"):
                 torch.cuda.synchronize()
@@ -631,6 +693,7 @@ class TransformerTranslatorTrainer:
             for batch in loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 parts = self.schema_resolver.extract(batch)
+                parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
                 result = self.translator(
                     parts["X_val"],
                     parts["X_miss"],
@@ -812,6 +875,8 @@ class TransformerTranslatorTrainer:
                     "translator_state_dict": self.best_state,
                     "val_metrics": val_metrics,
                     "train_metrics": train_metrics,
+                    "renorm_scale": self.renorm_scale,
+                    "renorm_offset": self.renorm_offset,
                 }
                 torch.save(checkpoint, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
@@ -934,6 +999,10 @@ class LatentTranslatorTrainer:
         self.target_train_loader = target_train_loader
         self._target_iter = iter(target_train_loader)
 
+        # Cross-domain normalization
+        self.renorm_scale = None   # (F,) tensor or None
+        self.renorm_offset = None  # (F,) tensor or None
+
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
@@ -1028,6 +1097,17 @@ class LatentTranslatorTrainer:
             batch = next(self._target_iter)
         return tuple(b.to(self.device) for b in batch)
 
+    def set_renorm_params(self, scale: torch.Tensor, offset: torch.Tensor):
+        self.renorm_scale = scale.to(self.device)
+        self.renorm_offset = offset.to(self.device)
+        logging.info("Cross-domain renormalization enabled for source data (SL)")
+
+    def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
+        if self.renorm_scale is None:
+            return x_val
+        x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
+        return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
+
     def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
         """Autoencoder pretraining on MIMIC target data, optionally with label prediction."""
         self.translator.train()
@@ -1087,6 +1167,7 @@ class LatentTranslatorTrainer:
         for batch in train_loader:
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
+            parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path ──
@@ -1209,6 +1290,7 @@ class LatentTranslatorTrainer:
         for batch in val_loader:
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
+            parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 src_latent = self.translator.encode(
@@ -1371,6 +1453,8 @@ class LatentTranslatorTrainer:
                     "translator_state_dict": self.best_state,
                     "val_metrics": val_metrics,
                     "train_metrics": train_metrics,
+                    "renorm_scale": self.renorm_scale,
+                    "renorm_offset": self.renorm_offset,
                 }, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
                 epochs_without_improvement = 0

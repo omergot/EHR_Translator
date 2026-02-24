@@ -3,15 +3,15 @@
 > **Role**: Forward-looking recommendations doc. Combines literature review, codebase analysis, and lessons from all experiments to date.
 > **See also**: [gradient_bottleneck_analysis.md](gradient_bottleneck_analysis.md) (current status), [architecture.md](architecture.md) (model reference), [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) (what we've ruled out)
 
-## Context: Where We Are (Updated Feb 20)
+## Context: Where We Are (Updated Feb 23)
 
-**Mortality is solved**: Shared Latent v3 achieves +0.0441 AUCROC (+0.0456 AUCPR), a clinically meaningful improvement. All 3 shared latent variants outperform the best delta-based approach (A3: +0.0285) by 40-55%.
+**Mortality is solved**: Shared Latent v3 achieves +0.0441 AUCROC. SL + MIMIC labels achieves **+0.0546 AUCPR** (new project record, 20% above previous +0.0456). All shared latent variants outperform the best delta-based approach by 40-55%.
 
-**Sepsis remains fundamentally limited**: Best result +0.0025 AUCROC (C2 GradNorm, full data). Shared latent actively hurts (-0.017 to -0.043). Root cause analysis identified **label density / gradient coherence** as the definitive primary factor: sepsis's 1.1% per-timestep positive rate produces incoherent, destructive gradient interference (cos(task,fidelity) = -0.21).
+**Sepsis breakthrough with target task loss**: Delta + target task loss achieves **+0.0102 AUCROC** (4x improvement over previous +0.0025). This also improves calibration (Brier -0.046, ECE -0.043). Shared latent still hurts sepsis (-0.007 to -0.043). Negative subsampling doesn't help (-0.0016 delta, -0.0001 SL).
 
-**AKI confirms label density as root cause**: AKI (per-timestep, causal, 11.95% positive rate) succeeds with both delta-based (+0.0107) and shared latent (+0.0160). This definitively rules out per-timestep structure and causal attention as bottlenecks, confirming label sparsity as the primary obstacle for sepsis.
+**AKI confirms label density as root cause**: AKI (per-timestep, causal, 11.95% positive rate) succeeds with both delta-based (+0.0242 full) and shared latent (+0.0370 full). This definitively rules out per-timestep structure and causal attention as bottlenecks.
 
-See [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) for the full root cause analysis with AKI results.
+**Task-specific strategy confirmed**: Shared latent for mortality/AKI (dense labels), delta-based + target task loss for sepsis (sparse labels). See [investigation_mortality_vs_sepsis.md](investigation_mortality_vs_sepsis.md) for the root cause analysis and [sepsis_label_density_analysis.md](sepsis_label_density_analysis.md) for the target task loss breakthrough.
 
 ---
 
@@ -490,7 +490,7 @@ Based on the root cause analysis, gradient alignment finding, AKI confirmation, 
 
 | # | Recommendation | Section | Effort | Impact | Notes |
 |---|---|---|---|---|---|
-| 3 | **Supervised DA: use target labels** | C4 | Medium | **Very High** | Auxiliary target task loss + label-conditioned MMD. Legal (no test leakage). Provides second task gradient source and class-aware alignment. |
+| 3 | ~~Supervised DA: use target labels~~ | C4 | ~~Medium~~ | ~~Very High~~ | **Done (Feb 23)**: Target task loss (`lambda_target_task=0.5`). Sepsis delta: **+0.0102** (4x improvement, new best). Mortality SL: +0.0408 AUCROC, **+0.0546 AUCPR** (new record). Label-conditioned MMD not yet tested. |
 | 4 | **Fidelity weight scheduling** | New | Medium | High | Start high fidelity (stable), decay over training. Addresses destructive interference directly. |
 | 5 | **Unfreeze final LSTM layer** | New | Medium | High | More gradient signal at cost of domain-specificity guarantee. |
 | 6 | ~~Focal loss~~ | C1 | ~~Low~~ | ~~High~~ | **Tested: Hurts** — C1 experiment: negative on both tasks. Hard-example mining doesn't address gradient alignment. |
@@ -531,4 +531,4 @@ Based on the root cause analysis, gradient alignment finding, AKI confirmation, 
 | 13 | Ablation matrix | High (compute) | Critical | Factorial design on best approach. Required for thesis completeness. |
 | 14 | Oracle noise bound | Low | Medium | Random translator baseline to frame contribution. |
 
-**Recommended execution order**: **#1 (per-stay aggregation for sepsis)** is now the top priority — AKI confirmed label density as root cause, and per-stay aggregation directly addresses it. **#3 (supervised DA with target labels)** is high-impact and can run in parallel — start with auxiliary target task loss (simplest variant). In parallel, run **#9 (multi-seed SL v3)** for mortality validation. Defer Tier 4 to final phase.
+**Recommended execution order (Updated Feb 23)**: **#3 (supervised DA) is DONE** — target task loss produced the new sepsis best (+0.0102) and mortality AUCPR record (+0.0546). Next: **#1 (per-stay aggregation)** combined with target task loss could compound the improvement. **#4 (fidelity scheduling)** could further improve the task-fidelity gradient alignment. **#9 (multi-seed SL v3)** for mortality validation. Defer Tier 4 to final phase.

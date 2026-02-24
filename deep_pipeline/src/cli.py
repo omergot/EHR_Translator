@@ -130,6 +130,8 @@ def _get_training_config(config: dict) -> dict:
         "lambda_target_task": training.get("lambda_target_task", 0.0),
         # Latent label prediction head (SL only)
         "lambda_label_pred": training.get("lambda_label_pred", 0.0),
+        # Cross-domain normalization: use MIMIC stats to normalize eICU
+        "use_target_normalization": training.get("use_target_normalization", False),
     }
 
 
@@ -660,6 +662,16 @@ def train_translator(args):
             else:
                 logging.info("Training with shuffle=False (default)")
 
+        # Cross-domain normalization
+        use_target_norm = training_cfg.get("use_target_normalization", False)
+        renorm_params = None
+        if use_target_norm and target_train_loader is not None:
+            from .core.train import compute_renorm_params
+            renorm_params = compute_renorm_params(
+                train_loader, target_train_loader, schema_resolver,
+                config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            )
+
         bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for transformer translator.")
@@ -726,6 +738,8 @@ def train_translator(args):
             device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
             training_config=training_cfg,
         )
+        if renorm_params is not None:
+            trainer.set_renorm_params(*renorm_params)
         trainer.train(
             epochs=training_cfg["epochs"],
             train_loader=train_loader,
@@ -880,6 +894,16 @@ def train_translator(args):
             else:
                 logging.info("Training with shuffle=False (default)")
 
+        # Cross-domain normalization
+        use_target_norm = training_cfg.get("use_target_normalization", False)
+        renorm_params = None
+        if use_target_norm:
+            from .core.train import compute_renorm_params
+            renorm_params = compute_renorm_params(
+                train_loader, target_train_loader, schema_resolver,
+                config.get("device", "cuda"),
+            )
+
         bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for shared_latent translator.")
@@ -917,6 +941,8 @@ def train_translator(args):
             device=config.get("device", "cuda"),
             training_config=training_cfg,
         )
+        if renorm_params is not None:
+            trainer.set_renorm_params(*renorm_params)
         trainer.train(
             epochs=training_cfg["epochs"],
             train_loader=train_loader,
@@ -1076,10 +1102,16 @@ def translate_and_eval(args):
         checkpoint_path = args.translator_checkpoint
         if not checkpoint_path:
             checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        renorm_scale = None
+        renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
             checkpoint = torch.load(checkpoint_path, map_location="cpu")
             translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
+            renorm_scale = checkpoint.get("renorm_scale")
+            renorm_offset = checkpoint.get("renorm_offset")
             logging.info("Loaded transformer translator from %s", checkpoint_path)
+            if renorm_scale is not None:
+                logging.info("Cross-domain renormalization params loaded from checkpoint")
         else:
             logging.warning("No transformer checkpoint found at %s", checkpoint_path)
 
@@ -1088,6 +1120,8 @@ def translate_and_eval(args):
             translator=translator,
             schema_resolver=schema_resolver,
             device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            renorm_scale=renorm_scale,
+            renorm_offset=renorm_offset,
         )
         output_path = Path(args.output_parquet)
         sample_dir = translator_cfg.get(
@@ -1167,10 +1201,16 @@ def translate_and_eval(args):
         checkpoint_path = args.translator_checkpoint
         if not checkpoint_path:
             checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        renorm_scale = None
+        renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
             checkpoint = torch.load(checkpoint_path, map_location="cpu")
             translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
+            renorm_scale = checkpoint.get("renorm_scale")
+            renorm_offset = checkpoint.get("renorm_offset")
             logging.info("Loaded shared_latent translator from %s", checkpoint_path)
+            if renorm_scale is not None:
+                logging.info("Cross-domain renormalization params loaded from checkpoint")
         else:
             logging.warning("No shared_latent checkpoint found at %s", checkpoint_path)
 
@@ -1179,6 +1219,8 @@ def translate_and_eval(args):
             translator=translator,
             schema_resolver=schema_resolver,
             device=config.get("device", "cuda"),
+            renorm_scale=renorm_scale,
+            renorm_offset=renorm_offset,
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(

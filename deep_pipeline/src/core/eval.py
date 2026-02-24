@@ -239,11 +239,21 @@ class TransformerTranslatorEvaluator:
         translator: torch.nn.Module,
         schema_resolver: SchemaResolver,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        renorm_scale: Optional[torch.Tensor] = None,
+        renorm_offset: Optional[torch.Tensor] = None,
     ):
         self.yaib_runtime = yaib_runtime
         self.translator = translator.to(device)
         self.schema_resolver = schema_resolver
         self.device = device
+        self.renorm_scale = renorm_scale.to(device) if renorm_scale is not None else None
+        self.renorm_offset = renorm_offset.to(device) if renorm_offset is not None else None
+
+    def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
+        if self.renorm_scale is None:
+            return x_val
+        x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
+        return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
 
     def translate_to_parquet(
         self,
@@ -261,6 +271,7 @@ class TransformerTranslatorEvaluator:
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 parts = self.schema_resolver.extract(batch)
+                parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
                 x_val_out = self.translator(
                     parts["X_val"],
                     parts["X_miss"],
@@ -380,6 +391,7 @@ class TransformerTranslatorEvaluator:
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 parts = self.schema_resolver.extract(batch)
+                parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
                 x_val_out = self.translator(
                     parts["X_val"],
                     parts["X_miss"],

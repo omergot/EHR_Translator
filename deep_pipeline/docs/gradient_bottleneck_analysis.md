@@ -262,7 +262,7 @@ Also logs counts (n_pos, n_neg, n_unlabeled, n_pad) to reveal batch composition.
 | n_neg per batch | ~2700 | ~62 | Sepsis overwhelmed by negatives |
 | n_unlabeled | **0** | **1536** | Mortality: most timesteps are "context" for the per-stay label |
 | n_pad | **~7900** | **0** | Sepsis: 73% padding waste; Mortality: no padding |
-| AUCROC delta | +0.0059 | **+0.0264** | 4.5x better performance |
+| AUCROC delta | +0.0059 (now **+0.0102** with TTL) | **+0.0264** (now +0.0441 SL) | Gap narrowing with target task loss |
 
 **Key Insights:**
 
@@ -295,6 +295,61 @@ The gradient alignment (cos similarity) difference has a clear structural explan
 - Result: fidelity acts as an *adversary* (fights the task signal)
 
 **Implication**: Simply reducing lambda_fidelity won't help for sepsis — the task gradient direction itself is poor. The problem is fundamentally that per-timestep labels with 1.1% positive rate produce incoherent gradient directions, not just weak magnitudes.
+
+## Target Task Loss: Bypassing the Bottleneck (Feb 23)
+
+### The Breakthrough
+
+The MIMIC target task loss (`lambda_target_task=0.5`) provides a **second task gradient source** that bypasses the gradient bottleneck for sepsis:
+
+| Experiment | Sepsis ΔAUCROC | ΔBrier | Notes |
+|---|---|---|---|
+| Previous best (C2 GradNorm) | +0.0025 | — | Task gradient alone (eICU only) |
+| **Delta + target task loss** | **+0.0102** | **-0.0460** | Dual task gradient (eICU + MIMIC) |
+| SL + MIMIC labels | -0.0071 | +0.1304 | SL bottleneck persists |
+
+### How It Changes the Gradient Dynamics
+
+The original gradient bottleneck had two components:
+1. **Weak task signal**: 1.1% positive rate → sparse, noisy gradient through frozen LSTM
+2. **Destructive interference**: cos(task, fidelity) = -0.21 → gradients fight each other
+
+Target task loss addresses both:
+
+**New gradient composition**:
+```
+Original: task_eICU (weak, noisy) + fidelity (strong, opposing) → net: dominated by fidelity
+With TTL:  task_eICU + task_MIMIC (coherent) + fidelity → net: task signal strengthened
+```
+
+The MIMIC task gradient is **coherent** because:
+- The frozen LSTM was trained on MIMIC — its gradients on MIMIC data are well-calibrated
+- MIMIC task gradient aligns with the translation direction ("make output MIMIC-like")
+- Combined eICU + MIMIC task gradients create a stronger, more directionally coherent signal that can compete with fidelity
+
+**Why it improves calibration** (Brier -0.046, ECE -0.043):
+- The translator now receives "preserve MIMIC prediction quality" as an explicit objective
+- This prevents the feature distortion that normally worsens calibration
+- Acts as implicit calibration regularization
+
+### Why This Doesn't Help Shared Latent
+
+SL + MIMIC labels (-0.0071 AUCROC) still fails because:
+- The reconstruction bottleneck dominates: 168×48 features through a latent bottleneck
+- Target task loss is applied after decoding (same path as existing task loss)
+- The label prediction head adds signal but cannot fix the fundamental reconstruction-task misalignment
+- For mortality, SL + MIMIC labels improves AUCPR to +0.0546 (record) — the bottleneck only blocks sepsis where reconstruction error is higher
+
+### Updated Gradient Picture
+
+| Metric | Sepsis (original) | Sepsis (+ target task) | Mortality |
+|---|---|---|---|
+| cos(task, fidelity) | -0.21 | ~improved (not yet measured) | +0.84 |
+| Best ΔAUCROC | +0.0025 | **+0.0102** | +0.0441 |
+| Calibration (Brier) | neutral | **-0.0460** | +0.0066 |
+| Approach | Delta-based | Delta + target task | Shared latent |
+
+---
 
 ## Recommended Next Steps (Ranked by Expected Impact)
 

@@ -1,7 +1,7 @@
 # Comprehensive Results & Conclusions: EHR Translator Deep Pipeline
 
-**Date**: 2026-02-17 (updated 2026-02-23, MIMIC target task loss + cross-task transfer added)
-**Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, and full-data validation (delta + shared latent)
+**Date**: 2026-02-17 (updated 2026-02-24, cross-domain normalization added)
+**Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, full-data validation (delta + shared latent), MIMIC target task loss, cross-task transfer, and cross-domain normalization
 
 ---
 
@@ -942,15 +942,67 @@ Can translators trained on AKI (which improved +0.037) help sepsis when applied 
 
 ---
 
-## 15. Updated Master Results Table
+## 15. Cross-Domain Normalization (Feb 24)
 
-### Current Best Results (Feb 23)
+### 15.1 Motivation
+
+When using MIMIC target task labels (`lambda_target_task > 0`), the translator must learn both the semantic domain shift AND the normalization shift between eICU and MIMIC (each independently normalized by YAIB using their own train-set mean/std). Cross-domain normalization removes the normalization shift, letting the translator focus on the semantic shift.
+
+### 15.2 Implementation
+
+Per-feature affine transform computed from train-set DataLoader statistics:
+```
+x_renorm = x_eicu * (std_eicu / std_mimic) + (mean_eicu - mean_mimic) / std_mimic
+```
+
+Applied to source (eICU) X_val only. MIMIC data stays as-is. Renorm params saved in checkpoint for use at eval time. Config: `"use_target_normalization": true`.
+
+### 15.3 Results
+
+| Experiment | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Best Ep | Notes |
+|---|---|---|---|---|---|---|
+| Mortality delta + norm | +0.0224 | +0.0217 | +0.0019 | +0.0031 | 25/30 | Worse than plain delta (+0.033) |
+| **Mortality SL + norm** | **+0.0445** | +0.0526 | +0.0041 | +0.0111 | 11 (ES@21) | Matched previous best (+0.0441) |
+| **Sepsis delta + norm** | **+0.0150** | +0.0040 | **-0.0608** | **-0.0606** | 29/30 | **NEW RECORD** (+47% vs +0.0102) |
+| Sepsis SL + norm | -0.0037 | -0.0009 | +0.2245 | +0.1967 | 14 (ES@24) | SL still fails sepsis |
+| AKI delta + norm | +0.0292 | +0.0865 | -0.0055 | +0.0115 | 29/30 | Improved vs plain (+0.0242) |
+| **AKI SL + norm** | +0.0362 | **+0.1056** | -0.0043 | +0.0204 | 15 (ES@25) | **AUCPR record** (+0.1021→+0.1056) |
+
+### 15.4 Comparison with Previous Best (without target norm)
+
+| Task | Method | Without Norm | With Norm | Change |
+|---|---|---|---|---|
+| Sepsis delta | AUCROC Δ | +0.0102 | **+0.0150** | **+47%** |
+| Sepsis delta | Brier Δ | -0.0458 | **-0.0608** | Better calibration |
+| AKI SL | AUCPR Δ | +0.1021 | **+0.1056** | +3.4% |
+| Mortality SL | AUCROC Δ | +0.0441 | +0.0445 | ~neutral |
+| Mortality delta | AUCROC Δ | +0.0329 | +0.0224 | -32% (hurt) |
+
+### 15.5 Analysis
+
+1. **Sepsis delta: new record (+0.0150)** — Target norm provides 47% improvement. Also dramatically improves calibration (Brier -0.061, ECE -0.061). The normalization shift was a significant obstacle for sepsis, where the task gradient is already weak.
+
+2. **AKI SL AUCPR record (+0.1056)** — Small but consistent improvement. AKI's dense labels already produce strong gradients; removing normalization shift gives a marginal boost.
+
+3. **Mortality SL: neutral** — SL architecture already handles domain shift via MMD alignment in latent space; removing normalization shift adds nothing.
+
+4. **Mortality delta: hurt** — The delta translator at full scale was already well-adapted (+0.033). Adding normalization shift changes the input distribution, potentially disrupting the learned deltas. May need hyperparameter retuning.
+
+5. **Training dynamics** — Both sepsis and AKI delta best at epoch 29/30, suggesting they could improve with extended training.
+
+6. **SL still fundamentally fails sepsis** — Even with target norm, SL produces -0.0037 and catastrophic miscalibration (Brier +0.22). The per-timestep causal structure remains incompatible.
+
+---
+
+## 16. Updated Master Results Table
+
+### Current Best Results (Feb 24)
 
 | Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
 |---|---|---|---|---|
-| **Mortality24** | **+0.0441** | **+0.0546** | SL v3 / SL+MIMIC labels | 0.8079 |
-| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | 0.8558 |
-| **Sepsis** | **+0.0102** | **+0.0056** | Delta + target task loss | 0.7159 |
+| **Mortality24** | **+0.0445** | **+0.0546** | SL + target norm / SL+MIMIC labels | 0.8079 |
+| **AKI** | **+0.0370** | **+0.1056** | SL v3 / SL + target norm | 0.8558 |
+| **Sepsis** | **+0.0150** | **+0.0056** | Delta + target task + target norm | 0.7159 |
 
 ### Sepsis Improvement History
 
@@ -958,19 +1010,22 @@ Can translators trained on AKI (which improved +0.037) help sepsis when applied 
 |---|---|---|---|
 | Feb 10 | MMD + MLM | +0.0021 | Baseline approach |
 | Feb 16 | C2 GradNorm | +0.0025 | Previous best |
-| **Feb 23** | **Delta + target task loss** | **+0.0102** | **New best (4x improvement)** |
+| Feb 23 | Delta + target task loss | +0.0102 | 4x improvement |
+| **Feb 24** | **Delta + target task + target norm** | **+0.0150** | **New best (7x vs baseline)** |
 
-### Key Highlights (Feb 23)
+### Key Highlights (Feb 24)
 
-- **Sepsis finally moves**: +0.0102 AUCROC with target task loss (was stuck at +0.0025 for 7 days)
-- **Mortality AUCPR record**: +0.0546 with SL + MIMIC labels (was +0.0456)
-- **Target task loss mechanism**: MIMIC data → translator → frozen LSTM → MIMIC labels provides task-relevant gradient that bypasses the gradient bottleneck from the source domain
-- **Subsampling definitively disproven**: 6 filtered experiments all negative or neutral across delta/SL/target-task combinations
+- **Sepsis new record**: +0.0150 AUCROC with target task + target norm (+47% vs previous +0.0102)
+- **Sepsis calibration breakthrough**: Brier -0.061, ECE -0.061 (dramatically better predictions)
+- **AKI AUCPR record**: +0.1056 with SL + target norm (was +0.1021)
+- **Mortality AUCPR record**: +0.0546 with SL + MIMIC labels (unchanged)
+- **Cross-domain normalization mechanism**: Removes normalization shift between eICU and MIMIC, letting translator focus on semantic domain shift
+- **Subsampling definitively disproven**: 6 filtered experiments all negative or neutral
 - **Cross-task transfer not viable**: AKI translators don't help sepsis on full data
 
 ---
 
-## 16. Appendix: Historical Mortality Full-Data Runs
+## 17. Appendix: Historical Mortality Full-Data Runs
 
 From run.log (Feb 6, all full data, 20 epochs, bidirectional, d128):
 

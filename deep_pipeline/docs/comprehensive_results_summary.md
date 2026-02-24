@@ -817,16 +817,16 @@ Clean subsampling implementation uses `_apply_negative_subsampling()` within YAI
 
 ---
 
-## 12. Current Best Results
+## 12. Best Results (Pre-Target Task Loss, Feb 21)
 
 | Task | Best AUCROC Δ | Best AUCPR Δ | Method | Config |
 |---|---|---|---|---|
-| **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | Bidir, d_latent=128, 4enc/3dec, full data, best@ep9 |
-| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | Causal, d128/lat128, VLB, full, 30ep, shuf, best@ep29 |
-| Mortality24 (delta best) | +0.0333 | +0.0392 | **C3: Cosine Fidelity** | **Bidir, d128, full, 30ep** |
-| Mortality24 (delta vanilla) | +0.0329 | +0.0336 | Vanilla delta translator | Causal, d128, full, 30ep, shuffle, best@ep30 |
-| AKI (delta, full) | +0.0242 | +0.0781 | Vanilla delta translator | Causal, d128, VLB, full data, 20ep, best@ep20 |
-| **Sepsis (confirmed)** | **+0.0025** | **+0.0008** | C2: GradNorm (full data) | Causal, d64, full data, 30ep, delta-based |
+| **Mortality24** | **+0.0441** | **+0.0456** | Shared Latent v3 | `experiments/configs/sl_v3_mortality.json` → `runs/sl_v3_mortality_full` |
+| **AKI** | **+0.0370** | **+0.1021** | Shared Latent v3 | `configs/aki_shared_latent_full.json` → `runs/aki_sl_full` |
+| Mortality24 (delta best) | +0.0333 | +0.0392 | C3: Cosine Fidelity | `experiments/configs/c3_full_mortality.json` |
+| Mortality24 (delta vanilla) | +0.0329 | +0.0336 | Vanilla delta translator | `configs/mortality24_delta_d128_full_30ep.json` |
+| AKI (delta) | +0.0242 | +0.0781 | Vanilla delta translator | `configs/aki_delta_full.json` → `runs/aki_delta_full` |
+| **Sepsis** | **+0.0025** | **+0.0008** | C2: GradNorm (full data) | `experiments/configs/c2_full_sepsis.json` |
 | Sepsis (subsampled SL) | -0.0001 | -0.0009 | SL v3 + neg subsampling | Causal, d128/lat128, subsampled train — **no improvement** |
 
 **Frozen baseline AUCROC**: Mortality=0.8079, Sepsis=0.7159, AKI=0.8558 (full)
@@ -998,11 +998,16 @@ Applied to source (eICU) X_val only. MIMIC data stays as-is. Renorm params saved
 
 ### Current Best Results (Feb 24)
 
-| Task | Best AUCROC Δ | Best AUCPR Δ | Method | Baseline AUCROC |
-|---|---|---|---|---|
-| **Mortality24** | **+0.0445** | **+0.0546** | SL + target norm / SL+MIMIC labels | 0.8079 |
-| **AKI** | **+0.0370** | **+0.1056** | SL v3 / SL + target norm | 0.8558 |
-| **Sepsis** | **+0.0150** | **+0.0056** | Delta + target task + target norm | 0.7159 |
+| Task | Metric | Best Δ | Method | Config | Run Dir |
+|---|---|---|---|---|---|
+| **Mortality24** | AUCROC | **+0.0445** | SL + target norm | `configs/mortality_sl_target_norm_full.json` | `runs/mortality_sl_target_norm_full` |
+| **Mortality24** | AUCPR | **+0.0546** | SL + MIMIC labels | `configs/mortality_sl_mimic_labels_full.json` | `runs/mortality_sl_mimic_labels_full` |
+| **AKI** | AUCROC | **+0.0370** | SL v3 | `configs/aki_shared_latent_full.json` | `runs/aki_sl_full` |
+| **AKI** | AUCPR | **+0.1056** | SL + target norm | `configs/aki_sl_target_norm_full.json` | `runs/aki_sl_target_norm_full` |
+| **Sepsis** | AUCROC | **+0.0150** | Delta + target task + norm | `configs/sepsis_delta_target_norm_full.json` | `runs/sepsis_delta_target_norm_full` |
+| **Sepsis** | AUCPR | **+0.0056** | Delta + target task | `configs/sepsis_delta_target_task_full.json` | `runs/sepsis_delta_target_task_full` |
+
+Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 
 ### Sepsis Improvement History
 

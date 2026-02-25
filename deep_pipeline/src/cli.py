@@ -500,6 +500,8 @@ def train_translator(args):
     logging.info("==============================")
 
     seed = training_cfg["seed"]
+    import random
+    random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)

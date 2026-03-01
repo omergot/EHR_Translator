@@ -686,3 +686,43 @@ class TransformerTranslatorEvaluator:
             else:
                 break
         return dataset, indices
+
+
+class RetrievalTranslatorWrapper(torch.nn.Module):
+    """Wraps a RetrievalTranslator + MemoryBank so forward() uses full retrieval.
+
+    The existing TransformerTranslatorEvaluator calls self.translator(...) with
+    (x_val, x_miss, t_abs, m_pad, x_static). This wrapper intercepts that call
+    and routes through encode → query_memory_bank → forward_with_retrieval,
+    returning only x_out (matching the expected signature).
+    """
+
+    def __init__(self, translator, memory_bank, k_neighbors: int = 16, retrieval_window: int = 6):
+        super().__init__()
+        self.translator = translator
+        self.memory_bank = memory_bank
+        self.k_neighbors = k_neighbors
+        self.retrieval_window = retrieval_window
+
+    def forward(self, x_val, x_miss, t_abs, m_pad, x_static, return_forecast=False):
+        from ..core.retrieval_translator import query_memory_bank
+
+        # Encode source data
+        latent = self.translator.encode(x_val, x_miss, t_abs, m_pad, x_static)
+
+        # Query memory bank with detached latents (same as training)
+        importance_weights = self.translator.get_importance_weights()
+        context = query_memory_bank(
+            query_latents=latent.detach(),
+            query_pad_mask=m_pad,
+            bank=self.memory_bank,
+            k_neighbors=self.k_neighbors,
+            retrieval_window=self.retrieval_window,
+            importance_weights=importance_weights.detach() if importance_weights is not None else None,
+        )
+
+        # Full forward with retrieval context
+        x_out, _ = self.translator.forward_with_retrieval(
+            x_val, x_miss, t_abs, m_pad, x_static, context,
+        )
+        return x_out

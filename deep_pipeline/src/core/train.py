@@ -292,6 +292,16 @@ class TransformerTranslatorTrainer:
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
 
+        # Feature gate for weighted fidelity (optional)
+        self.feature_gate = None
+        if self._training_config.get("feature_gate", False):
+            from ..core.feature_gate import FeatureGate
+            num_features = len(schema_resolver.dynamic_features)
+            self.feature_gate = FeatureGate(num_features).to(device)
+            # Add gate params to optimizer
+            self.optimizer.add_param_group({"params": self.feature_gate.parameters()})
+            logging.info("Feature gate enabled for fidelity weighting (%d features)", num_features)
+
         # Cross-domain normalization
         self.renorm_scale = None   # (F,) tensor or None
         self.renorm_offset = None  # (F,) tensor or None
@@ -488,6 +498,10 @@ class TransformerTranslatorTrainer:
             ).float()
             mask = (~parts["M_pad"]).bool()
             diff = (x_val_out.float() - parts["X_val"].float()) ** 2
+            if self.feature_gate is not None:
+                gate = self.feature_gate()  # (F,)
+                fid_weight = (1.0 - 0.5 * gate).view(1, 1, -1)  # less fidelity where gate is high
+                diff = diff * fid_weight
             l_fidelity = self._masked_mean(diff.sum(dim=-1), mask).float()
             upper = self.upper_bounds.view(1, 1, -1)
             lower = self.lower_bounds.view(1, 1, -1)
@@ -719,6 +733,10 @@ class TransformerTranslatorTrainer:
                 l_task = self.yaib_runtime.compute_loss(logits, (x_yaib_translated, parts["y"], label_mask))
                 mask = (~parts["M_pad"]).bool()
                 diff = (x_val_out - parts["X_val"]) ** 2
+                if self.feature_gate is not None:
+                    gate = self.feature_gate()
+                    fid_weight = (1.0 - 0.5 * gate).view(1, 1, -1)
+                    diff = diff * fid_weight
                 l_fidelity = self._masked_mean(diff.sum(dim=-1), mask)
                 over = torch.relu(x_val_out - self.upper_bounds.view(1, 1, -1))
                 under = torch.relu(self.lower_bounds.view(1, 1, -1) - x_val_out)
@@ -1007,12 +1025,23 @@ class LatentTranslatorTrainer:
         _tc = training_config or {}
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
+
+        # Feature gate for weighted reconstruction (optional)
+        self.feature_gate = None
+        if _tc.get("feature_gate", False):
+            from ..core.feature_gate import FeatureGate
+            num_features = len(schema_resolver.dynamic_features)
+            self.feature_gate = FeatureGate(num_features).to(device)
+            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
             logging.info("Latent label prediction enabled: lambda_label_pred=%.4f", self.lambda_label_pred)
 
-        self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
+        params = list(self.translator.parameters())
+        if self.feature_gate is not None:
+            params += list(self.feature_gate.parameters())
+        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
         # Load and freeze baseline
@@ -1207,6 +1236,9 @@ class LatentTranslatorTrainer:
                 # Reconstruction loss: decode MIMIC and compare
                 tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
                 tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                if self.feature_gate is not None:
+                    gate = self.feature_gate()  # (F,)
+                    tgt_diff = tgt_diff * gate.view(1, 1, -1)  # more weight where gate is high
                 l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
 
                 # Range loss on source output
@@ -1325,6 +1357,9 @@ class LatentTranslatorTrainer:
 
                 tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
                 tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                if self.feature_gate is not None:
+                    gate = self.feature_gate()
+                    tgt_diff = tgt_diff * gate.view(1, 1, -1)
                 l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
 
                 upper = self.upper_bounds.view(1, 1, -1)
@@ -1411,7 +1446,10 @@ class LatentTranslatorTrainer:
             logging.info("Saved pretrain checkpoint to %s", pretrain_path)
 
             # Reset optimizer after pretraining and free GPU memory
-            self.optimizer = AdamW(self.translator.parameters(), lr=self.optimizer.defaults["lr"],
+            params = list(self.translator.parameters())
+            if self.feature_gate is not None:
+                params += list(self.feature_gate.parameters())
+            self.optimizer = AdamW(params, lr=self.optimizer.defaults["lr"],
                                    weight_decay=self.optimizer.defaults["weight_decay"])
             self.scaler = GradScaler(enabled=self.device.startswith("cuda"))
             if torch.cuda.is_available():
@@ -1471,3 +1509,600 @@ class LatentTranslatorTrainer:
         # Verify frozen LSTM stayed exactly the same
         self._verify_baseline_frozen()
         logging.info("Shared latent translator training completed")
+
+
+class RetrievalTranslatorTrainer:
+    """Trainer for RetrievalTranslator: Phase 1 pretrain + Phase 2 retrieval-guided training."""
+
+    def __init__(
+        self,
+        yaib_runtime: YAIBRuntime,
+        translator: nn.Module,
+        schema_resolver: SchemaResolver,
+        bounds_csv: Path,
+        target_train_loader: DataLoader,
+        learning_rate: float = 1e-4,
+        weight_decay: float = 1e-5,
+        lambda_recon: float = 0.1,
+        lambda_range: float = 0.5,
+        lambda_smooth: float = 0.1,
+        lambda_importance_reg: float = 0.01,
+        pretrain_epochs: int = 10,
+        k_neighbors: int = 16,
+        retrieval_window: int = 6,
+        memory_refresh_epochs: int = 5,
+        early_stopping_patience: int = 5,
+        best_metric: str = "val_task",
+        run_dir: Path | None = None,
+        device: str = "cuda",
+        training_config: dict | None = None,
+    ) -> None:
+        self.yaib_runtime = yaib_runtime
+        self.schema_resolver = schema_resolver
+        self.translator = translator.to(device)
+        self.device = device
+        self.lambda_recon = lambda_recon
+        self.lambda_range = lambda_range
+        self.lambda_smooth = lambda_smooth
+        self.lambda_importance_reg = lambda_importance_reg
+        self.pretrain_epochs = pretrain_epochs
+        self.k_neighbors = k_neighbors
+        self.retrieval_window = retrieval_window
+        self.memory_refresh_epochs = memory_refresh_epochs
+        self.early_stopping_patience = early_stopping_patience
+        self.best_metric = best_metric
+        self.run_dir = Path(run_dir) if run_dir else Path("runs/retrieval")
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+
+        self.target_train_loader = target_train_loader
+        self._target_iter = iter(target_train_loader)
+
+        # Cross-domain normalization
+        self.renorm_scale = None
+        self.renorm_offset = None
+
+        # MIMIC target task loss and latent label prediction
+        _tc = training_config or {}
+        self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
+        self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
+        if self.lambda_target_task > 0:
+            logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
+        if self.lambda_label_pred > 0:
+            logging.info("Latent label prediction enabled: lambda_label_pred=%.4f", self.lambda_label_pred)
+
+        # Feature gate for weighted reconstruction (optional)
+        self.feature_gate = None
+        if _tc.get("feature_gate", False):
+            from ..core.feature_gate import FeatureGate
+            num_features = len(schema_resolver.dynamic_features)
+            self.feature_gate = FeatureGate(num_features).to(device)
+            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
+
+        params = list(self.translator.parameters())
+        if self.feature_gate is not None:
+            params += list(self.feature_gate.parameters())
+        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
+        self.scaler = GradScaler(enabled=device.startswith("cuda"))
+
+        # Load and freeze baseline
+        self.yaib_runtime.load_baseline_model()
+        if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+            self.yaib_runtime._model = self.yaib_runtime._model.to(device)
+            for param in self.yaib_runtime._model.parameters():
+                param.requires_grad = False
+            model = self.yaib_runtime._model
+            for name, module in model.named_modules():
+                if hasattr(module, "dropout") and isinstance(getattr(module, "dropout"), float):
+                    if module.dropout > 0:
+                        module.dropout = 0.0
+            model.train()
+            from torch.nn.modules.dropout import _DropoutNd
+            from torch.nn.modules.batchnorm import _BatchNorm
+            def _force_stateless(m):
+                if isinstance(m, (_DropoutNd, nn.Dropout)):
+                    m.eval()
+                elif isinstance(m, _BatchNorm):
+                    m.eval()
+                    m.track_running_stats = False
+            model.apply(_force_stateless)
+
+        # Snapshot frozen baseline parameters for post-training verification
+        self._baseline_param_snapshot = {
+            name: param.detach().clone()
+            for name, param in self.yaib_runtime._model.named_parameters()
+        }
+
+        # Feature bounds for range loss
+        self.lower_bounds, self.upper_bounds = self._load_feature_bounds(
+            bounds_csv, schema_resolver.dynamic_features
+        )
+        self.lower_bounds = self.lower_bounds.to(device)
+        self.upper_bounds = self.upper_bounds.to(device)
+
+        self.best_val = float("inf")
+        self.best_state = None
+        self.history: list[dict] = []
+        self.memory_bank = None
+
+    def _load_feature_bounds(self, bounds_csv, feature_names):
+        import pandas as pd
+        df = pd.read_csv(bounds_csv)
+        df = df.set_index("feature")
+        cols = set(df.columns)
+        lower_col = next((c for c in ["p0.1_a", "p0.1", "p_001_a", "q001"] if c in cols), None)
+        upper_col = next((c for c in ["p99.9_a", "p99.9", "p_999_a", "q999"] if c in cols), None)
+        if lower_col is None or upper_col is None:
+            raise ValueError(f"Bounds CSV missing percentile columns. Found: {sorted(cols)}")
+        lower = torch.tensor(df.loc[feature_names, lower_col].to_numpy(), dtype=torch.float32)
+        upper = torch.tensor(df.loc[feature_names, upper_col].to_numpy(), dtype=torch.float32)
+        return lower, upper
+
+    def _verify_baseline_frozen(self) -> None:
+        model = self.yaib_runtime._model
+        n_params = 0
+        max_diff = 0.0
+        for name, param in model.named_parameters():
+            snapshot = self._baseline_param_snapshot[name]
+            diff = (param.detach() - snapshot.to(param.device)).abs().max().item()
+            max_diff = max(max_diff, diff)
+            n_params += param.numel()
+            if diff > 0:
+                raise RuntimeError(
+                    f"FROZEN LSTM CORRUPTED: parameter '{name}' changed by {diff:.2e} "
+                    f"during training."
+                )
+        logging.info("[verify] Frozen LSTM integrity OK — %d parameters, max_diff=%.2e", n_params, max_diff)
+
+    def _next_target_batch(self):
+        try:
+            batch = next(self._target_iter)
+        except StopIteration:
+            self._target_iter = iter(self.target_train_loader)
+            batch = next(self._target_iter)
+        return tuple(b.to(self.device) for b in batch)
+
+    def set_renorm_params(self, scale: torch.Tensor, offset: torch.Tensor):
+        self.renorm_scale = scale.to(self.device)
+        self.renorm_offset = offset.to(self.device)
+        logging.info("Cross-domain renormalization enabled for source data (retrieval)")
+
+    def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
+        if self.renorm_scale is None:
+            return x_val
+        x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
+        return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
+
+    def _build_memory_bank(self) -> None:
+        """Build/rebuild the MIMIC memory bank using the current encoder."""
+        from ..core.retrieval_translator import build_memory_bank
+        logging.info("Building memory bank (encoding all MIMIC data)...")
+        self.memory_bank = build_memory_bank(
+            encoder=self.translator,
+            target_loader=self.target_train_loader,
+            schema_resolver=self.schema_resolver,
+            device=self.device,
+            window_size=self.retrieval_window,
+        )
+        self.translator.train()  # restore train mode after build
+
+    def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
+        """Autoencoder pretraining on MIMIC target data."""
+        self.translator.train()
+        total_recon = 0.0
+        total_label_pred = 0.0
+        n_batches = 0
+
+        for batch in target_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                latent = self.translator.encode(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+                x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
+                mask = ~parts["M_pad"].bool()
+                diff = (x_out.float() - parts["X_val"].float()) ** 2
+                l_recon = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
+
+                l_label_pred = latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    label_logits = self.translator.predict_labels(latent, parts["M_pad"])
+                    label_mask = parts["M_label"].bool()
+                    if label_mask.any():
+                        l_label_pred = F.binary_cross_entropy_with_logits(
+                            label_logits[label_mask].float(),
+                            parts["y"][label_mask].float(),
+                        )
+
+                loss = l_recon + self.lambda_label_pred * l_label_pred
+
+            self.optimizer.zero_grad()
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            total_recon += l_recon.item()
+            total_label_pred += l_label_pred.item()
+            n_batches += 1
+
+        return {
+            "pretrain_recon": total_recon / max(n_batches, 1),
+            "pretrain_label_pred": total_label_pred / max(n_batches, 1),
+        }
+
+    def _run_epoch(self, train_loader: DataLoader, epoch: int = 0) -> dict:
+        """Phase 2 training: retrieval-guided translation."""
+        from ..core.retrieval_translator import query_memory_bank
+        self.translator.train()
+        totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0}
+        n_batches = 0
+
+        for batch in train_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+            parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                # ── Source (eICU) path with retrieval ──
+                src_latent = self.translator.encode(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+
+                # Per-timestep retrieval from memory bank
+                importance_w = self.translator.get_importance_weights()
+                context = query_memory_bank(
+                    src_latent.detach(),  # detach queries for retrieval (not for encoding)
+                    parts["M_pad"],
+                    self.memory_bank,
+                    k_neighbors=self.k_neighbors,
+                    retrieval_window=self.retrieval_window,
+                    importance_weights=importance_w.detach(),
+                )
+
+                # Forward with retrieved context
+                x_out, _ = self.translator.forward_with_retrieval(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                    context,
+                )
+
+                # Task loss via frozen LSTM
+                x_yaib_translated = self.schema_resolver.rebuild(
+                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                )
+                label_mask = parts["M_label"].bool()
+                logits = self.yaib_runtime.forward(
+                    (x_yaib_translated, parts["y"], label_mask)
+                )
+                l_task = self.yaib_runtime.compute_loss(
+                    logits.float(), (x_yaib_translated, parts["y"], label_mask)
+                ).float()
+
+                # ── Target (MIMIC) path: reconstruction ──
+                tgt_batch = self._next_target_batch()
+                tgt_parts = self.schema_resolver.extract(tgt_batch)
+                tgt_latent = self.translator.encode(
+                    tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                    tgt_parts["M_pad"], tgt_parts["X_static"],
+                )
+                tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
+                tgt_mask = ~tgt_parts["M_pad"].bool()
+                tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                if self.feature_gate is not None:
+                    gate = self.feature_gate()  # (F,)
+                    tgt_diff = tgt_diff * gate.view(1, 1, -1)
+                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                # Range loss on source output
+                src_mask = ~parts["M_pad"].bool()
+                upper = self.upper_bounds.view(1, 1, -1)
+                lower = self.lower_bounds.view(1, 1, -1)
+                over = torch.relu(x_out.float() - upper)
+                under = torch.relu(lower - x_out.float())
+                range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
+                l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
+
+                # Temporal smoothness: penalize jumps between consecutive timesteps
+                if x_out.shape[1] > 1:
+                    diffs = (x_out[:, 1:, :].float() - x_out[:, :-1, :].float()) ** 2
+                    smooth_mask = src_mask[:, 1:] & src_mask[:, :-1]
+                    l_smooth = diffs.sum(dim=-1)[smooth_mask].mean() if smooth_mask.any() else diffs.new_tensor(0.0)
+                else:
+                    l_smooth = x_out.new_tensor(0.0)
+
+                # Importance regularization: L1 on importance weights for sparsity
+                l_importance_reg = importance_w.abs().mean()
+
+                # Target task loss (optional)
+                l_target_task = tgt_out.new_tensor(0.0)
+                if self.lambda_target_task > 0:
+                    tgt_yaib = self.schema_resolver.rebuild(
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                    )
+                    tgt_label_mask = tgt_parts["M_label"].bool()
+                    tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
+                    l_target_task = self.yaib_runtime.compute_loss(
+                        tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
+                    ).float()
+
+                l_total = (
+                    l_task
+                    + self.lambda_recon * l_recon
+                    + self.lambda_range * l_range
+                    + self.lambda_smooth * l_smooth
+                    + self.lambda_importance_reg * l_importance_reg
+                    + self.lambda_target_task * l_target_task
+                )
+
+            self.optimizer.zero_grad()
+            self.scaler.scale(l_total).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+
+            totals["total"] += l_total.item()
+            totals["task"] += l_task.item()
+            totals["recon"] += l_recon.item()
+            totals["range"] += l_range.item()
+            totals["smooth"] += l_smooth.item()
+            totals["importance_reg"] += l_importance_reg.item()
+            totals["target_task"] += l_target_task.item()
+            n_batches += 1
+
+        return {k: v / max(n_batches, 1) for k, v in totals.items()}
+
+    @torch.no_grad()
+    def _validate(self, val_loader: DataLoader) -> dict:
+        """Validation pass with retrieval."""
+        from ..core.retrieval_translator import query_memory_bank
+        self.translator.eval()
+        totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0}
+        n_batches = 0
+
+        importance_w = self.translator.get_importance_weights()
+
+        for batch in val_loader:
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+            parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
+
+            with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
+                src_latent = self.translator.encode(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                )
+
+                context = query_memory_bank(
+                    src_latent,
+                    parts["M_pad"],
+                    self.memory_bank,
+                    k_neighbors=self.k_neighbors,
+                    retrieval_window=self.retrieval_window,
+                    importance_weights=importance_w,
+                )
+
+                x_out, _ = self.translator.forward_with_retrieval(
+                    parts["X_val"], parts["X_miss"], parts["t_abs"],
+                    parts["M_pad"], parts["X_static"],
+                    context,
+                )
+
+                x_yaib_translated = self.schema_resolver.rebuild(
+                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                )
+                label_mask = parts["M_label"].bool()
+                logits = self.yaib_runtime.forward(
+                    (x_yaib_translated, parts["y"], label_mask)
+                )
+                l_task = self.yaib_runtime.compute_loss(
+                    logits.float(), (x_yaib_translated, parts["y"], label_mask)
+                ).float()
+
+                # Target reconstruction
+                tgt_batch = self._next_target_batch()
+                tgt_parts = self.schema_resolver.extract(tgt_batch)
+                tgt_latent = self.translator.encode(
+                    tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                    tgt_parts["M_pad"], tgt_parts["X_static"],
+                )
+                tgt_out = self.translator.decode(tgt_latent, tgt_parts["M_pad"], tgt_parts["X_static"])
+                tgt_mask = ~tgt_parts["M_pad"].bool()
+                tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
+                if self.feature_gate is not None:
+                    gate = self.feature_gate()  # (F,)
+                    tgt_diff = tgt_diff * gate.view(1, 1, -1)
+                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                src_mask = ~parts["M_pad"].bool()
+                upper = self.upper_bounds.view(1, 1, -1)
+                lower = self.lower_bounds.view(1, 1, -1)
+                over = torch.relu(x_out.float() - upper)
+                under = torch.relu(lower - x_out.float())
+                range_penalty = (over ** 2 + under ** 2).sum(dim=-1)
+                l_range = range_penalty[src_mask].mean() if src_mask.any() else range_penalty.new_tensor(0.0)
+
+                if x_out.shape[1] > 1:
+                    diffs = (x_out[:, 1:, :].float() - x_out[:, :-1, :].float()) ** 2
+                    smooth_mask = src_mask[:, 1:] & src_mask[:, :-1]
+                    l_smooth = diffs.sum(dim=-1)[smooth_mask].mean() if smooth_mask.any() else diffs.new_tensor(0.0)
+                else:
+                    l_smooth = x_out.new_tensor(0.0)
+
+                l_importance_reg = importance_w.abs().mean()
+
+                l_target_task = tgt_out.new_tensor(0.0)
+                if self.lambda_target_task > 0:
+                    tgt_yaib = self.schema_resolver.rebuild(
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                    )
+                    tgt_label_mask = tgt_parts["M_label"].bool()
+                    tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
+                    l_target_task = self.yaib_runtime.compute_loss(
+                        tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
+                    ).float()
+
+                l_total = (
+                    l_task
+                    + self.lambda_recon * l_recon
+                    + self.lambda_range * l_range
+                    + self.lambda_smooth * l_smooth
+                    + self.lambda_importance_reg * l_importance_reg
+                    + self.lambda_target_task * l_target_task
+                )
+
+            totals["total"] += l_total.item()
+            totals["task"] += l_task.item()
+            totals["recon"] += l_recon.item()
+            totals["range"] += l_range.item()
+            totals["smooth"] += l_smooth.item()
+            totals["importance_reg"] += l_importance_reg.item()
+            totals["target_task"] += l_target_task.item()
+            n_batches += 1
+
+        return {k: v / max(n_batches, 1) for k, v in totals.items()}
+
+    def _log_retrieval_metrics(self, epoch: int) -> None:
+        """Log retrieval quality metrics."""
+        if self.memory_bank is None:
+            return
+        bank = self.memory_bank
+        logging.info(
+            "[retrieval] Epoch %d — bank: %d windows, mean_nn_dist: computed per-batch during training",
+            epoch, bank.window_latents.shape[0],
+        )
+        # Log importance weights
+        iw = self.translator.get_importance_weights().detach().cpu()
+        top_vals, top_idx = iw.topk(min(10, iw.shape[0]))
+        entropy = -(iw * (iw + 1e-8).log() + (1 - iw) * (1 - iw + 1e-8).log()).sum().item()
+        logging.info(
+            "[importance] Epoch %d — entropy=%.4f, top10_dims=%s, top10_weights=%s",
+            epoch,
+            entropy,
+            top_idx.tolist(),
+            [f"{v:.3f}" for v in top_vals.tolist()],
+        )
+
+    def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
+        # Phase 1: Autoencoder pretraining on MIMIC
+        pretrain_path = self.run_dir / "pretrain_checkpoint.pt"
+        if pretrain_path.exists():
+            ckpt = torch.load(pretrain_path, map_location=self.device, weights_only=True)
+            self.translator.load_state_dict(ckpt["translator_state_dict"])
+            logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
+        elif self.pretrain_epochs > 0:
+            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
+            for ep in range(self.pretrain_epochs):
+                metrics = self._pretrain_epoch(self.target_train_loader)
+                lp_str = ""
+                if self.lambda_label_pred > 0:
+                    lp_str = " label_pred=%.4f" % metrics.get("pretrain_label_pred", 0.0)
+                logging.info(
+                    "Pretrain epoch %d/%d - recon=%.4f%s",
+                    ep + 1, self.pretrain_epochs, metrics["pretrain_recon"], lp_str,
+                )
+
+            torch.save({"translator_state_dict": self.translator.state_dict()}, pretrain_path)
+            logging.info("Saved pretrain checkpoint to %s", pretrain_path)
+
+            # Reset optimizer after pretraining
+            params = list(self.translator.parameters())
+            if self.feature_gate is not None:
+                params += list(self.feature_gate.parameters())
+            self.optimizer = AdamW(
+                params,
+                lr=self.optimizer.defaults["lr"],
+                weight_decay=self.optimizer.defaults["weight_decay"],
+            )
+            self.scaler = GradScaler(enabled=self.device.startswith("cuda"))
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logging.info("=== Phase 1 complete. Starting Phase 2: Retrieval-guided training ===")
+
+        # Phase 2: Retrieval-guided training
+        logging.info("=== Phase 2: Retrieval-guided training (%d epochs) ===", epochs)
+        epochs_without_improvement = 0
+        for epoch in range(epochs):
+            # Rebuild memory bank periodically
+            if self.memory_bank is None or (epoch % self.memory_refresh_epochs == 0):
+                self._build_memory_bank()
+
+            train_metrics = self._run_epoch(train_loader, epoch=epoch)
+            val_metrics = self._validate(val_loader)
+
+            logging.info(
+                "Epoch %d/%d - train: total=%.4f task=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f",
+                epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
+                train_metrics["recon"], train_metrics["range"], train_metrics["smooth"],
+                train_metrics["importance_reg"], train_metrics.get("target_task", 0.0),
+            )
+            logging.info(
+                "Epoch %d/%d - val: total=%.4f task=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f",
+                epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
+                val_metrics["recon"], val_metrics["range"], val_metrics["smooth"],
+                val_metrics["importance_reg"], val_metrics.get("target_task", 0.0),
+            )
+
+            self._log_retrieval_metrics(epoch + 1)
+
+            self.history.append({
+                "epoch": epoch + 1,
+                **{f"train_{k}": v for k, v in train_metrics.items()},
+                **{f"val_{k}": v for k, v in val_metrics.items()},
+            })
+
+            candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
+            if candidate < self.best_val:
+                self.best_val = candidate
+                self.best_state = self.translator.state_dict()
+                ckpt_data = {
+                    "epoch": epoch,
+                    "translator_state_dict": self.best_state,
+                    "val_metrics": val_metrics,
+                    "train_metrics": train_metrics,
+                    "renorm_scale": self.renorm_scale,
+                    "renorm_offset": self.renorm_offset,
+                }
+                if self.feature_gate is not None:
+                    ckpt_data["feature_gate_state_dict"] = self.feature_gate.state_dict()
+                torch.save(ckpt_data, self.run_dir / "best_translator.pt")
+                logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+
+            if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
+                logging.info("Early stopping after %d epochs without improvement", epochs_without_improvement)
+                break
+
+        if self.best_state is not None:
+            self.translator.load_state_dict(self.best_state)
+
+        self._verify_baseline_frozen()
+        self._plot_losses()
+        logging.info("Retrieval translator training completed")
+
+    def _plot_losses(self) -> None:
+        if not self.history:
+            return
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        epochs = [row["epoch"] for row in self.history]
+        for key in ["total", "task", "recon"]:
+            train_vals = [row.get(f"train_{key}", 0) for row in self.history]
+            val_vals = [row.get(f"val_{key}", 0) for row in self.history]
+            if any(v > 0 for v in train_vals + val_vals):
+                fig, ax = plt.subplots(figsize=(6, 4))
+                ax.plot(epochs, train_vals, label=f"train_{key}")
+                ax.plot(epochs, val_vals, label=f"val_{key}")
+                ax.set_xlabel("Epoch")
+                ax.set_ylabel(f"{key.title()} Loss")
+                ax.legend()
+                fig.tight_layout()
+                fig.savefig(self.run_dir / f"{key}_loss_curve.png", dpi=150)
+                plt.close(fig)

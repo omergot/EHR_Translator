@@ -70,7 +70,7 @@ These rules prevent catastrophic failures. Violating any one can silently ruin r
 
 JSON configs with two main sections:
 - `"translator"`: `type` ("transformer"|"shared_latent"|"retrieval"), `d_model`, `d_latent`, `n_layers`, `n_enc_layers`, `n_dec_layers`, `n_cross_layers`, `output_mode`, etc.
-- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`.
+- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`, `training_seed`.
 
 ## Experiment Queue System
 
@@ -100,5 +100,7 @@ Each experiment needs: `name` (unique ID), `config` (path to JSON config), `outp
 - Checkpoints/logs/outputs are always centralized in the main tree (not in worktrees).
 - CLI: `--add --branch BRANCH` sets the branch. `--cleanup [--branch BRANCH]` removes worktrees.
 - Worktree locations: `EHR_Translator_worktrees/<sanitized-branch>/` (sibling of `EHR_Translator/`).
-- **Branches must be committed locally** (and pushed to origin for remote servers) before queuing.
-- `sync_remote.sh` is still needed for YAIB, pretrained models, and gin config path fixes.
+- **Branches must be committed AND pushed to origin before queuing remote experiments.** Remote worktrees are created from `origin/<branch>`. If the branch isn't pushed, remote experiments will fail.
+- **Local experiments on the current branch run from REPO directly** (no worktree). Remote experiments always use a worktree, even if the branch matches the local checkout.
+- `sync_remote.sh` is still needed for YAIB, pretrained models, and gin config path fixes (not for experiment code — that's handled by worktrees).
+- **Killing remote experiments**: `kill <PID>` only kills the SSH wrapper. Use `ssh <host> kill <child_PID>` to kill the actual training process (check `nvidia-smi` for the GPU-using PID).

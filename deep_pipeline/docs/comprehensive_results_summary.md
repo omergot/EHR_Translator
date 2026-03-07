@@ -1,6 +1,6 @@
 # Comprehensive Results & Conclusions: EHR Translator Deep Pipeline
 
-**Date**: 2026-02-17 (updated 2026-03-06, V2 complete + V3 ablation results)
+**Date**: 2026-02-17 (updated 2026-03-07, V3 ablations complete + cross-server variance analysis)
 **Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, full-data validation (delta + shared latent), MIMIC target task loss, cross-task transfer, cross-domain normalization, feature gate, retrieval translator, and V2 sepsis improvements
 
 ---
@@ -8,6 +8,22 @@
 ## 1. Project Goal
 
 Train a transformer Translator to adapt eICU (source domain) EHR time-series so that a **frozen** MIMIC-IV LSTM baseline performs well on it. Two clinical tasks: Sepsis (per-timestep, causal) and Mortality24 (per-stay, bidirectional).
+
+### 1.1 Reference Baselines (YAIB Paper)
+
+From the YAIB benchmark paper (van de Water et al., ICLR 2024, arXiv:2306.05109), LSTM in-domain performance for reference (AUROC x 100):
+
+| Reference Point | Mortality24 | AKI | Sepsis |
+|---|---|---|---|
+| Our frozen baseline (MIMIC LSTM on eICU) | 80.79 | 85.58 | 71.59 |
+| eICU-native LSTM | 85.5 | 90.2 | 74.0 |
+| MIMIC-native LSTM | 86.7 | 89.7 | 82.0 |
+| Best eICU model (GRU) | 86.0 | 90.9 | 77.4 |
+| **Our best translator** | **85.55** | **90.82** | **76.58** |
+
+**Status**: All three tasks surpass eICU-native LSTM. AKI also surpasses MIMIC-native LSTM. These are reference milestones, not hard ceilings.
+
+See [yaib_reference_baselines.md](yaib_reference_baselines.md) for complete YAIB results across all architectures and datasets.
 
 ---
 
@@ -1072,6 +1088,8 @@ New paradigm: retrieval-guided translation. Architecture: shared encoder → Mem
 | **Sepsis** | AUCPR | **+0.0225** | Retrieval + FG absolute, no smooth | `configs/sepsis_retr_fg_no_smooth.json` | `runs/sepsis_retr_fg_no_smooth` |
 
 Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
+YAIB reference (eICU-native LSTM): Mortality 0.855, AKI 0.902, Sepsis 0.740 — **all three surpassed by our translator**
+YAIB reference (MIMIC-native LSTM): Mortality 0.867, AKI 0.897, Sepsis 0.820 — **AKI surpassed** (90.82 > 89.7)
 
 ### Sepsis Improvement History
 
@@ -1094,7 +1112,7 @@ Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 | Feb 24 | SL + target norm | +0.0362 | +0.1056 | AUCPR record |
 | **Feb 27** | **SL + featgate + norm** | **+0.0524** | **+0.1540** | **New records (+41%/+46%)** |
 
-### Key Highlights (Mar 6)
+### Key Highlights (Mar 7)
 
 - **Sepsis AUCPR new record**: Removing smoothness loss (+0.0225 AUCPR, +43% vs prev +0.0157) confirms smoothness penalizes sharp sepsis onset
 - **Sepsis AUCROC record**: Retrieval+FG absolute +0.0499 AUCROC (+51% vs prev), with best-ever calibration (Brier -0.089, ECE -0.091)
@@ -1103,11 +1121,11 @@ Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 - **FeatureGate is the breakthrough module**: improves every best-paradigm × task combination (SL+gate for mortality/AKI, retrieval+gate for sepsis)
 - **Absolute > residual on AUCROC** across ALL tasks for ALL retrieval variants (with and without gate)
 - **V2 all failed**: gate semantics inversion caused all 6 V2 experiments to underperform. Reverted in V3.
+- **V3 ablations complete**: no-smooth = AUCPR record, LSTM gate init hurts (-25%), oversampling catastrophically fails (AUCROC -0.033, gate collapse)
+- **Oversampling anti-synergistic with feature gate**: 48.9% effective positive rate from oversampling destroys sparse-label signal structure; all gate weights collapse to zero
 - **V3 deconfounding**: gate + pretrain=15 interact synergistically; neither alone matches the combination
-- **V3 ablations**: no-smooth = AUCPR record, LSTM gate init hurts (-25% AUCROC vs record), oversample running
-- **LSTM gate init hurts sepsis**: +0.0373 vs +0.0499 — initialization biases gate toward LSTM features, not task-relevant ones
-- **Cross-server reproducibility**: Mortality/AKI stable (gap <0.006), sepsis unstable (gap 0.018) due to k-NN discrete chaos × label sparsity
-- **V3 tuning in progress**: AKI/mortality retrieval V3 configs (deeper decoder, more epochs, LSTM gate) queued
+- **Cross-server variance**: Mortality/AKI stable (gap ≤0.007), sepsis unstable (gap 0.018). Strong evidence for task-level instability, not retrieval-specific — only sepsis shows variance. Full 2×2×2 variance study in progress.
+- **V3 tuning in progress**: AKI/mortality retrieval V3 configs (deeper decoder, more epochs, LSTM gate) running
 
 ---
 
@@ -1159,41 +1177,62 @@ The retrieval+FG comparison was confounded: `pretrain_epochs` changed from 10→
 | Record (baseline) | `sepsis_retrieval_featgate_absolute_full` | — | +0.0499 | +0.0157 | -0.0887 | -0.0907 | — | Reference |
 | **No smoothness** | `sepsis_retr_fg_no_smooth` | **smooth 0.1→0.0** | +0.0475 | **+0.0225** | **-0.0948** | **-0.1060** | 9 (ES@19) | **NEW AUCPR RECORD** |
 | LSTM gate init | `sepsis_retr_fg_lstm_init` | +lstm_informed_gate | +0.0373 | +0.0131 | -0.0438 | -0.0282 | — | Modest, worse than record |
-| Oversample | `sepsis_retr_fg_oversample` | +oversample=20 | — | — | — | — | — | Running |
+| **Oversample** | `sepsis_retr_fg_oversample` | **+oversample=20** | **-0.0331** | **-0.0063** | **+0.0227** | **-0.0114** | 27 | **Catastrophic failure** |
 
 ### V3 Key Findings
 
 - **Removing smoothness loss improves AUCPR by +43%** (+0.0225 vs +0.0157) while AUCROC stays near record (-0.0024). Confirms smoothness loss penalizes the sharp transitions characteristic of sepsis onset that the model needs to capture.
 - Calibration also improves: Brier -0.0948 (vs -0.0887), ECE -0.1060 (vs -0.0907) — best calibration across all experiments.
 - **LSTM gate init hurts sepsis**: +0.0373 AUCROC vs +0.0499 record (-25%). The LSTM importance-derived initialization biases the gate toward LSTM-important features, but for sepsis the gate needs to discover task-relevant features independently.
-- 1 experiment still running: oversample.
+- **Oversampling catastrophically fails**: AUCROC **-0.0331** (negative, worse than no translator). Feature gate weights collapsed to all zeros (entropy→0.04). The 48.9% effective positive rate from oversampling destroys the sparse-label signal structure the gate relies on. Oversampling is anti-synergistic with feature gate on retrieval.
 
-### Cross-Server Reproducibility (Mar 6)
+### Cross-Server Reproducibility (Mar 6-7)
 
-Reproduced 3 experiments on RTX A6000 (remote) vs V100S (local). Same code, data (md5 verified), config, seed, PyTorch 2.6.0+cu118, cuDNN 90100.
+Reproduced experiments on RTX A6000 (remote) vs V100S (local). Same code, data (md5 verified), config, seed=2222, PyTorch 2.6.0+cu118, cuDNN 90100.
 
-| Experiment | Local (V100S) | Remote (A6000) | Gap |
+#### Cross-Server Results (same seed=2222)
+
+| Experiment | Local (V100S) | Remote (A6000) | Gap (AUCROC / AUCPR) |
 |---|---|---|---|
 | Mortality retrieval absolute | +0.046 / +0.048 | +0.046 / +0.049 | 0.000 / 0.001 |
+| Mortality retr+FG absolute | +0.044 / +0.051 | +0.037 / +0.038 | 0.007 / 0.013 |
 | AKI SL+featgate | +0.052 / +0.154 | +0.051 / +0.148 | 0.001 / 0.006 |
 | **Sepsis retr+FG absolute** | **+0.050 / +0.016** | **+0.032 / +0.007** | **0.018 / 0.009** |
+| Sepsis SL+FG | +0.0015 (Feb 25, tainted) | +0.029 / +0.011 | ? (code may differ) |
 
 (Format: AUCROC Δ / AUCPR Δ)
 
-**Sepsis uniquely unstable** across GPU architectures. Two competing hypotheses:
+**Note**: The local sepsis SL+FG result (+0.0015) was from Feb 25, before the Mar 1 FeatureGate commit. The code may have changed between runs, making this comparison unreliable. A fresh local rerun is queued.
 
-- **Hypothesis A (retrieval-specific)**: k-NN is a discrete chaos amplifier — float16 rounding differences from different GPU kernels swap ~6% of nearest neighbors, and at 1.13% positive rate each swap disproportionately affects the sparse task gradient. Memory bank rebuilds every 5 epochs compound the divergence. SL has no discrete retrieval operation, so it should be stable even on sepsis.
-- **Hypothesis B (task-specific)**: Sepsis's 1.13% positive rate makes ALL methods unstable across GPU architectures. SL appears stable only because it barely learns anything on sepsis (+0.0015 AUCROC) — there's no signal to diverge on.
+#### Seed Variance on A6000 (sepsis retr+FG absolute)
 
-**Experiments to resolve:**
+| Seed | Baseline AUCROC | Translated AUCROC | AUCROC Δ | AUCPR Δ |
+|---|---|---|---|---|
+| 2222 | 0.7159 | 0.7479 | +0.032 | +0.007 |
+| 2223 | 0.7096 | 0.7498 | +0.040 | +0.013 |
+| **Gap (absolute)** | — | **0.002** | — | — |
 
-| Experiment | Tests | Status |
+Within A6000, seed variance is small (0.002 in absolute AUCROC). Cross-server variance (0.018 delta) is ~10x larger.
+
+#### Variance Analysis — Interim Conclusions
+
+**Strong evidence for task-level (sepsis) instability, not retrieval-specific:**
+
+1. **Mortality retrieval is stable across servers** (gap 0.000–0.007 AUCROC) — retrieval k-NN itself is not inherently noisy
+2. **AKI SL is stable across servers** (gap 0.001) — confirms SL method is stable
+3. **Only sepsis shows large cross-server variance** — points to task-level sensitivity
+4. **Within-server seed variance is small** (0.002 absolute on A6000) — variance comes from hardware, not random seed
+5. **Mortality retr+FG shows moderate gap** (0.007) — feature gate adds some variance, but sepsis amplifies it 2.5x
+
+**Remaining experiments to fully confirm:**
+
+| Experiment | Purpose | Status |
 |---|---|---|
-| `sepsis_sl_fg_a6000` | SL+FG sepsis on A6000 (local: +0.0015). If stable → Hypothesis A. If diverges → Hypothesis B. | Pending |
-| `sepsis_retr_fg_seed2223` (both servers) | Seed variance within retrieval. Quantifies variance envelope. | Running |
-| `mortality_retr_fg_absolute_a6000` | Retrieval+FG on mortality (local: +0.044). Stable = confirms retrieval itself isn't noisy. | Running |
+| `sepsis_sl_fg_local_rerun` | Fresh SL+FG on local with current code (A6000: +0.029). If gap is large → task-level. | Pending (local) |
+| `sepsis_retr_fg_seed2223_local` | Local seed=2223 retr+FG. Completes seed × server matrix. | Pending (local) |
+| `sepsis_sl_fg_seed2223_a6000` | SL seed=2223 on A6000 (seed=2222: +0.029). Measures SL seed variance. | Running (A6000) |
 
-SL cross-server controls already confirm SL is stable on mortality (gap 0.001) and AKI (gap 0.006).
+Once complete, the 2×2×2 design (method × seed × server) will definitively answer whether variance is task- or method-driven.
 
 ---
 

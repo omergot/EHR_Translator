@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """GPU Experiment Scheduler — reads experiments/queue.yaml, manages GPU assignment.
 
+Supports multiple servers (local + remote via SSH).
+
 Usage:
     python scripts/gpu_scheduler.py              # Start scheduler daemon
     python scripts/gpu_scheduler.py --status     # Show queue status
     python scripts/gpu_scheduler.py --dry-run    # Show what would launch
-    python scripts/gpu_scheduler.py --add --name NAME --config PATH [--notes TEXT]
+    python scripts/gpu_scheduler.py --add --name NAME --config PATH [--notes TEXT] [--server SERVER]
 
 Designed to run in a tmux session. Graceful shutdown with Ctrl+C.
 """
@@ -14,10 +16,12 @@ import argparse
 import json
 import logging
 import os
+import shlex
 import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -33,9 +37,77 @@ LOG_DIR = REPO / "experiments" / "logs"
 RESULTS_DIR = REPO / "experiments" / "results"
 SCHEDULER_LOG = LOG_DIR / "scheduler.log"
 
-# Track running subprocesses for cleanup
+# Track running subprocesses for cleanup (local experiments only)
 _running_procs: dict[str, subprocess.Popen] = {}
 _shutdown = False
+
+# SSH base options for connection pooling and non-interactive operation
+_SSH_OPTS = [
+    "-o", "ConnectTimeout=10",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    "-o", "ControlMaster=auto",
+    "-o", "ControlPath=/tmp/ssh-sched-%r@%h",
+    "-o", "ControlPersist=300",
+]
+
+# SSH options WITHOUT ControlMaster — needed for commands that launch background
+# processes, because ControlMaster keeps the connection alive via inherited FDs.
+_SSH_OPTS_NO_CONTROL = [
+    "-o", "ConnectTimeout=10",
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+]
+
+
+# ---------------------------------------------------------------------------
+# Server config
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ServerConfig:
+    name: str
+    host: str | None  # None = local
+    gpu_priority: list[int]
+    day_max_gpus: int
+    night_max_gpus: int
+    repo_path: str = ""
+    conda_env: str = "yaib"
+    path_mappings: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_local(self) -> bool:
+        return self.host is None
+
+
+def _parse_servers(settings: dict) -> dict[str, ServerConfig]:
+    """Parse servers from settings. Backward-compatible: no 'servers' key = single local."""
+    servers_cfg = settings.get("servers")
+    if not servers_cfg:
+        # Legacy single-server mode
+        return {
+            "local": ServerConfig(
+                name="local",
+                host=None,
+                gpu_priority=settings.get("gpu_priority", [0, 1, 2, 3]),
+                day_max_gpus=settings.get("day_max_gpus", 2),
+                night_max_gpus=settings.get("night_max_gpus", 3),
+            )
+        }
+
+    servers = {}
+    for name, cfg in servers_cfg.items():
+        servers[name] = ServerConfig(
+            name=name,
+            host=cfg.get("host"),
+            gpu_priority=cfg.get("gpu_priority", [0, 1, 2, 3]),
+            day_max_gpus=cfg.get("day_max_gpus", 2),
+            night_max_gpus=cfg.get("night_max_gpus", 2),
+            repo_path=cfg.get("repo_path", ""),
+            conda_env=cfg.get("conda_env", "yaib"),
+            path_mappings=cfg.get("path_mappings", {}),
+        )
+    return servers
 
 
 # ---------------------------------------------------------------------------
@@ -83,11 +155,53 @@ def save_queue(queue: dict):
 
 
 # ---------------------------------------------------------------------------
+# SSH helpers
+# ---------------------------------------------------------------------------
+
+def _ssh_run(host: str, cmd: str, timeout: int = 30, use_control: bool = True) -> tuple[int, str]:
+    """Run a command on a remote host via SSH. Returns (returncode, stdout)."""
+    opts = _SSH_OPTS if use_control else _SSH_OPTS_NO_CONTROL
+    try:
+        result = subprocess.run(
+            ["ssh"] + opts + [host, cmd],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return result.returncode, result.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logging.warning(f"SSH timeout ({timeout}s) to {host}")
+        return 1, ""
+    except Exception as e:
+        logging.warning(f"SSH failed to {host}: {e}")
+        return 1, ""
+
+
+# ---------------------------------------------------------------------------
 # GPU detection
 # ---------------------------------------------------------------------------
 
-def get_free_gpus(threshold_mb: int) -> list[int]:
-    """Return GPU indices with memory usage below threshold."""
+def _parse_nvidia_smi_output(output: str, threshold_mb: int) -> list[int]:
+    """Parse nvidia-smi CSV output into list of free GPU indices."""
+    free = []
+    for line in output.split("\n"):
+        if not line.strip():
+            continue
+        parts = line.split(",")
+        if len(parts) != 2:
+            continue
+        try:
+            idx, mem = int(parts[0].strip()), int(parts[1].strip())
+        except ValueError:
+            continue
+        if mem < threshold_mb:
+            free.append(idx)
+    return free
+
+
+def get_free_gpus(threshold_mb: int, server: ServerConfig | None = None) -> list[int]:
+    """Return GPU indices with memory usage below threshold (local or remote)."""
+    if server is not None and not server.is_local:
+        return get_free_gpus_remote(server, threshold_mb)
+
     try:
         output = subprocess.check_output(
             ["nvidia-smi", "--query-gpu=index,memory.used",
@@ -98,34 +212,44 @@ def get_free_gpus(threshold_mb: int) -> list[int]:
         logging.warning(f"nvidia-smi failed: {e}")
         return []
 
-    free = []
-    for line in output.split("\n"):
-        if not line.strip():
-            continue
-        parts = line.split(",")
-        if len(parts) != 2:
-            continue
-        idx, mem = int(parts[0].strip()), int(parts[1].strip())
-        if mem < threshold_mb:
-            free.append(idx)
-    return free
+    return _parse_nvidia_smi_output(output, threshold_mb)
 
 
-def get_max_gpus(settings: dict) -> int:
+def get_free_gpus_remote(server: ServerConfig, threshold_mb: int) -> list[int]:
+    """Get free GPUs on a remote server via SSH."""
+    rc, output = _ssh_run(
+        server.host,
+        "nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits",
+    )
+    if rc != 0:
+        logging.warning(f"Cannot query GPUs on {server.name} ({server.host})")
+        return []
+    return _parse_nvidia_smi_output(output, threshold_mb)
+
+
+def get_max_gpus(settings_or_server) -> int:
     """Return max GPUs allowed based on time of day and day of week."""
     now = datetime.now()
     hour = now.hour
     weekday = now.weekday()  # 0=Mon, 4=Fri, 5=Sat, 6=Sun
     is_weekend_day = weekday in (4, 5)  # Fri, Sat
+
+    if isinstance(settings_or_server, ServerConfig):
+        day_max = settings_or_server.day_max_gpus
+        night_max = settings_or_server.night_max_gpus
+    else:
+        day_max = settings_or_server.get("day_max_gpus", 2)
+        night_max = settings_or_server.get("night_max_gpus", 3)
+
     if 9 <= hour < 21 and not is_weekend_day:
-        return settings.get("day_max_gpus", 2)
-    return settings.get("night_max_gpus", 3)
+        return day_max
+    return night_max
 
 
-def select_gpus(settings: dict, free_gpus: list[int], running_gpus: set[int]) -> list[int]:
-    """Select available GPUs respecting priority and time limits."""
-    max_gpus = get_max_gpus(settings)
-    priority = settings.get("gpu_priority", [0, 1, 2, 3])
+def select_gpus(server: ServerConfig, free_gpus: list[int], running_gpus: set[int]) -> list[int]:
+    """Select available GPUs on a server respecting priority and time limits."""
+    max_gpus = get_max_gpus(server)
+    priority = server.gpu_priority
 
     # GPUs that are free AND not running our experiments, in priority order
     available = [g for g in priority if g in free_gpus and g not in running_gpus]
@@ -153,7 +277,7 @@ def infer_task(config_path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def pid_is_alive(pid: int) -> bool:
-    """Check if a process with given PID is still running (not zombie)."""
+    """Check if a local process with given PID is still running (not zombie)."""
     try:
         status_path = f"/proc/{pid}/status"
         if os.path.exists(status_path):
@@ -170,12 +294,61 @@ def pid_is_alive(pid: int) -> bool:
         return False
 
 
-def recover_stale(experiments: list[dict]):
+def pid_is_alive_remote(server: ServerConfig, pid: int) -> bool:
+    """Check if a process is alive on a remote server. Conservative: returns True on SSH failure."""
+    rc, output = _ssh_run(
+        server.host,
+        f"kill -0 {pid} 2>/dev/null && echo ALIVE || echo DEAD",
+    )
+    if rc != 0:
+        # SSH failure — assume alive (conservative)
+        return True
+    return output.strip() == "ALIVE"
+
+
+def batch_pid_check_remote(server: ServerConfig, pids: list[int]) -> dict[int, bool]:
+    """Check multiple PIDs on a remote server in a single SSH call."""
+    if not pids:
+        return {}
+    checks = "; ".join(
+        f'kill -0 {pid} 2>/dev/null && echo "{pid} ALIVE" || echo "{pid} DEAD"'
+        for pid in pids
+    )
+    rc, output = _ssh_run(server.host, checks)
+    if rc != 0:
+        # SSH failure — assume all alive
+        return {pid: True for pid in pids}
+    results = {}
+    for line in output.split("\n"):
+        parts = line.strip().split()
+        if len(parts) == 2:
+            try:
+                results[int(parts[0])] = parts[1] == "ALIVE"
+            except ValueError:
+                pass
+    # Any PIDs not in output: assume alive (conservative)
+    for pid in pids:
+        if pid not in results:
+            results[pid] = True
+    return results
+
+
+def recover_stale(experiments: list[dict], servers: dict[str, ServerConfig]):
     """On startup, mark 'running' experiments with dead PIDs as failed."""
+    # Group remote experiments by server for batch checking
+    remote_groups: dict[str, list[dict]] = {}
     for exp in experiments:
-        if exp.get("status") == "running":
-            pid = exp.get("pid")
-            if pid and not pid_is_alive(pid):
+        if exp.get("status") != "running":
+            continue
+        pid = exp.get("pid")
+        if not pid:
+            continue
+        srv_name = exp.get("server", "local")
+        server = servers.get(srv_name)
+        if server and not server.is_local:
+            remote_groups.setdefault(srv_name, []).append(exp)
+        elif server and server.is_local:
+            if not pid_is_alive(pid):
                 logging.warning(
                     f"Stale experiment '{exp['name']}' (PID {pid} dead), marking failed"
                 )
@@ -183,16 +356,45 @@ def recover_stale(experiments: list[dict]):
                 exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 exp["error"] = "Process died (scheduler restart recovery)"
 
+    # Batch check remote PIDs
+    for srv_name, exps in remote_groups.items():
+        server = servers[srv_name]
+        pids = [e["pid"] for e in exps]
+        alive_map = batch_pid_check_remote(server, pids)
+        for exp in exps:
+            if not alive_map.get(exp["pid"], True):
+                logging.warning(
+                    f"Stale remote experiment '{exp['name']}' on {srv_name} "
+                    f"(PID {exp['pid']} dead), marking failed"
+                )
+                exp["status"] = "failed"
+                exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                exp["error"] = f"Process died on {srv_name} (scheduler restart recovery)"
+
+
+# ---------------------------------------------------------------------------
+# Path remapping
+# ---------------------------------------------------------------------------
+
+def _remap_config(config_path: str, server: ServerConfig) -> str:
+    """Read a config JSON and remap all paths for the remote server.
+    Returns the remapped JSON string."""
+    with open(config_path) as f:
+        content = f.read()
+
+    for local_prefix, remote_prefix in server.path_mappings.items():
+        content = content.replace(local_prefix, remote_prefix)
+
+    return content
+
 
 # ---------------------------------------------------------------------------
 # Experiment launch & monitoring
 # ---------------------------------------------------------------------------
 
-def launch_experiment(exp: dict, gpu: int) -> subprocess.Popen:
-    """Launch an experiment on the specified GPU."""
+def launch_experiment_local(exp: dict, gpu: int) -> subprocess.Popen:
+    """Launch an experiment on a local GPU."""
     task = infer_task(exp["config"])
-    # Log file: {name}_{task}.log for collect_result.py compatibility
-    # Always include task suffix so collect_result.py can find the log
     log_name = f"{exp['name']}_{task}.log"
     log_path = LOG_DIR / log_name
 
@@ -215,7 +417,7 @@ def launch_experiment(exp: dict, gpu: int) -> subprocess.Popen:
         "--output_parquet", output_path,
     ]
 
-    logging.info(f"Launching '{exp['name']}' on GPU {gpu}: {' '.join(cmd)}")
+    logging.info(f"Launching '{exp['name']}' on local GPU {gpu}: {' '.join(cmd)}")
     logging.info(f"  Log: {log_path}")
 
     log_fh = open(log_path, "w")
@@ -225,6 +427,7 @@ def launch_experiment(exp: dict, gpu: int) -> subprocess.Popen:
     )
 
     exp["status"] = "running"
+    exp["server"] = "local"
     exp["gpu"] = gpu
     exp["pid"] = proc.pid
     exp["started"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -233,12 +436,138 @@ def launch_experiment(exp: dict, gpu: int) -> subprocess.Popen:
     return proc
 
 
-def collect_results(exp: dict):
+def _write_remote_file(server: ServerConfig, remote_path: str, content: str) -> bool:
+    """Write content to a file on a remote server via SSH stdin pipe."""
+    try:
+        result = subprocess.run(
+            ["ssh"] + _SSH_OPTS + [server.host,
+             f"mkdir -p $(dirname {remote_path}) && cat > {remote_path}"],
+            input=content, text=True, capture_output=True, timeout=15,
+        )
+        return result.returncode == 0
+    except Exception as e:
+        logging.warning(f"Failed to write {remote_path} on {server.name}: {e}")
+        return False
+
+
+def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig) -> bool:
+    """Launch an experiment on a remote server via SSH. Returns True on success."""
+    task = infer_task(exp["config"])
+    config_path = str(REPO / exp["config"])
+
+    # Remap config paths for remote
+    remapped_json = _remap_config(config_path, server)
+
+    # Remote paths
+    remote_repo = server.repo_path
+    remote_config_dir = f"{remote_repo}/experiments/.remote_configs"
+    remote_config_path = f"{remote_config_dir}/{exp['name']}.json"
+    remote_output = f"{remote_repo}/{exp['output']}"
+    remote_log = f"{remote_repo}/experiments/logs/{exp['name']}_{task}.log"
+
+    # Write remapped config to remote via stdin pipe (avoids heredoc quoting issues)
+    if not _write_remote_file(server, remote_config_path, remapped_json):
+        logging.error(f"Failed to write remote config for '{exp['name']}' on {server.name}")
+        exp["status"] = "failed"
+        exp["error"] = f"Failed to write remote config on {server.name}"
+        return False
+
+    # Create output and log directories
+    _ssh_run(server.host, f"mkdir -p $(dirname {remote_output}) && mkdir -p $(dirname {remote_log})", timeout=10)
+
+    # Launch via Popen (non-blocking SSH) + PID file
+    # Conda-activated Python processes keep SSH FDs open, so we can't use
+    # subprocess.run (it would block). Instead, fire-and-forget with Popen
+    # and read the PID from a file written by the remote shell.
+    pid_file = f"{remote_repo}/experiments/.remote_configs/{exp['name']}.pid"
+    conda_activate = f"source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate {server.conda_env}"
+    launch_cmd = (
+        f"{conda_activate} && "
+        f"cd {remote_repo} && "
+        f"CUDA_VISIBLE_DEVICES={gpu} EHR_LOG_FILE={remote_log} "
+        f"nohup python run.py train_and_eval "
+        f"--config {remote_config_path} "
+        f"--output_parquet {remote_output} "
+        f"> {remote_log} 2>&1 & "
+        f"echo $! > {pid_file}"
+    )
+
+    # Fire-and-forget: Popen won't block waiting for the remote process
+    ssh_proc = subprocess.Popen(
+        ["ssh"] + _SSH_OPTS_NO_CONTROL + [server.host, launch_cmd],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+    )
+    # Store for cleanup (will be reaped later)
+    _running_procs[f"_ssh_{exp['name']}"] = ssh_proc
+
+    # Wait for PID file to appear
+    time.sleep(5)
+
+    rc, pid_str = _ssh_run(server.host, f"cat {pid_file} 2>/dev/null", timeout=10)
+    if rc != 0 or not pid_str.strip():
+        logging.error(f"Failed to read PID for '{exp['name']}' on {server.name}")
+        exp["status"] = "failed"
+        exp["error"] = f"PID read failed on {server.name}"
+        return False
+
+    try:
+        pid = int(pid_str.strip())
+    except ValueError:
+        logging.error(f"Invalid PID '{pid_str}' for '{exp['name']}' on {server.name}")
+        exp["status"] = "failed"
+        exp["error"] = f"PID parse failed on {server.name}"
+        return False
+
+    # Verify process is actually running
+    if not pid_is_alive_remote(server, pid):
+        logging.error(f"Remote process {pid} for '{exp['name']}' died immediately on {server.name}")
+        exp["status"] = "failed"
+        exp["error"] = f"Process died immediately on {server.name}"
+        return False
+
+    logging.info(f"Launched '{exp['name']}' on {server.name} GPU {gpu} (PID {pid})")
+    logging.info(f"  Remote log: {remote_log}")
+
+    exp["status"] = "running"
+    exp["server"] = server.name
+    exp["gpu"] = gpu
+    exp["pid"] = pid
+    exp["started"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    exp["remote_config"] = remote_config_path
+
+    return True
+
+
+def launch_experiment(exp: dict, gpu: int, server: ServerConfig) -> bool:
+    """Launch an experiment on the given server + GPU. Returns True on success."""
+    if server.is_local:
+        launch_experiment_local(exp, gpu)
+        return True
+    else:
+        return launch_experiment_remote(exp, gpu, server)
+
+
+def collect_results(exp: dict, servers: dict[str, ServerConfig]):
     """Collect results using collect_result.py after experiment finishes."""
     task = infer_task(exp["config"])
     if task == "unknown":
         logging.warning(f"Cannot collect results for '{exp['name']}': unknown task")
         return
+
+    srv_name = exp.get("server", "local")
+    server = servers.get(srv_name)
+
+    # For remote experiments, rsync the log file first
+    if server and not server.is_local:
+        remote_log = f"{server.repo_path}/experiments/logs/{exp['name']}_{task}.log"
+        local_log = LOG_DIR / f"{exp['name']}_{task}.log"
+        try:
+            subprocess.run(
+                ["rsync", "-az", f"{server.host}:{remote_log}", str(local_log)],
+                timeout=60, capture_output=True,
+            )
+        except Exception as e:
+            logging.warning(f"Failed to rsync log for '{exp['name']}' from {srv_name}: {e}")
 
     try:
         subprocess.run(
@@ -264,41 +593,111 @@ def collect_results(exp: dict):
             logging.warning(f"Malformed results JSON for '{exp['name']}'")
 
 
-def check_running(experiments: list[dict]):
+def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
     """Check running experiments and update status on completion."""
+    # Batch remote PID checks by server
+    remote_checks: dict[str, list[dict]] = {}
+
     for exp in experiments:
         if exp.get("status") != "running":
             continue
 
         name = exp["name"]
-        proc = _running_procs.get(name)
+        srv_name = exp.get("server", "local")
+        server = servers.get(srv_name)
 
-        if proc is not None:
-            retcode = proc.poll()
-            if retcode is None:
-                continue  # Still running
-            finished_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            exp["finished"] = finished_ts
+        if server and server.is_local:
+            # Local experiment — check via proc or PID
+            proc = _running_procs.get(name)
+            if proc is not None:
+                retcode = proc.poll()
+                if retcode is None:
+                    continue  # Still running
+                finished_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                exp["finished"] = finished_ts
 
-            if retcode == 0:
-                logging.info(f"Experiment '{name}' completed successfully")
-                exp["status"] = "done"
-                collect_results(exp)
-            else:
-                logging.error(f"Experiment '{name}' failed (exit code {retcode})")
-                exp["status"] = "failed"
-                exp["error"] = f"Exit code {retcode}"
+                if retcode == 0:
+                    logging.info(f"Experiment '{name}' completed successfully")
+                    exp["status"] = "done"
+                    collect_results(exp, servers)
+                else:
+                    logging.error(f"Experiment '{name}' failed (exit code {retcode})")
+                    exp["status"] = "failed"
+                    exp["error"] = f"Exit code {retcode}"
 
-            _running_procs.pop(name, None)
-        else:
-            # No proc tracked — check PID directly (e.g. after scheduler restart)
-            pid = exp.get("pid")
-            if pid and not pid_is_alive(pid):
-                logging.warning(f"Experiment '{name}' PID {pid} no longer running")
-                exp["status"] = "failed"
-                exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                exp["error"] = "Process died (detected during monitoring)"
                 _running_procs.pop(name, None)
+            else:
+                pid = exp.get("pid")
+                if pid and not pid_is_alive(pid):
+                    logging.warning(f"Experiment '{name}' PID {pid} no longer running")
+                    exp["status"] = "failed"
+                    exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    exp["error"] = "Process died (detected during monitoring)"
+                    _running_procs.pop(name, None)
+        elif server and not server.is_local:
+            # Queue for batch remote check
+            remote_checks.setdefault(srv_name, []).append(exp)
+
+    # Batch check remote experiments
+    for srv_name, exps in remote_checks.items():
+        server = servers[srv_name]
+        pids = [e["pid"] for e in exps if e.get("pid")]
+        if not pids:
+            continue
+
+        alive_map = batch_pid_check_remote(server, pids)
+        for exp in exps:
+            pid = exp.get("pid")
+            if pid and not alive_map.get(pid, True):
+                # Process finished — check exit status via log
+                name = exp["name"]
+                logging.info(f"Remote experiment '{name}' on {srv_name} finished (PID {pid})")
+                exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                # Try to determine success by checking remote log for completion marker
+                task = infer_task(exp["config"])
+                remote_log = f"{server.repo_path}/experiments/logs/{name}_{task}.log"
+                rc, tail = _ssh_run(
+                    server.host,
+                    f"tail -20 {remote_log} 2>/dev/null",
+                )
+                tail_lower = tail.lower()
+                success = any(m in tail_lower for m in [
+                    "evaluation results", "exported", "evaluation complete", "saved to",
+                ])
+                if success:
+                    exp["status"] = "done"
+                    logging.info(f"  Remote experiment '{name}' completed successfully")
+                else:
+                    exp["status"] = "done"
+                    logging.info(f"  Remote experiment '{name}' finished (status uncertain)")
+                collect_results(exp, servers)
+
+
+# ---------------------------------------------------------------------------
+# Server selection
+# ---------------------------------------------------------------------------
+
+def _select_server(
+    exp: dict,
+    servers: dict[str, ServerConfig],
+    server_slots: dict[str, list[int]],
+) -> tuple[str, int] | None:
+    """Find a server+GPU for an experiment. Returns (server_name, gpu) or None."""
+    preferred = exp.get("server", "any")
+
+    if preferred != "any":
+        # Pinned to a specific server
+        slots = server_slots.get(preferred, [])
+        if slots:
+            return preferred, slots.pop(0)
+        return None
+
+    # Auto-assign: iterate servers in definition order
+    for srv_name, slots in server_slots.items():
+        if slots:
+            return srv_name, slots.pop(0)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -312,9 +711,10 @@ def scheduler_loop(dry_run: bool = False):
     queue = load_queue()
     settings = queue.get("settings", {})
     experiments = queue.get("experiments", [])
+    servers = _parse_servers(settings)
 
     # Recover stale entries on startup
-    recover_stale(experiments)
+    recover_stale(experiments, servers)
     if not dry_run:
         save_queue(queue)
 
@@ -323,6 +723,8 @@ def scheduler_loop(dry_run: bool = False):
         f"{sum(1 for e in experiments if e.get('status') == 'running')} running, "
         f"{sum(1 for e in experiments if e.get('status') == 'done')} done"
     )
+    server_list = ', '.join(f'{s.name} ({s.host or "local"})' for s in servers.values())
+    logging.info(f"Servers: {server_list}")
 
     poll_interval = settings.get("poll_interval", 60)
     threshold_mb = settings.get("gpu_free_threshold_mb", 1000)
@@ -333,37 +735,49 @@ def scheduler_loop(dry_run: bool = False):
             queue = load_queue()
             settings = queue.get("settings", {})
             experiments = queue.get("experiments", [])
+            servers = _parse_servers(settings)
         except Exception as e:
             logging.error(f"Failed to reload queue: {e}")
             time.sleep(poll_interval)
             continue
 
         # Check running experiments
-        check_running(experiments)
+        check_running(experiments, servers)
 
-        # Find running GPUs
-        running_gpus = set()
+        # Build per-server available GPU slots
+        # First, find which GPUs each server is already using
+        running_by_server: dict[str, set[int]] = {name: set() for name in servers}
         for exp in experiments:
             if exp.get("status") == "running" and "gpu" in exp:
-                running_gpus.add(exp["gpu"])
+                srv = exp.get("server", "local")
+                if srv in running_by_server:
+                    running_by_server[srv].add(exp["gpu"])
 
-        # Get free GPUs
-        free_gpus = get_free_gpus(threshold_mb)
-        available = select_gpus(settings, free_gpus, running_gpus)
+        # Get free GPUs and compute available slots per server
+        server_slots: dict[str, list[int]] = {}
+        for srv_name, server in servers.items():
+            free_gpus = get_free_gpus(threshold_mb, server)
+            available = select_gpus(server, free_gpus, running_by_server.get(srv_name, set()))
+            server_slots[srv_name] = available
 
         # Find pending experiments
         pending = [e for e in experiments if e.get("status") == "pending"]
 
         if dry_run:
-            _print_dry_run(settings, free_gpus, running_gpus, available, pending, experiments)
+            _print_dry_run(servers, server_slots, running_by_server, pending, experiments, threshold_mb)
             return
 
         # Launch as many as we have GPU slots
         launched = 0
-        for gpu in available:
-            if not pending:
-                break
-            exp = pending.pop(0)
+        for exp in list(pending):
+            result = _select_server(exp, servers, server_slots)
+            if result is None:
+                continue  # No slots available for this experiment
+
+            srv_name, gpu = result
+            server = servers[srv_name]
+
+            # Verify config exists (local check)
             config_path = REPO / exp["config"]
             if not config_path.exists():
                 logging.error(
@@ -372,8 +786,10 @@ def scheduler_loop(dry_run: bool = False):
                 exp["status"] = "failed"
                 exp["error"] = f"Config not found: {exp['config']}"
                 continue
-            launch_experiment(exp, gpu)
-            launched += 1
+
+            if launch_experiment(exp, gpu, server):
+                launched += 1
+            pending.remove(exp)
 
         # Save updated queue
         save_queue(queue)
@@ -393,30 +809,40 @@ def scheduler_loop(dry_run: bool = False):
     logging.info("Scheduler shut down by signal")
 
 
-def _print_dry_run(settings, free_gpus, running_gpus, available, pending, experiments):
+def _print_dry_run(servers, server_slots, running_by_server, pending, experiments, threshold_mb):
     """Print what the scheduler would do without launching anything."""
     hour = datetime.now().hour
     period = "daytime" if 9 <= hour < 21 else "nighttime"
-    max_gpus = get_max_gpus(settings)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'='*70}")
     print(f"  GPU Scheduler — Dry Run  ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    print(f"{'='*60}")
-    print(f"  Period:        {period} (max {max_gpus} GPUs)")
-    print(f"  Free GPUs:     {free_gpus}")
-    print(f"  Running GPUs:  {running_gpus or '{none}'}")
-    print(f"  Available:     {available}")
-    print(f"  Pending:       {len(pending)} experiment(s)")
-    print()
+    print(f"{'='*70}")
 
-    if available and pending:
-        print("  Would launch:")
-        for gpu, exp in zip(available, pending):
-            print(f"    GPU {gpu} <- {exp['name']}  ({exp['config']})")
-    elif not available:
-        print("  No GPU slots available.")
-    elif not pending:
-        print("  No pending experiments.")
+    for srv_name, server in servers.items():
+        max_gpus = get_max_gpus(server)
+        running = running_by_server.get(srv_name, set())
+        available = server_slots.get(srv_name, [])
+        host_str = server.host or "localhost"
+        print(f"\n  [{srv_name}] ({host_str})")
+        print(f"    Period:      {period} (max {max_gpus} GPUs)")
+        print(f"    Running:     {running or '{none}'}")
+        print(f"    Available:   {available}")
+
+    print(f"\n  Pending: {len(pending)} experiment(s)")
+
+    # Simulate assignment
+    slots_copy = {k: list(v) for k, v in server_slots.items()}
+    if pending:
+        print("\n  Would launch:")
+        for exp in pending:
+            result = _select_server(exp, servers, slots_copy)
+            if result:
+                srv_name, gpu = result
+                pinned = exp.get("server", "any")
+                pin_str = f" (pinned)" if pinned != "any" else ""
+                print(f"    {srv_name} GPU {gpu} <- {exp['name']}{pin_str}")
+            else:
+                print(f"    [no slot]  <- {exp['name']}")
 
     # Summary table
     print(f"\n  {'Status':<10} {'Count'}")
@@ -437,21 +863,25 @@ def show_status():
     queue = load_queue()
     experiments = queue.get("experiments", [])
     settings = queue.get("settings", {})
+    servers = _parse_servers(settings)
 
     hour = datetime.now().hour
     period = "daytime" if 9 <= hour < 21 else "nighttime"
-    max_gpus = get_max_gpus(settings)
-
     threshold_mb = settings.get("gpu_free_threshold_mb", 1000)
-    free_gpus = get_free_gpus(threshold_mb)
 
     print(f"\n{'='*70}")
     print(f"  Experiment Queue Status  ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
-    print(f"  Period: {period} (max {max_gpus} GPUs)  |  Free GPUs: {free_gpus}")
     print(f"{'='*70}")
 
+    # Per-server GPU info
+    for srv_name, server in servers.items():
+        max_gpus = get_max_gpus(server)
+        free_gpus = get_free_gpus(threshold_mb, server)
+        host_str = server.host or "localhost"
+        print(f"  [{srv_name}] {host_str}  |  {period} (max {max_gpus})  |  Free GPUs: {free_gpus}")
+
     if not experiments:
-        print("  No experiments in queue.")
+        print("\n  No experiments in queue.")
         print()
         return
 
@@ -471,28 +901,38 @@ def show_status():
 
         for exp in group:
             name = exp["name"]
-            config = exp.get("config", "")
 
             if status == "running":
                 gpu = exp.get("gpu", "?")
                 pid = exp.get("pid", "?")
                 started = exp.get("started", "?")
-                alive = "alive" if exp.get("pid") and pid_is_alive(exp["pid"]) else "DEAD"
-                print(f"    {name:<35} GPU {gpu}  PID {pid} ({alive})  started {started}")
+                srv_name = exp.get("server", "local")
+                server = servers.get(srv_name)
+                if server and not server.is_local:
+                    alive = "alive" if pid_is_alive_remote(server, pid) else "DEAD"
+                else:
+                    alive = "alive" if exp.get("pid") and pid_is_alive(exp["pid"]) else "DEAD"
+                print(f"    {name:<35} {srv_name} GPU {gpu}  PID {pid} ({alive})  started {started}")
 
             elif status == "pending":
                 notes = exp.get("notes", "")
-                print(f"    {name:<35} {notes}")
+                srv_pref = exp.get("server", "any")
+                srv_str = f"[{srv_pref}] " if srv_pref != "any" else ""
+                print(f"    {name:<35} {srv_str}{notes}")
 
             elif status == "done":
                 finished = exp.get("finished", "?")
                 results = exp.get("results", {})
+                srv_name = exp.get("server", "")
+                srv_str = f"({srv_name}) " if srv_name and srv_name != "local" else ""
                 result_str = "  ".join(f"{k}: {v:+.4f}" for k, v in results.items()) if results else ""
-                print(f"    {name:<35} finished {finished}  {result_str}")
+                print(f"    {name:<35} {srv_str}finished {finished}  {result_str}")
 
             elif status == "failed":
                 error = exp.get("error", "unknown")
-                print(f"    {name:<35} error: {error}")
+                srv_name = exp.get("server", "")
+                srv_str = f"({srv_name}) " if srv_name and srv_name != "local" else ""
+                print(f"    {name:<35} {srv_str}error: {error}")
 
     print()
 
@@ -501,7 +941,7 @@ def show_status():
 # Add experiment
 # ---------------------------------------------------------------------------
 
-def add_experiment(name: str, config: str, notes: str = ""):
+def add_experiment(name: str, config: str, notes: str = "", server: str = ""):
     """Add a new pending experiment to the queue."""
     queue = load_queue()
     experiments = queue.get("experiments", [])
@@ -526,6 +966,8 @@ def add_experiment(name: str, config: str, notes: str = ""):
         "output": output,
         "status": "pending",
     }
+    if server:
+        entry["server"] = server
     if notes:
         entry["notes"] = notes
 
@@ -538,8 +980,9 @@ def add_experiment(name: str, config: str, notes: str = ""):
     experiments.insert(insert_idx, entry)
 
     save_queue(queue)
-    logging.info(f"Added experiment '{name}' ({task}) at position {insert_idx}")
-    print(f"Added '{name}' to queue (position {insert_idx}, task={task})")
+    srv_str = f", server={server}" if server else ""
+    logging.info(f"Added experiment '{name}' ({task}{srv_str}) at position {insert_idx}")
+    print(f"Added '{name}' to queue (position {insert_idx}, task={task}{srv_str})")
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +1001,7 @@ def _signal_handler(signum, frame):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="GPU Experiment Scheduler",
+        description="GPU Experiment Scheduler (multi-server)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -571,6 +1014,8 @@ def main():
     parser.add_argument("--name", type=str, help="Experiment name (for --add)")
     parser.add_argument("--config", type=str, help="Config path (for --add)")
     parser.add_argument("--notes", type=str, default="", help="Notes (for --add)")
+    parser.add_argument("--server", type=str, default="",
+                        help="Pin to server (for --add). Default: any")
 
     args = parser.parse_args()
 
@@ -583,7 +1028,7 @@ def main():
     if args.add:
         if not args.name or not args.config:
             parser.error("--add requires --name and --config")
-        add_experiment(args.name, args.config, args.notes)
+        add_experiment(args.name, args.config, args.notes, args.server)
         return
 
     if args.dry_run:

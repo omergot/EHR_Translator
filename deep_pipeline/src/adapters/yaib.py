@@ -58,12 +58,20 @@ def _pushd(path: str):
         os.chdir(old)
 
 def _find_yaib_root(task_config_path: str) -> str:
-    p = Path('/bigdata/omerg/Thesis/YAIB').resolve()
-    return str(p)
+    # Derive YAIB root from the task_config path: .../YAIB/configs/tasks/X.gin -> .../YAIB
+    p = Path(task_config_path).resolve()
+    for parent in p.parents:
+        if parent.name == "YAIB" or (parent / "icu_benchmarks").is_dir():
+            return str(parent)
+    # Fallback: assume YAIB is sibling of EHR_Translator
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    yaib_path = repo_root.parent.parent / "YAIB"
+    return str(yaib_path.resolve())
 
 
-def import_yaib_run_module():
-    run_path = Path('/bigdata/omerg/Thesis/YAIB/icu_benchmarks/run.py')
+def import_yaib_run_module(task_config_path: str = ""):
+    yaib_root = _find_yaib_root(task_config_path) if task_config_path else _find_yaib_root("")
+    run_path = Path(yaib_root) / "icu_benchmarks" / "run.py"
     spec = importlib.util.spec_from_file_location("yaib_run", str(run_path))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)  # registers @gin.configurable("Run")
@@ -130,7 +138,7 @@ class YAIBRuntime:
         gin.clear_config()
         self._mode = RunMode.classification
         if not _is_yaib_run_registered():
-            import_yaib_run_module()
+            import_yaib_run_module(str(self.task_config))
         self.wrap_load_gin_config(self.task_config)
         if self.model_config is not None:
             self.wrap_load_gin_config(self.model_config)
@@ -409,7 +417,7 @@ class YAIBRuntime:
                 len(ids),
                 subset_fraction,
             )
-            output_dir = Path(os.getenv("YAIB_SPLIT_HASH_DIR", "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/yaib_split_ids"))
+            output_dir = Path(os.getenv("YAIB_SPLIT_HASH_DIR", str(Path(__file__).resolve().parent.parent.parent / "yaib_split_ids")))
             output_dir.mkdir(parents=True, exist_ok=True)
             dataset_tag = f"{self.data_dir.parent.name}_{self.data_dir.name}"
             subset_tag = "full" if subset_fraction is None else f"{subset_fraction:.4f}".replace(".", "p")

@@ -142,6 +142,14 @@ def _get_training_config(config: dict) -> dict:
         "lambda_smooth": training.get("lambda_smooth", 0.1),
         # Feature gate (for delta/SL comparison)
         "feature_gate": training.get("feature_gate", False),
+        # Importance regularization type (retrieval): "l1" or "entropy"
+        "importance_reg_type": training.get("importance_reg_type", "l1"),
+        # Cross-domain contrastive alignment (retrieval/SL)
+        "lambda_contrastive_align": training.get("lambda_contrastive_align", 0.0),
+        # Positive-weighted reconstruction (retrieval/SL)
+        "recon_positive_boost": training.get("recon_positive_boost", 0.0),
+        # LSTM-informed feature gate initialization
+        "lstm_informed_gate": training.get("lstm_informed_gate", False),
     }
 
 
@@ -496,7 +504,12 @@ def train_translator(args):
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
     debug_fraction = config.get("debug_fraction", 0.2)
-    # No epoch cap — config controls epochs directly
+    if debug_mode:
+        training_cfg["epochs"] = min(training_cfg.get("epochs", 30), 1)
+        if training_cfg.get("pretrain_epochs", 0) > 0:
+            training_cfg["pretrain_epochs"] = 1
+        logging.info("DEBUG MODE: epochs capped to %d, pretrain_epochs capped to %d, data fraction=%.0f%%",
+                      training_cfg["epochs"], training_cfg.get("pretrain_epochs", 0), debug_fraction * 100)
     translator_type = _get_translator_type(config)
 
     logging.info("=== Training Configuration ===")
@@ -1344,7 +1357,7 @@ def translate_and_eval(args):
         )
         output_path = Path(args.output_parquet)
         sample_dir = translator_cfg.get(
-            "sample_dir", "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/translation_samples"
+            "sample_dir", str(Path(__file__).resolve().parent.parent / "data" / "YAIB" / "translation_samples")
         )
         sample_size = int(translator_cfg.get("sample_size", 1000))
         results = evaluator.evaluate_original_vs_translated(

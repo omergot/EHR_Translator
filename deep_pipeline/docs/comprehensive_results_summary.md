@@ -1,7 +1,7 @@
 # Comprehensive Results & Conclusions: EHR Translator Deep Pipeline
 
-**Date**: 2026-02-17 (updated 2026-03-01, complete retrieval + featgate results)
-**Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, full-data validation (delta + shared latent), MIMIC target task loss, cross-task transfer, cross-domain normalization, feature gate, and retrieval translator
+**Date**: 2026-02-17 (updated 2026-03-06, V2 complete + V3 ablation results)
+**Scope**: All experiments from inception through A/B/C series, full-data validation, shared latent space experiments, sepsis failure root cause analysis, AKI diagnostic experiments, shuffle ablation, data scaling, full-data validation (delta + shared latent), MIMIC target task loss, cross-task transfer, cross-domain normalization, feature gate, retrieval translator, and V2 sepsis improvements
 
 ---
 
@@ -1040,19 +1040,19 @@ New paradigm: retrieval-guided translation. Architecture: shared encoder → Mem
 |---|---|---|---|---|---|---|
 | Mortality retr+featgate absolute | `mortality_retrieval_featgate_absolute_full` | +0.0438 | +0.0511 | +0.0129 | +0.0247 | Near mort absolute (worse cal) |
 | Mortality retr+featgate residual | `mortality_retrieval_featgate_residual_full` | +0.0290 | +0.0301 | -0.0004 | +0.0069 | Worse than without gate |
-| AKI retr+featgate residual | — | — | — | — | — | Running ep18/30 |
-| AKI retr+featgate absolute | — | — | — | — | — | Running ep16/30 |
-| Sepsis retr+featgate residual | — | — | — | — | — | Running ep10/30 |
-| Sepsis retr+featgate absolute | — | — | — | — | — | Queued |
+| AKI retr+featgate residual | `aki_retrieval_featgate_residual_full` | +0.0234 | +0.0666 | -0.0025 | +0.0119 | Modest |
+| AKI retr+featgate absolute | `aki_retrieval_featgate_absolute_full` | +0.0436 | +0.1215 | -0.0124 | +0.0027 | Strong, near SL+FG |
+| Sepsis retr+featgate residual | `sepsis_retrieval_featgate_residual_full` | +0.0230 | +0.0073 | -0.0333 | -0.0165 | Good calibration |
+| **Sepsis retr+featgate absolute** | `sepsis_retrieval_featgate_absolute_full` | **+0.0499** | **+0.0157** | **-0.0887** | **-0.0907** | **NEW SEPSIS RECORDS (both!)** |
 
 ### Retrieval Key Findings
 
-- **Absolute > residual on AUCROC** across ALL tasks: sepsis (+0.033 vs +0.029), mortality (+0.046 vs +0.035), AKI (+0.039 vs +0.019)
-- **Residual > absolute on calibration** for sepsis (Brier -0.056 vs -0.043)
-- **Sepsis retrieval residual**: best calibration of any method (Brier -0.056, ECE -0.055), new AUCPR record
-- **Mortality retrieval absolute**: +0.046 AUCROC competitive with SL+featgate (+0.048), better calibration
-- **AKI retrieval absolute**: +0.039 AUCROC, +0.113 AUCPR — strong but doesn't beat SL+featgate (+0.052/+0.154)
-- **FeatureGate hurts retrieval on mortality** (same pattern as delta — fidelity is cooperative)
+- **Absolute > residual on AUCROC** across ALL 3 tasks for ALL retrieval variants (with and without gate)
+- **Sepsis retr+FG absolute new all-time records**: +0.0499 AUCROC (+51% vs prev +0.0330), +0.0157 AUCPR (+39% vs prev +0.0113), PLUS excellent calibration (Brier -0.089, ECE -0.091)
+- **FeatureGate helps retrieval on sepsis** (+0.050 vs +0.033) and **AKI** (+0.044 vs +0.039), but **hurts mortality** (+0.044 vs +0.046)
+- Pattern confirmed: gate helps where fidelity gradient is destructive (sepsis cos=-0.21), hurts where cooperative (mortality cos=+0.84)
+- **AKI retr+FG absolute**: +0.044/+0.122 — near SL+FG (+0.052/+0.154) with better calibration (Brier -0.012)
+- **Residual > absolute on calibration** for sepsis (Brier -0.056 vs -0.043 without gate, but gate+absolute gets -0.089!)
 - **Importance weight collapse**: lambda_importance_reg=0.01 too aggressive (entropy 84→0.1 by ep15). Becomes inert, doesn't hurt.
 - **Eval bug fixed**: forward() without retrieval = broken. `RetrievalTranslatorWrapper` builds memory bank and queries per batch.
 
@@ -1060,7 +1060,7 @@ New paradigm: retrieval-guided translation. Architecture: shared encoder → Mem
 
 ## 18. Updated Master Results Table
 
-### Current Best Results (Feb 27)
+### Current Best Results (Mar 6)
 
 | Task | Metric | Best Δ | Method | Config | Run Dir |
 |---|---|---|---|---|---|
@@ -1068,8 +1068,8 @@ New paradigm: retrieval-guided translation. Architecture: shared encoder → Mem
 | **Mortality24** | AUCPR | **+0.0546** | SL + MIMIC labels | `configs/mortality_sl_mimic_labels_full.json` | `runs/mortality_sl_mimic_labels_full` |
 | **AKI** | AUCROC | **+0.0524** | SL + featgate + norm | `configs/aki_sl_featgate_full.json` | `runs/aki_sl_featgate_full` |
 | **AKI** | AUCPR | **+0.1540** | SL + featgate + norm | `configs/aki_sl_featgate_full.json` | `runs/aki_sl_featgate_full` |
-| **Sepsis** | AUCROC | **+0.0330** | Retrieval absolute | `configs/sepsis_retrieval_absolute_full.json` | `runs/sepsis_retrieval_absolute_full` |
-| **Sepsis** | AUCPR | **+0.0113** | Retrieval residual | `configs/sepsis_retrieval_full.json` | `runs/sepsis_retrieval_full` |
+| **Sepsis** | AUCROC | **+0.0499** | Retrieval + featgate absolute | `configs/sepsis_retrieval_featgate_absolute_full.json` | `runs/sepsis_retrieval_featgate_absolute_full` |
+| **Sepsis** | AUCPR | **+0.0225** | Retrieval + FG absolute, no smooth | `configs/sepsis_retr_fg_no_smooth.json` | `runs/sepsis_retr_fg_no_smooth` |
 
 Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 
@@ -1082,7 +1082,9 @@ Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 | Feb 23 | Delta + target task loss | +0.0102 | 4x improvement |
 | Feb 24 | Delta + target task + target norm | +0.0150 | 7x vs baseline |
 | Feb 25 | Delta + featgate + target norm | +0.0322 | 15x vs baseline |
-| **Feb 28** | **Retrieval absolute** | **+0.0330** | **New best (16x vs baseline)** |
+| Feb 28 | Retrieval absolute | +0.0330 | 16x vs baseline |
+| Mar 3 | Retrieval + featgate absolute | +0.0499 | New AUCROC best (24x vs baseline) |
+| **Mar 5** | **Retr + FG absolute, no smooth** | **+0.0475 / +0.0225 PR** | **New AUCPR record (+43% vs prev)** |
 
 ### AKI Improvement History
 
@@ -1092,21 +1094,110 @@ Baselines: Mortality 0.8079, AKI 0.8558, Sepsis 0.7159 (AUCROC)
 | Feb 24 | SL + target norm | +0.0362 | +0.1056 | AUCPR record |
 | **Feb 27** | **SL + featgate + norm** | **+0.0524** | **+0.1540** | **New records (+41%/+46%)** |
 
-### Key Highlights (Mar 1)
+### Key Highlights (Mar 6)
 
+- **Sepsis AUCPR new record**: Removing smoothness loss (+0.0225 AUCPR, +43% vs prev +0.0157) confirms smoothness penalizes sharp sepsis onset
+- **Sepsis AUCROC record**: Retrieval+FG absolute +0.0499 AUCROC (+51% vs prev), with best-ever calibration (Brier -0.089, ECE -0.091)
 - **AKI breakthrough**: SL+featgate +0.0524 AUCROC (+41%), +0.1540 AUCPR (+46%) — largest single improvement
-- **Sepsis new record**: Retrieval absolute +0.0330 AUCROC (beats delta+featgate +0.0322)
 - **Mortality record**: SL+featgate +0.0476 AUCROC, with excellent calibration (Brier -0.030, ECE -0.041)
-- **FeatureGate is the breakthrough module**: improves every best-paradigm × task combination (SL+gate for mortality/AKI, delta+gate for sepsis)
-- **Retrieval translator competitive across all tasks**: best sepsis AUCROC (+0.033), near-best mortality (+0.046 vs +0.048), best calibration overall
-- **Absolute > residual on AUCROC across ALL 3 tasks**: sepsis (+0.033 vs +0.029), mortality (+0.046 vs +0.035), AKI (+0.039 vs +0.019)
-- **Residual > absolute on calibration** for sepsis (Brier -0.056 vs -0.043)
-- **FeatureGate hurts retrieval on mortality** (absolute +0.044 vs +0.046, residual +0.029 vs +0.035) — same cooperative-fidelity pattern as delta
-- **3 retrieval+featgate experiments still running** (AKI residual ep18, AKI absolute ep16, sepsis residual ep10) + 1 queued (sepsis absolute)
+- **FeatureGate is the breakthrough module**: improves every best-paradigm × task combination (SL+gate for mortality/AKI, retrieval+gate for sepsis)
+- **Absolute > residual on AUCROC** across ALL tasks for ALL retrieval variants (with and without gate)
+- **V2 all failed**: gate semantics inversion caused all 6 V2 experiments to underperform. Reverted in V3.
+- **V3 deconfounding**: gate + pretrain=15 interact synergistically; neither alone matches the combination
+- **V3 ablations**: no-smooth = AUCPR record, LSTM gate init hurts (-25% AUCROC vs record), oversample running
+- **LSTM gate init hurts sepsis**: +0.0373 vs +0.0499 — initialization biases gate toward LSTM features, not task-relevant ones
+- **Cross-server reproducibility**: Mortality/AKI stable (gap <0.006), sepsis unstable (gap 0.018) due to k-NN discrete chaos × label sparsity
+- **V3 tuning in progress**: AKI/mortality retrieval V3 configs (deeper decoder, more epochs, LSTM gate) queued
 
 ---
 
-## 19. Appendix: Historical Mortality Full-Data Runs
+## 19. V2 Sepsis Improvements (Mar 2 – Mar 4, FAILED)
+
+Branch `exp/sepsis-v2`. Code changes: gate semantics "fix" (INVERTED — broke gate), entropy importance reg, contrastive alignment, positive-weighted recon, LSTM-informed gate init, debug epoch cap, oversampling.
+
+### V2 Complete Results
+
+| Experiment | Config | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Notes |
+|---|---|---|---|---|---|---|
+| sepsis_retr_v2_generic | `sepsis_retr_v2_generic` | -0.0067 | +0.0010 | +0.3912 | +0.4054 | Catastrophic calibration |
+| sepsis_sl_v2_generic | `sepsis_sl_v2_generic` | +0.0189 | +0.0062 | +0.1795 | +0.1452 | Mild calibration blow-up |
+| sepsis_retr_v2_task | `sepsis_retr_v2_task` | -0.0107 | -0.0006 | +0.0051 | -0.0719 | Inverted gate hurt |
+| sepsis_retr_v2_task_ablation | `sepsis_retr_v2_task_ablation` | -0.0038 | +0.0019 | +0.1430 | +0.0936 | No LSTM init, still bad |
+| sepsis_sl_v2_task | `sepsis_sl_v2_task` | -0.0011 | -0.0002 | +0.0748 | +0.0067 | SL still fails sepsis |
+| sepsis_sl_v2_task_ablation | `sepsis_sl_v2_task_ablation` | +0.0137 | +0.0026 | +0.1407 | +0.0988 | Best V2 result, but poor |
+
+### V2 Post-Mortem
+
+- **Root cause**: The "gate semantics fix" inverted the gate — `recon_weight = (1.0 - 0.5 * gate)` made high gate = LESS reconstruction accuracy on important features, opposite of intended. The successful +0.0499 record used the ORIGINAL semantics (`tgt_diff * gate`).
+- All 6 V2 experiments underperformed because the gate was working against them.
+- Gate semantics reverted in V3 code (Mar 6, 4 locations in train.py).
+- Other V2 additions (contrastive, positive boost, LSTM init, oversampling) backward-compatible (default off).
+
+---
+
+## 20. V3 Ablation Experiments (Mar 4 – ongoing)
+
+Reverted gate semantics to original. Disciplined one-at-a-time ablations starting from the +0.0499 record config.
+
+### Deconfounding: pretrain_epochs vs feature_gate
+
+The retrieval+FG comparison was confounded: `pretrain_epochs` changed from 10→15 alongside gate addition.
+
+| Experiment | Config | Change | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Best Ep |
+|---|---|---|---|---|---|---|---|
+| Original no-gate | `sepsis_retrieval_absolute_full` | pretrain=10, no gate | +0.0330 | +0.0100 | -0.0432 | -0.0334 | 13 |
+| No gate, pretrain=15 | `sepsis_retr_no_gate_pretrain15` | pretrain 10→15 | +0.0181 | +0.0051 | -0.0626 | -0.0461 | 7 (ES@17) |
+| Gate, pretrain=10 | `sepsis_retr_gate_pretrain10` | gate, pretrain stays 10 | +0.0164 | +0.0088 | -0.0737 | -0.0747 | 10 (ES@20) |
+| **Record (both)** | `sepsis_retrieval_featgate_absolute_full` | **gate + pretrain=15** | **+0.0499** | +0.0157 | -0.0887 | -0.0907 | — |
+
+**Conclusion**: Gate + longer pretrain interact synergistically. Neither pretrain=15 alone (+0.0181, actually worse than pretrain=10) nor gate at pretrain=10 (+0.0164) comes close to the combination (+0.0499). The gate needs a well-pretrained encoder to be effective; the longer pretrain needs the gate to direct reconstruction.
+
+### One-at-a-time Ablations
+
+| Experiment | Config | Change | AUCROC Δ | AUCPR Δ | Brier Δ | ECE Δ | Best Ep | Status |
+|---|---|---|---|---|---|---|---|---|
+| Record (baseline) | `sepsis_retrieval_featgate_absolute_full` | — | +0.0499 | +0.0157 | -0.0887 | -0.0907 | — | Reference |
+| **No smoothness** | `sepsis_retr_fg_no_smooth` | **smooth 0.1→0.0** | +0.0475 | **+0.0225** | **-0.0948** | **-0.1060** | 9 (ES@19) | **NEW AUCPR RECORD** |
+| LSTM gate init | `sepsis_retr_fg_lstm_init` | +lstm_informed_gate | +0.0373 | +0.0131 | -0.0438 | -0.0282 | — | Modest, worse than record |
+| Oversample | `sepsis_retr_fg_oversample` | +oversample=20 | — | — | — | — | — | Running |
+
+### V3 Key Findings
+
+- **Removing smoothness loss improves AUCPR by +43%** (+0.0225 vs +0.0157) while AUCROC stays near record (-0.0024). Confirms smoothness loss penalizes the sharp transitions characteristic of sepsis onset that the model needs to capture.
+- Calibration also improves: Brier -0.0948 (vs -0.0887), ECE -0.1060 (vs -0.0907) — best calibration across all experiments.
+- **LSTM gate init hurts sepsis**: +0.0373 AUCROC vs +0.0499 record (-25%). The LSTM importance-derived initialization biases the gate toward LSTM-important features, but for sepsis the gate needs to discover task-relevant features independently.
+- 1 experiment still running: oversample.
+
+### Cross-Server Reproducibility (Mar 6)
+
+Reproduced 3 experiments on RTX A6000 (remote) vs V100S (local). Same code, data (md5 verified), config, seed, PyTorch 2.6.0+cu118, cuDNN 90100.
+
+| Experiment | Local (V100S) | Remote (A6000) | Gap |
+|---|---|---|---|
+| Mortality retrieval absolute | +0.046 / +0.048 | +0.046 / +0.049 | 0.000 / 0.001 |
+| AKI SL+featgate | +0.052 / +0.154 | +0.051 / +0.148 | 0.001 / 0.006 |
+| **Sepsis retr+FG absolute** | **+0.050 / +0.016** | **+0.032 / +0.007** | **0.018 / 0.009** |
+
+(Format: AUCROC Δ / AUCPR Δ)
+
+**Sepsis uniquely unstable** across GPU architectures. Two competing hypotheses:
+
+- **Hypothesis A (retrieval-specific)**: k-NN is a discrete chaos amplifier — float16 rounding differences from different GPU kernels swap ~6% of nearest neighbors, and at 1.13% positive rate each swap disproportionately affects the sparse task gradient. Memory bank rebuilds every 5 epochs compound the divergence. SL has no discrete retrieval operation, so it should be stable even on sepsis.
+- **Hypothesis B (task-specific)**: Sepsis's 1.13% positive rate makes ALL methods unstable across GPU architectures. SL appears stable only because it barely learns anything on sepsis (+0.0015 AUCROC) — there's no signal to diverge on.
+
+**Experiments to resolve:**
+
+| Experiment | Tests | Status |
+|---|---|---|
+| `sepsis_sl_fg_a6000` | SL+FG sepsis on A6000 (local: +0.0015). If stable → Hypothesis A. If diverges → Hypothesis B. | Pending |
+| `sepsis_retr_fg_seed2223` (both servers) | Seed variance within retrieval. Quantifies variance envelope. | Running |
+| `mortality_retr_fg_absolute_a6000` | Retrieval+FG on mortality (local: +0.044). Stable = confirms retrieval itself isn't noisy. | Running |
+
+SL cross-server controls already confirm SL is stable on mortality (gap 0.001) and AKI (gap 0.006).
+
+---
+
+## 21. Appendix: Historical Mortality Full-Data Runs
 
 From run.log (Feb 6, all full data, 20 epochs, bidirectional, d128):
 

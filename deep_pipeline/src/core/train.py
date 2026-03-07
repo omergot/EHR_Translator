@@ -1023,28 +1023,22 @@ class LatentTranslatorTrainer:
 
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
+        self._training_config = _tc
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
+        self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
+        self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
 
-        # Feature gate for weighted reconstruction (optional)
-        self.feature_gate = None
-        if _tc.get("feature_gate", False):
-            from ..core.feature_gate import FeatureGate
-            num_features = len(schema_resolver.dynamic_features)
-            self.feature_gate = FeatureGate(num_features).to(device)
-            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
             logging.info("Latent label prediction enabled: lambda_label_pred=%.4f", self.lambda_label_pred)
+        if self.lambda_contrastive_align > 0:
+            logging.info("Contrastive alignment enabled: lambda=%.4f", self.lambda_contrastive_align)
+        if self.recon_positive_boost > 0:
+            logging.info("Positive-weighted reconstruction enabled: boost=%.1f", self.recon_positive_boost)
 
-        params = list(self.translator.parameters())
-        if self.feature_gate is not None:
-            params += list(self.feature_gate.parameters())
-        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
-        self.scaler = GradScaler(enabled=device.startswith("cuda"))
-
-        # Load and freeze baseline
+        # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
         if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             self.yaib_runtime._model = self.yaib_runtime._model.to(device)
@@ -1067,6 +1061,29 @@ class LatentTranslatorTrainer:
                     m.eval()
                     m.track_running_stats = False
             model.apply(_force_stateless)
+
+        # Feature gate for weighted reconstruction (optional)
+        self.feature_gate = None
+        if _tc.get("feature_gate", False):
+            from ..core.feature_gate import FeatureGate
+            num_features = len(schema_resolver.dynamic_features)
+            init_logits = None
+            if _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
+                from ..core.lstm_importance import extract_lstm_feature_importance
+                init_logits = extract_lstm_feature_importance(
+                    self.yaib_runtime._model,
+                    num_dynamic_features=num_features,
+                    dynamic_feature_offset=0,
+                )
+                logging.info("LSTM-informed gate initialization enabled")
+            self.feature_gate = FeatureGate(num_features, init_logits=init_logits).to(device)
+            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
+
+        params = list(self.translator.parameters())
+        if self.feature_gate is not None:
+            params += list(self.feature_gate.parameters())
+        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
+        self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
         # Snapshot frozen baseline parameters for post-training verification
         self._baseline_param_snapshot = {
@@ -1190,7 +1207,7 @@ class LatentTranslatorTrainer:
         """Joint training: task + alignment + reconstruction + range + target_task + label_pred."""
         self.translator.train()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
-                  "target_task": 0.0, "label_pred": 0.0}
+                  "target_task": 0.0, "label_pred": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         for batch in train_loader:
@@ -1238,8 +1255,16 @@ class LatentTranslatorTrainer:
                 tgt_diff = (tgt_out.float() - tgt_parts["X_val"].float()) ** 2
                 if self.feature_gate is not None:
                     gate = self.feature_gate()  # (F,)
-                    tgt_diff = tgt_diff * gate.view(1, 1, -1)  # more weight where gate is high
-                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+                    tgt_diff = tgt_diff * gate.view(1, 1, -1)
+                tgt_recon_per_ts = tgt_diff.sum(dim=-1)  # (B, T)
+                if self.recon_positive_boost > 0:
+                    tgt_labels = tgt_parts["y"].float()
+                    tgt_label_available = tgt_parts["M_label"].bool()
+                    pos_mask = tgt_label_available & (tgt_labels > 0.5)
+                    ts_weight = torch.ones_like(tgt_recon_per_ts)
+                    ts_weight[pos_mask] = 1.0 + self.recon_positive_boost
+                    tgt_recon_per_ts = tgt_recon_per_ts * ts_weight
+                l_recon = tgt_recon_per_ts[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
 
                 # Range loss on source output
                 upper = self.upper_bounds.view(1, 1, -1)
@@ -1286,6 +1311,29 @@ class LatentTranslatorTrainer:
                         l_tgt_lp = tgt_latent.new_tensor(0.0)
                     l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
 
+                # Cross-domain contrastive alignment (optional)
+                l_contrastive = src_latent.new_tensor(0.0)
+                if self.lambda_contrastive_align > 0:
+                    src_valid = ~parts["M_pad"].bool() & parts["M_label"].bool()
+                    tgt_valid = ~tgt_parts["M_pad"].bool() & tgt_parts["M_label"].bool()
+                    src_lats = src_latent[src_valid].float()
+                    src_labs = parts["y"][src_valid]
+                    tgt_lats = tgt_latent[tgt_valid].float()
+                    tgt_labs = tgt_parts["y"][tgt_valid]
+                    n_terms = 0
+                    src_pos = src_lats[src_labs > 0.5]
+                    src_neg = src_lats[src_labs < 0.5]
+                    tgt_pos = tgt_lats[tgt_labs > 0.5]
+                    tgt_neg = tgt_lats[tgt_labs < 0.5]
+                    if src_pos.shape[0] > 0 and tgt_pos.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_pos.mean(0), tgt_pos.mean(0))
+                        n_terms += 1
+                    if src_neg.shape[0] > 0 and tgt_neg.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_neg.mean(0), tgt_neg.mean(0))
+                        n_terms += 1
+                    if n_terms > 0:
+                        l_contrastive = l_contrastive / n_terms
+
                 l_total = (
                     l_task
                     + self.lambda_align * l_align
@@ -1293,6 +1341,7 @@ class LatentTranslatorTrainer:
                     + self.lambda_range * l_range
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
+                    + self.lambda_contrastive_align * l_contrastive
                 )
 
             self.optimizer.zero_grad()
@@ -1307,6 +1356,7 @@ class LatentTranslatorTrainer:
             totals["range"] += l_range.item()
             totals["target_task"] += l_target_task.item()
             totals["label_pred"] += l_label_pred.item()
+            totals["contrastive"] += l_contrastive.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -1316,7 +1366,7 @@ class LatentTranslatorTrainer:
         """Validation pass."""
         self.translator.eval()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
-                  "target_task": 0.0, "label_pred": 0.0}
+                  "target_task": 0.0, "label_pred": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         for batch in val_loader:
@@ -1404,6 +1454,29 @@ class LatentTranslatorTrainer:
                         l_tgt_lp = tgt_latent.new_tensor(0.0)
                     l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
 
+                # Cross-domain contrastive alignment (validation)
+                l_contrastive = src_latent.new_tensor(0.0)
+                if self.lambda_contrastive_align > 0:
+                    src_valid = ~parts["M_pad"].bool() & parts["M_label"].bool()
+                    tgt_valid = ~tgt_parts["M_pad"].bool() & tgt_parts["M_label"].bool()
+                    src_lats = src_latent[src_valid].float()
+                    src_labs = parts["y"][src_valid]
+                    tgt_lats = tgt_latent[tgt_valid].float()
+                    tgt_labs = tgt_parts["y"][tgt_valid]
+                    n_terms = 0
+                    src_pos = src_lats[src_labs > 0.5]
+                    src_neg = src_lats[src_labs < 0.5]
+                    tgt_pos = tgt_lats[tgt_labs > 0.5]
+                    tgt_neg = tgt_lats[tgt_labs < 0.5]
+                    if src_pos.shape[0] > 0 and tgt_pos.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_pos.mean(0), tgt_pos.mean(0))
+                        n_terms += 1
+                    if src_neg.shape[0] > 0 and tgt_neg.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_neg.mean(0), tgt_neg.mean(0))
+                        n_terms += 1
+                    if n_terms > 0:
+                        l_contrastive = l_contrastive / n_terms
+
                 l_total = (
                     l_task
                     + self.lambda_align * l_align
@@ -1411,6 +1484,7 @@ class LatentTranslatorTrainer:
                     + self.lambda_range * l_range
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
+                    + self.lambda_contrastive_align * l_contrastive
                 )
 
             totals["total"] += l_total.item()
@@ -1420,6 +1494,7 @@ class LatentTranslatorTrainer:
             totals["range"] += l_range.item()
             totals["target_task"] += l_target_task.item()
             totals["label_pred"] += l_label_pred.item()
+            totals["contrastive"] += l_contrastive.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -1563,28 +1638,24 @@ class RetrievalTranslatorTrainer:
 
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
+        self._training_config = _tc
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
+        self.importance_reg_type = _tc.get("importance_reg_type", "l1")
+        self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
+        self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
             logging.info("Latent label prediction enabled: lambda_label_pred=%.4f", self.lambda_label_pred)
+        if self.importance_reg_type != "l1":
+            logging.info("Importance reg type: %s", self.importance_reg_type)
+        if self.lambda_contrastive_align > 0:
+            logging.info("Contrastive alignment enabled: lambda=%.4f", self.lambda_contrastive_align)
+        if self.recon_positive_boost > 0:
+            logging.info("Positive-weighted reconstruction enabled: boost=%.1f", self.recon_positive_boost)
 
-        # Feature gate for weighted reconstruction (optional)
-        self.feature_gate = None
-        if _tc.get("feature_gate", False):
-            from ..core.feature_gate import FeatureGate
-            num_features = len(schema_resolver.dynamic_features)
-            self.feature_gate = FeatureGate(num_features).to(device)
-            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
-
-        params = list(self.translator.parameters())
-        if self.feature_gate is not None:
-            params += list(self.feature_gate.parameters())
-        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
-        self.scaler = GradScaler(enabled=device.startswith("cuda"))
-
-        # Load and freeze baseline
+        # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
         if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             self.yaib_runtime._model = self.yaib_runtime._model.to(device)
@@ -1605,6 +1676,29 @@ class RetrievalTranslatorTrainer:
                     m.eval()
                     m.track_running_stats = False
             model.apply(_force_stateless)
+
+        # Feature gate for weighted reconstruction (optional)
+        self.feature_gate = None
+        if _tc.get("feature_gate", False):
+            from ..core.feature_gate import FeatureGate
+            num_features = len(schema_resolver.dynamic_features)
+            init_logits = None
+            if _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
+                from ..core.lstm_importance import extract_lstm_feature_importance
+                init_logits = extract_lstm_feature_importance(
+                    self.yaib_runtime._model,
+                    num_dynamic_features=num_features,
+                    dynamic_feature_offset=0,
+                )
+                logging.info("LSTM-informed gate initialization enabled")
+            self.feature_gate = FeatureGate(num_features, init_logits=init_logits).to(device)
+            logging.info("Feature gate enabled for reconstruction weighting (%d features)", num_features)
+
+        params = list(self.translator.parameters())
+        if self.feature_gate is not None:
+            params += list(self.feature_gate.parameters())
+        self.optimizer = AdamW(params, lr=learning_rate, weight_decay=weight_decay)
+        self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
         # Snapshot frozen baseline parameters for post-training verification
         self._baseline_param_snapshot = {
@@ -1672,6 +1766,19 @@ class RetrievalTranslatorTrainer:
         x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
         return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
 
+    def _compute_importance_reg(self, importance_w: torch.Tensor) -> torch.Tensor:
+        """Compute importance regularization on importance weights."""
+        if self.importance_reg_type == "entropy":
+            # Entropy reg: encourages decisive 0/1 without collapse
+            per_dim_ent = -(
+                importance_w * (importance_w + 1e-8).log()
+                + (1 - importance_w) * (1 - importance_w + 1e-8).log()
+            )
+            return per_dim_ent.mean()
+        else:
+            # Default L1 for backward compat
+            return importance_w.abs().mean()
+
     def _build_memory_bank(self) -> None:
         """Build/rebuild the MIMIC memory bank using the current encoder."""
         from ..core.retrieval_translator import build_memory_bank
@@ -1737,7 +1844,7 @@ class RetrievalTranslatorTrainer:
         from ..core.retrieval_translator import query_memory_bank
         self.translator.train()
         totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
-                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0}
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         for batch in train_loader:
@@ -1795,7 +1902,17 @@ class RetrievalTranslatorTrainer:
                 if self.feature_gate is not None:
                     gate = self.feature_gate()  # (F,)
                     tgt_diff = tgt_diff * gate.view(1, 1, -1)
-                l_recon = tgt_diff.sum(dim=-1)[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+                # Per-feature recon → per-timestep scalar
+                tgt_recon_per_ts = tgt_diff.sum(dim=-1)  # (B, T)
+                # Positive-weighted reconstruction: boost recon loss at positive timesteps
+                if self.recon_positive_boost > 0:
+                    tgt_labels = tgt_parts["y"].float()
+                    tgt_label_available = tgt_parts["M_label"].bool()
+                    pos_mask = tgt_label_available & (tgt_labels > 0.5)
+                    ts_weight = torch.ones_like(tgt_recon_per_ts)
+                    ts_weight[pos_mask] = 1.0 + self.recon_positive_boost
+                    tgt_recon_per_ts = tgt_recon_per_ts * ts_weight
+                l_recon = tgt_recon_per_ts[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
 
                 # Range loss on source output
                 src_mask = ~parts["M_pad"].bool()
@@ -1814,8 +1931,8 @@ class RetrievalTranslatorTrainer:
                 else:
                     l_smooth = x_out.new_tensor(0.0)
 
-                # Importance regularization: L1 on importance weights for sparsity
-                l_importance_reg = importance_w.abs().mean()
+                # Importance regularization
+                l_importance_reg = self._compute_importance_reg(importance_w)
 
                 # Target task loss (optional)
                 l_target_task = tgt_out.new_tensor(0.0)
@@ -1829,6 +1946,29 @@ class RetrievalTranslatorTrainer:
                         tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
                     ).float()
 
+                # Cross-domain contrastive alignment (optional)
+                l_contrastive = src_latent.new_tensor(0.0)
+                if self.lambda_contrastive_align > 0:
+                    src_valid = ~parts["M_pad"].bool() & parts["M_label"].bool()
+                    tgt_valid = ~tgt_parts["M_pad"].bool() & tgt_parts["M_label"].bool()
+                    src_lats = src_latent[src_valid].float()
+                    src_labs = parts["y"][src_valid]
+                    tgt_lats = tgt_latent[tgt_valid].float()
+                    tgt_labs = tgt_parts["y"][tgt_valid]
+                    n_terms = 0
+                    src_pos = src_lats[src_labs > 0.5]
+                    src_neg = src_lats[src_labs < 0.5]
+                    tgt_pos = tgt_lats[tgt_labs > 0.5]
+                    tgt_neg = tgt_lats[tgt_labs < 0.5]
+                    if src_pos.shape[0] > 0 and tgt_pos.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_pos.mean(0), tgt_pos.mean(0))
+                        n_terms += 1
+                    if src_neg.shape[0] > 0 and tgt_neg.shape[0] > 0:
+                        l_contrastive = l_contrastive + F.mse_loss(src_neg.mean(0), tgt_neg.mean(0))
+                        n_terms += 1
+                    if n_terms > 0:
+                        l_contrastive = l_contrastive / n_terms
+
                 l_total = (
                     l_task
                     + self.lambda_recon * l_recon
@@ -1836,6 +1976,7 @@ class RetrievalTranslatorTrainer:
                     + self.lambda_smooth * l_smooth
                     + self.lambda_importance_reg * l_importance_reg
                     + self.lambda_target_task * l_target_task
+                    + self.lambda_contrastive_align * l_contrastive
                 )
 
             self.optimizer.zero_grad()
@@ -1850,6 +1991,7 @@ class RetrievalTranslatorTrainer:
             totals["smooth"] += l_smooth.item()
             totals["importance_reg"] += l_importance_reg.item()
             totals["target_task"] += l_target_task.item()
+            totals["contrastive"] += l_contrastive.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -1860,7 +2002,7 @@ class RetrievalTranslatorTrainer:
         from ..core.retrieval_translator import query_memory_bank
         self.translator.eval()
         totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
-                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0}
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         importance_w = self.translator.get_importance_weights()
@@ -1932,7 +2074,7 @@ class RetrievalTranslatorTrainer:
                 else:
                     l_smooth = x_out.new_tensor(0.0)
 
-                l_importance_reg = importance_w.abs().mean()
+                l_importance_reg = self._compute_importance_reg(importance_w)
 
                 l_target_task = tgt_out.new_tensor(0.0)
                 if self.lambda_target_task > 0:

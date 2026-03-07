@@ -57,8 +57,8 @@ def test_identity_translator_metrics_unchanged():
         device="cpu",
     )
     
-    original_metrics = evaluator._evaluate_without_translator(test_loader)
-    translated_metrics = evaluator.translate_and_evaluate(test_loader, output_parquet_path=None)
+    original_metrics, _, _ = evaluator._evaluate_without_translator(test_loader)
+    translated_metrics, _, _ = evaluator.translate_and_evaluate(test_loader, output_parquet_path=None)
     
     tolerance = 1e-5
     

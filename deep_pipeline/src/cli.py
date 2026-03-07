@@ -150,6 +150,8 @@ def _get_training_config(config: dict) -> dict:
         "recon_positive_boost": training.get("recon_positive_boost", 0.0),
         # LSTM-informed feature gate initialization
         "lstm_informed_gate": training.get("lstm_informed_gate", False),
+        # Separate training seed (weight init, dropout, shuffle) from data split seed
+        "training_seed": training.get("training_seed", None),
     }
 
 
@@ -522,12 +524,15 @@ def train_translator(args):
         logging.info("  translator.%s: %s", k, v)
     logging.info("==============================")
 
-    seed = training_cfg["seed"]
+    # training_seed controls weight init, dropout, shuffle ordering.
+    # seed (YAIB split seed) is used separately for _build_runtime_from_config.
+    training_seed = training_cfg.get("training_seed") or training_cfg["seed"]
+    logging.info("  data_split_seed: %s, training_seed: %s", training_cfg["seed"], training_seed)
     import random
-    random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
+    random.seed(training_seed)
+    torch.manual_seed(training_seed)
+    torch.cuda.manual_seed_all(training_seed)
+    np.random.seed(training_seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
@@ -1675,7 +1680,7 @@ def translate_and_eval(args):
                 original_b = translator.b
                 translator.a = np.ones_like(original_a)
                 translator.b = np.zeros_like(original_b)
-                original_metrics = evaluator.translate_and_evaluate(test_loader, None)
+                original_metrics, _, _ = evaluator.translate_and_evaluate(test_loader, None)
                 translator.a = original_a
                 translator.b = original_b
             else:
@@ -1690,9 +1695,9 @@ def translate_and_eval(args):
                     subset_seed=training_cfg["seed"],
                 )
                 evaluator.yaib_runtime = norm_runtime
-                original_metrics = evaluator._evaluate_without_translator(norm_test_loader)
+                original_metrics, _, _ = evaluator._evaluate_without_translator(norm_test_loader)
                 evaluator.yaib_runtime = yaib_runtime
-            translated_metrics = evaluator.translate_and_evaluate(test_loader, output_path)
+            translated_metrics, _, _ = evaluator.translate_and_evaluate(test_loader, output_path)
             results = {"original": original_metrics, "translated": translated_metrics}
         else:
             results = evaluator.evaluate_original_vs_translated(test_loader, output_path)

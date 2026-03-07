@@ -15,6 +15,16 @@ from ..core.schema import SchemaResolver
 from ..core.io_parquet import reconstruct_parquet_from_batches, write_translated_parquet
 
 
+def _save_predictions(probs: np.ndarray, targets: np.ndarray, output_path: Path, suffix: str = "") -> None:
+    """Save predictions to .predictions.npz alongside the output parquet."""
+    stem = output_path.stem
+    fname = f"{stem}{suffix}.predictions.npz"
+    npz_path = output_path.with_name(fname)
+    npz_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(npz_path, probs=probs, targets=targets)
+    logging.info("Saved predictions (%d samples) to %s", len(probs), npz_path)
+
+
 def _compute_calibration_metrics(targets: np.ndarray, probs: np.ndarray, n_bins: int = 10) -> Dict[str, float]:
     """Compute Brier score and Expected Calibration Error (ECE)."""
     from sklearn.metrics import brier_score_loss
@@ -53,9 +63,9 @@ class TranslatorEvaluator:
         self,
         test_loader: DataLoader,
         output_parquet_path: Optional[Path] = None,
-    ) -> Dict[str, float]:
+    ) -> Tuple[Dict[str, float], Optional[np.ndarray], Optional[np.ndarray]]:
         self.translator.eval()
-        
+
         all_probs = []
         all_targets = []
         all_batches = []
@@ -63,13 +73,13 @@ class TranslatorEvaluator:
         num_batches = 0
         translated_batches = []
         stay_id_batches = []
-        
+
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
                 translated_data = self.translator(batch)
                 baseline_outputs = self.yaib_runtime.forward((translated_data, batch[1], batch[2]))
-                
+
                 mask = batch[2].to(baseline_outputs.device).bool()
                 prediction = torch.masked_select(
                     baseline_outputs, mask.unsqueeze(-1)
@@ -91,20 +101,21 @@ class TranslatorEvaluator:
                 translated_batches.append(translated_data)
                 stay_id_batches.append(None)
 
+        probs_np, targets_np = None, None
         if not all_probs:
             avg_metrics = {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
         else:
-            probs = torch.cat(all_probs).numpy()
-            targets = torch.cat(all_targets).numpy()
+            probs_np = torch.cat(all_probs).numpy()
+            targets_np = torch.cat(all_targets).numpy()
 
             from sklearn.metrics import roc_auc_score, average_precision_score
 
             try:
-                auroc = roc_auc_score(targets, probs)
+                auroc = roc_auc_score(targets_np, probs_np)
             except ValueError:
                 auroc = 0.0
             try:
-                auprc = average_precision_score(targets, probs)
+                auprc = average_precision_score(targets_np, probs_np)
             except ValueError:
                 auprc = 0.0
 
@@ -114,7 +125,7 @@ class TranslatorEvaluator:
                 "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
             }
             try:
-                cal = _compute_calibration_metrics(targets, probs)
+                cal = _compute_calibration_metrics(targets_np, probs_np)
                 avg_metrics.update(cal)
             except Exception as e:
                 logging.warning("Calibration metrics failed: %s", e)
@@ -126,8 +137,8 @@ class TranslatorEvaluator:
                 stay_id_batches,
                 output_parquet_path,
             )
-        
-        return avg_metrics
+
+        return avg_metrics, probs_np, targets_np
     
     def export_translated_parquet(
         self,
@@ -166,22 +177,29 @@ class TranslatorEvaluator:
         output_parquet_path: Path,
     ) -> Dict[str, Dict[str, float]]:
         logging.info("Evaluating original test data...")
-        original_metrics = self._evaluate_without_translator(test_loader)
-        
+        original_metrics, orig_probs, orig_targets = self._evaluate_without_translator(test_loader)
+
         logging.info("Evaluating translated test data...")
-        translated_metrics = self.translate_and_evaluate(test_loader, output_parquet_path)
-        
+        translated_metrics, trans_probs, trans_targets = self.translate_and_evaluate(test_loader, output_parquet_path)
+
+        if output_parquet_path:
+            out_path = Path(output_parquet_path)
+            if trans_probs is not None:
+                _save_predictions(trans_probs, trans_targets, out_path)
+            if orig_probs is not None:
+                _save_predictions(orig_probs, orig_targets, out_path, suffix=".original")
+
         return {
             "original": original_metrics,
             "translated": translated_metrics,
         }
     
-    def _evaluate_without_translator(self, test_loader: DataLoader) -> Dict[str, float]:
+    def _evaluate_without_translator(self, test_loader: DataLoader) -> Tuple[Dict[str, float], Optional[np.ndarray], Optional[np.ndarray]]:
         all_probs = []
         all_targets = []
         total_loss = 0.0
         num_batches = 0
-        
+
         with torch.no_grad():
             for batch in test_loader:
                 batch = tuple(b.to(self.device) for b in batch)
@@ -203,7 +221,7 @@ class TranslatorEvaluator:
                 num_batches += 1
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
@@ -229,7 +247,7 @@ class TranslatorEvaluator:
             metrics.update(cal)
         except Exception as e:
             logging.warning("Calibration metrics failed: %s", e)
-        return metrics
+        return metrics, probs, targets
 
 
 class TransformerTranslatorEvaluator:
@@ -304,7 +322,7 @@ class TransformerTranslatorEvaluator:
                 output_parquet_path,
             )
 
-    def evaluate_original(self, test_loader: DataLoader) -> Dict[str, float]:
+    def evaluate_original(self, test_loader: DataLoader) -> Tuple[Dict[str, float], Optional[np.ndarray], Optional[np.ndarray]]:
         all_probs = []
         all_targets = []
         total_loss = 0.0
@@ -330,7 +348,7 @@ class TransformerTranslatorEvaluator:
                 num_batches += 1
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
@@ -356,7 +374,7 @@ class TransformerTranslatorEvaluator:
             metrics.update(cal)
         except Exception as e:
             logging.warning("Calibration metrics failed: %s", e)
-        return metrics
+        return metrics, probs, targets
 
     def translate_and_evaluate(
         self,
@@ -365,7 +383,7 @@ class TransformerTranslatorEvaluator:
         sample_output_dir: Optional[Path] = None,
         sample_size: int = 1000,
         export_full_sequence: bool = True,
-    ) -> Dict[str, float]:
+    ) -> Tuple[Dict[str, float], Optional[np.ndarray], Optional[np.ndarray]]:
         self.translator.eval()
         all_probs = []
         all_targets = []
@@ -507,7 +525,7 @@ class TransformerTranslatorEvaluator:
                 logging.warning("[delta-analysis] Failed to compute delta stats: %s", e)
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
@@ -533,7 +551,7 @@ class TransformerTranslatorEvaluator:
             metrics.update(cal)
         except Exception as e:
             logging.warning("Calibration metrics failed: %s", e)
-        return metrics
+        return metrics, probs, targets
 
     def evaluate_original_vs_translated(
         self,
@@ -544,15 +562,23 @@ class TransformerTranslatorEvaluator:
         export_full_sequence: bool = True,
     ) -> Dict[str, Dict[str, float]]:
         logging.info("Evaluating original test data...")
-        original_metrics = self.evaluate_original(test_loader)
+        original_metrics, orig_probs, orig_targets = self.evaluate_original(test_loader)
         logging.info("Evaluating translated test data...")
-        translated_metrics = self.translate_and_evaluate(
+        translated_metrics, trans_probs, trans_targets = self.translate_and_evaluate(
             test_loader,
             output_parquet_path,
             sample_output_dir=sample_output_dir,
             sample_size=sample_size,
             export_full_sequence=export_full_sequence,
         )
+
+        if output_parquet_path:
+            out_path = Path(output_parquet_path)
+            if trans_probs is not None:
+                _save_predictions(trans_probs, trans_targets, out_path)
+            if orig_probs is not None:
+                _save_predictions(orig_probs, orig_targets, out_path, suffix=".original")
+
         return {"original": original_metrics, "translated": translated_metrics}
 
     def _export_translated_parquet(

@@ -998,26 +998,32 @@ def scheduler_loop(dry_run: bool = False):
             repo_path = REPO
             config_override = None
             remote_cwd = None
+            needs_local_worktree = branch and branch != _get_current_branch()
+            # Remote servers ALWAYS need a worktree when branch is specified,
+            # because _get_current_branch() reflects the LOCAL checkout —
+            # the remote default path may have different code.
+            needs_remote_worktree = branch and not server.is_local
 
-            if branch and branch != _get_current_branch():
+            if needs_local_worktree:
                 repo_path = _ensure_local_worktree(branch)
                 if repo_path is None:
                     exp["status"] = "failed"
                     exp["error"] = f"Local worktree failed for branch '{branch}'"
                     continue
 
+            if needs_local_worktree or needs_remote_worktree:
                 config_override = _prepare_worktree_config(exp, repo_path)
                 if config_override is None:
                     exp["status"] = "failed"
                     exp["error"] = f"Config preparation failed for branch '{branch}'"
                     continue
 
-                if not server.is_local:
-                    remote_cwd = _ensure_remote_worktree(branch, server)
-                    if remote_cwd is None:
-                        exp["status"] = "failed"
-                        exp["error"] = f"Remote worktree failed for branch '{branch}' on {srv_name}"
-                        continue
+            if needs_remote_worktree:
+                remote_cwd = _ensure_remote_worktree(branch, server)
+                if remote_cwd is None:
+                    exp["status"] = "failed"
+                    exp["error"] = f"Remote worktree failed for branch '{branch}' on {srv_name}"
+                    continue
 
             # Verify config exists
             check_path = config_override or str(repo_path / exp["config"])

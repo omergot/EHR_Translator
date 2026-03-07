@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """GPU Experiment Scheduler — reads experiments/queue.yaml, manages GPU assignment.
 
-Supports multiple servers (local + remote via SSH).
+Supports multiple servers (local + remote via SSH) and branch-aware git worktrees.
 
 Usage:
     python scripts/gpu_scheduler.py              # Start scheduler daemon
     python scripts/gpu_scheduler.py --status     # Show queue status
     python scripts/gpu_scheduler.py --dry-run    # Show what would launch
-    python scripts/gpu_scheduler.py --add --name NAME --config PATH [--notes TEXT] [--server SERVER]
+    python scripts/gpu_scheduler.py --add --name NAME --config PATH [--notes TEXT] [--server SERVER] [--branch BRANCH]
+    python scripts/gpu_scheduler.py --cleanup [--branch BRANCH]  # Remove worktrees
 
+Branch support: experiments with a 'branch' field run from git worktrees,
+providing full code isolation. Checkpoints/logs are centralized in the main tree.
 Designed to run in a tmux session. Graceful shutdown with Ctrl+C.
 """
 
@@ -36,6 +39,11 @@ QUEUE_PATH = REPO / "experiments" / "queue.yaml"
 LOG_DIR = REPO / "experiments" / "logs"
 RESULTS_DIR = REPO / "experiments" / "results"
 SCHEDULER_LOG = LOG_DIR / "scheduler.log"
+
+# Git worktree paths for branch-aware experiment isolation
+GIT_ROOT = REPO.parent                          # EHR_Translator/
+WORKTREE_BASE = GIT_ROOT.parent / "EHR_Translator_worktrees"
+WORKTREE_CONFIGS_DIR = REPO / "experiments" / ".worktree_configs"
 
 # Track running subprocesses for cleanup (local experiments only)
 _running_procs: dict[str, subprocess.Popen] = {}
@@ -389,11 +397,207 @@ def _remap_config(config_path: str, server: ServerConfig) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Git worktree management
+# ---------------------------------------------------------------------------
+
+def _sanitize_branch_name(branch: str) -> str:
+    """Sanitize branch name for filesystem use: exp/sepsis-v2 → exp__sepsis-v2."""
+    return branch.replace("/", "__").strip(".")
+
+
+def _get_current_branch() -> str:
+    """Get the current branch of the main repository."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(GIT_ROOT), "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _ensure_local_worktree(branch: str) -> Path | None:
+    """Ensure a local git worktree exists for the given branch.
+    Returns deep_pipeline path, or None on failure."""
+    if branch == _get_current_branch():
+        return REPO
+
+    sanitized = _sanitize_branch_name(branch)
+    wt_path = WORKTREE_BASE / sanitized
+    dp_path = wt_path / "deep_pipeline"
+
+    if (wt_path / ".git").exists():
+        logging.info(f"Updating local worktree for '{branch}'")
+        result = subprocess.run(
+            ["git", "-C", str(wt_path), "reset", "--hard", branch],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            logging.error(f"Failed to update local worktree for '{branch}': {result.stderr}")
+            return None
+    else:
+        logging.info(f"Creating local worktree for '{branch}' at {wt_path}")
+        WORKTREE_BASE.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["git", "-C", str(GIT_ROOT), "worktree", "add", str(wt_path), branch],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            logging.error(f"Failed to create local worktree for '{branch}': {result.stderr}")
+            return None
+
+    if not dp_path.exists():
+        logging.error(f"Worktree created but deep_pipeline/ not found at {dp_path}")
+        return None
+
+    return dp_path
+
+
+def _ensure_remote_worktree(branch: str, server: ServerConfig) -> str | None:
+    """Ensure a remote git worktree exists for the given branch.
+    Returns remote deep_pipeline path, or None on failure."""
+    if branch == _get_current_branch():
+        return server.repo_path
+
+    sanitized = _sanitize_branch_name(branch)
+    remote_git_root = str(Path(server.repo_path).parent)
+    remote_wt_base = str(Path(remote_git_root).parent / "EHR_Translator_worktrees")
+    remote_wt = f"{remote_wt_base}/{sanitized}"
+    remote_dp = f"{remote_wt}/deep_pipeline"
+
+    logging.info(f"Fetching origin on {server.name} for branch '{branch}'")
+    rc, _ = _ssh_run(server.host, f"git -C {remote_git_root} fetch origin", timeout=60)
+    if rc != 0:
+        logging.error(f"Failed to fetch origin on {server.name}")
+        return None
+
+    rc, out = _ssh_run(server.host, f"test -f {remote_wt}/.git && echo EXISTS")
+    if rc == 0 and "EXISTS" in out:
+        logging.info(f"Updating remote worktree for '{branch}' on {server.name}")
+        rc, out = _ssh_run(server.host, f"git -C {remote_wt} reset --hard origin/{branch}", timeout=30)
+        if rc != 0:
+            logging.error(f"Failed to update remote worktree on {server.name}: {out}")
+            return None
+    else:
+        logging.info(f"Creating remote worktree for '{branch}' on {server.name}")
+        rc, out = _ssh_run(
+            server.host,
+            f"mkdir -p {remote_wt_base} && git -C {remote_git_root} worktree add {remote_wt} origin/{branch}",
+            timeout=60,
+        )
+        if rc != 0:
+            logging.error(f"Failed to create remote worktree on {server.name}: {out}")
+            return None
+
+    rc, _ = _ssh_run(server.host, f"test -d {remote_dp}")
+    if rc != 0:
+        logging.error(f"Remote worktree missing deep_pipeline/ at {remote_dp}")
+        return None
+
+    return remote_dp
+
+
+def _prepare_worktree_config(exp: dict, worktree_dp: Path) -> str | None:
+    """Read config from worktree, override run_dir to main tree, write to .worktree_configs/.
+    Returns absolute path to prepared config, or None on failure."""
+    config_path = worktree_dp / exp["config"]
+    if not config_path.exists():
+        logging.error(f"Config not found in worktree: {config_path}")
+        return None
+
+    try:
+        with open(config_path) as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logging.error(f"Failed to read config from worktree: {e}")
+        return None
+
+    output = config.setdefault("output", {})
+    rel_run_dir = output.get("run_dir", f"runs/{exp['name']}")
+    output["run_dir"] = str(REPO / rel_run_dir)
+    if "log_file" in output:
+        output["log_file"] = str(REPO / output["log_file"])
+
+    WORKTREE_CONFIGS_DIR.mkdir(parents=True, exist_ok=True)
+    prepared_path = WORKTREE_CONFIGS_DIR / f"{exp['name']}.json"
+    with open(prepared_path, "w") as f:
+        json.dump(config, f, indent=2)
+
+    return str(prepared_path)
+
+
+def cleanup_worktrees(branch: str = "", servers: dict[str, ServerConfig] | None = None):
+    """Remove worktrees. If branch is specified, only remove that branch's worktree."""
+    if not WORKTREE_BASE.exists():
+        print("No local worktrees found.")
+        return
+
+    if branch:
+        sanitized = _sanitize_branch_name(branch)
+        targets = [WORKTREE_BASE / sanitized]
+        targets = [t for t in targets if t.exists()]
+        if not targets:
+            print(f"No worktree found for branch '{branch}'")
+    else:
+        targets = [p for p in WORKTREE_BASE.iterdir() if p.is_dir()]
+
+    for wt in targets:
+        logging.info(f"Removing local worktree: {wt}")
+        result = subprocess.run(
+            ["git", "-C", str(GIT_ROOT), "worktree", "remove", "--force", str(wt)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            logging.warning(f"Failed to remove worktree {wt}: {result.stderr}")
+        else:
+            print(f"Removed local worktree: {wt}")
+
+    if not servers:
+        return
+    for srv_name, server in servers.items():
+        if server.is_local:
+            continue
+        remote_git_root = str(Path(server.repo_path).parent)
+        remote_wt_base = str(Path(remote_git_root).parent / "EHR_Translator_worktrees")
+
+        if branch:
+            sanitized = _sanitize_branch_name(branch)
+            remote_wt = f"{remote_wt_base}/{sanitized}"
+            rc, _ = _ssh_run(server.host, f"test -d {remote_wt}")
+            if rc == 0:
+                logging.info(f"Removing remote worktree on {server.name}: {remote_wt}")
+                rc, out = _ssh_run(
+                    server.host,
+                    f"git -C {remote_git_root} worktree remove --force {remote_wt}",
+                    timeout=30,
+                )
+                if rc == 0:
+                    print(f"Removed remote worktree on {srv_name}: {remote_wt}")
+                else:
+                    logging.warning(f"Failed to remove remote worktree on {srv_name}: {out}")
+        else:
+            rc, listing = _ssh_run(server.host, f"ls -d {remote_wt_base}/*/ 2>/dev/null || true")
+            if rc == 0 and listing.strip():
+                for remote_wt in listing.strip().split("\n"):
+                    remote_wt = remote_wt.rstrip("/")
+                    logging.info(f"Removing remote worktree on {server.name}: {remote_wt}")
+                    _ssh_run(
+                        server.host,
+                        f"git -C {remote_git_root} worktree remove --force {remote_wt}",
+                        timeout=30,
+                    )
+
+
+# ---------------------------------------------------------------------------
 # Experiment launch & monitoring
 # ---------------------------------------------------------------------------
 
-def launch_experiment_local(exp: dict, gpu: int) -> subprocess.Popen:
+def launch_experiment_local(exp: dict, gpu: int,
+                            repo_path: Path | None = None,
+                            config_override: str | None = None) -> subprocess.Popen:
     """Launch an experiment on a local GPU."""
+    repo = repo_path or REPO
     task = infer_task(exp["config"])
     log_name = f"{exp['name']}_{task}.log"
     log_path = LOG_DIR / log_name
@@ -405,25 +609,27 @@ def launch_experiment_local(exp: dict, gpu: int) -> subprocess.Popen:
     env["CUDA_VISIBLE_DEVICES"] = str(gpu)
     env["EHR_LOG_FILE"] = str(log_path)
 
-    config_path = str(REPO / exp["config"])
-    output_path = str(REPO / exp["output"])
+    config_path = config_override or str(repo / exp["config"])
+    output_path = str(REPO / exp["output"])  # Always main tree
 
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        sys.executable, str(REPO / "run.py"), "train_and_eval",
+        sys.executable, str(repo / "run.py"), "train_and_eval",
         "--config", config_path,
         "--output_parquet", output_path,
     ]
 
     logging.info(f"Launching '{exp['name']}' on local GPU {gpu}: {' '.join(cmd)}")
     logging.info(f"  Log: {log_path}")
+    if repo_path and repo_path != REPO:
+        logging.info(f"  Worktree: {repo}")
 
     log_fh = open(log_path, "w")
     proc = subprocess.Popen(
         cmd, env=env, stdout=log_fh, stderr=subprocess.STDOUT,
-        cwd=str(REPO),
+        cwd=str(repo),
     )
 
     exp["status"] = "running"
@@ -450,20 +656,23 @@ def _write_remote_file(server: ServerConfig, remote_path: str, content: str) -> 
         return False
 
 
-def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig) -> bool:
+def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig,
+                             config_source: str | None = None,
+                             remote_cwd: str | None = None) -> bool:
     """Launch an experiment on a remote server via SSH. Returns True on success."""
     task = infer_task(exp["config"])
-    config_path = str(REPO / exp["config"])
+    config_path = config_source or str(REPO / exp["config"])
+    remote_code_dir = remote_cwd or server.repo_path
+    remote_main = server.repo_path  # Always centralized for outputs
 
     # Remap config paths for remote
     remapped_json = _remap_config(config_path, server)
 
-    # Remote paths
-    remote_repo = server.repo_path
-    remote_config_dir = f"{remote_repo}/experiments/.remote_configs"
+    # Remote paths — always centralized in main repo
+    remote_config_dir = f"{remote_main}/experiments/.remote_configs"
     remote_config_path = f"{remote_config_dir}/{exp['name']}.json"
-    remote_output = f"{remote_repo}/{exp['output']}"
-    remote_log = f"{remote_repo}/experiments/logs/{exp['name']}_{task}.log"
+    remote_output = f"{remote_main}/{exp['output']}"
+    remote_log = f"{remote_main}/experiments/logs/{exp['name']}_{task}.log"
 
     # Write remapped config to remote via stdin pipe (avoids heredoc quoting issues)
     if not _write_remote_file(server, remote_config_path, remapped_json):
@@ -479,11 +688,11 @@ def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig) -> bool:
     # Conda-activated Python processes keep SSH FDs open, so we can't use
     # subprocess.run (it would block). Instead, fire-and-forget with Popen
     # and read the PID from a file written by the remote shell.
-    pid_file = f"{remote_repo}/experiments/.remote_configs/{exp['name']}.pid"
+    pid_file = f"{remote_main}/experiments/.remote_configs/{exp['name']}.pid"
     conda_activate = f"source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate {server.conda_env}"
     launch_cmd = (
         f"{conda_activate} && "
-        f"cd {remote_repo} && "
+        f"cd {remote_code_dir} && "
         f"CUDA_VISIBLE_DEVICES={gpu} EHR_LOG_FILE={remote_log} "
         f"nohup python run.py train_and_eval "
         f"--config {remote_config_path} "
@@ -527,6 +736,8 @@ def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig) -> bool:
 
     logging.info(f"Launched '{exp['name']}' on {server.name} GPU {gpu} (PID {pid})")
     logging.info(f"  Remote log: {remote_log}")
+    if remote_cwd and remote_cwd != server.repo_path:
+        logging.info(f"  Remote worktree: {remote_code_dir}")
 
     exp["status"] = "running"
     exp["server"] = server.name
@@ -538,13 +749,18 @@ def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig) -> bool:
     return True
 
 
-def launch_experiment(exp: dict, gpu: int, server: ServerConfig) -> bool:
+def launch_experiment(exp: dict, gpu: int, server: ServerConfig,
+                      repo_path: Path | None = None,
+                      config_override: str | None = None,
+                      remote_cwd: str | None = None) -> bool:
     """Launch an experiment on the given server + GPU. Returns True on success."""
     if server.is_local:
-        launch_experiment_local(exp, gpu)
+        launch_experiment_local(exp, gpu, repo_path=repo_path, config_override=config_override)
         return True
     else:
-        return launch_experiment_remote(exp, gpu, server)
+        return launch_experiment_remote(exp, gpu, server,
+                                        config_source=config_override,
+                                        remote_cwd=remote_cwd)
 
 
 def collect_results(exp: dict, servers: dict[str, ServerConfig]):
@@ -777,17 +993,44 @@ def scheduler_loop(dry_run: bool = False):
             srv_name, gpu = result
             server = servers[srv_name]
 
-            # Verify config exists (local check)
-            config_path = REPO / exp["config"]
-            if not config_path.exists():
+            # Resolve branch worktree
+            branch = exp.get("branch")
+            repo_path = REPO
+            config_override = None
+            remote_cwd = None
+
+            if branch and branch != _get_current_branch():
+                repo_path = _ensure_local_worktree(branch)
+                if repo_path is None:
+                    exp["status"] = "failed"
+                    exp["error"] = f"Local worktree failed for branch '{branch}'"
+                    continue
+
+                config_override = _prepare_worktree_config(exp, repo_path)
+                if config_override is None:
+                    exp["status"] = "failed"
+                    exp["error"] = f"Config preparation failed for branch '{branch}'"
+                    continue
+
+                if not server.is_local:
+                    remote_cwd = _ensure_remote_worktree(branch, server)
+                    if remote_cwd is None:
+                        exp["status"] = "failed"
+                        exp["error"] = f"Remote worktree failed for branch '{branch}' on {srv_name}"
+                        continue
+
+            # Verify config exists
+            check_path = config_override or str(repo_path / exp["config"])
+            if not Path(check_path).exists():
                 logging.error(
-                    f"Config not found for '{exp['name']}': {config_path}. Skipping."
+                    f"Config not found for '{exp['name']}': {check_path}. Skipping."
                 )
                 exp["status"] = "failed"
-                exp["error"] = f"Config not found: {exp['config']}"
+                exp["error"] = f"Config not found: {check_path}"
                 continue
 
-            if launch_experiment(exp, gpu, server):
+            if launch_experiment(exp, gpu, server, repo_path=repo_path,
+                                 config_override=config_override, remote_cwd=remote_cwd):
                 launched += 1
             pending.remove(exp)
 
@@ -906,19 +1149,23 @@ def show_status():
                 gpu = exp.get("gpu", "?")
                 pid = exp.get("pid", "?")
                 started = exp.get("started", "?")
+                branch = exp.get("branch", "")
+                branch_str = f"  [{branch}]" if branch else ""
                 srv_name = exp.get("server", "local")
                 server = servers.get(srv_name)
                 if server and not server.is_local:
                     alive = "alive" if pid_is_alive_remote(server, pid) else "DEAD"
                 else:
                     alive = "alive" if exp.get("pid") and pid_is_alive(exp["pid"]) else "DEAD"
-                print(f"    {name:<35} {srv_name} GPU {gpu}  PID {pid} ({alive})  started {started}")
+                print(f"    {name:<35} {srv_name} GPU {gpu}  PID {pid} ({alive}){branch_str}  started {started}")
 
             elif status == "pending":
                 notes = exp.get("notes", "")
+                branch = exp.get("branch", "")
+                branch_str = f"[{branch}] " if branch else ""
                 srv_pref = exp.get("server", "any")
                 srv_str = f"[{srv_pref}] " if srv_pref != "any" else ""
-                print(f"    {name:<35} {srv_str}{notes}")
+                print(f"    {name:<35} {srv_str}{branch_str}{notes}")
 
             elif status == "done":
                 finished = exp.get("finished", "?")
@@ -941,7 +1188,8 @@ def show_status():
 # Add experiment
 # ---------------------------------------------------------------------------
 
-def add_experiment(name: str, config: str, notes: str = "", server: str = ""):
+def add_experiment(name: str, config: str, notes: str = "", server: str = "",
+                   branch: str = ""):
     """Add a new pending experiment to the queue."""
     queue = load_queue()
     experiments = queue.get("experiments", [])
@@ -952,8 +1200,17 @@ def add_experiment(name: str, config: str, notes: str = "", server: str = ""):
         logging.error(f"Experiment '{name}' already exists in queue")
         sys.exit(1)
 
-    # Verify config exists
-    config_abs = REPO / config
+    # Default branch to current
+    if not branch:
+        branch = _get_current_branch()
+
+    # Verify config exists (check in worktree if different branch)
+    current = _get_current_branch()
+    if branch and branch != current:
+        wt_dp = _ensure_local_worktree(branch)
+        config_abs = wt_dp / config if wt_dp else REPO / config
+    else:
+        config_abs = REPO / config
     if not config_abs.exists():
         logging.warning(f"Config file not found: {config_abs}")
 
@@ -966,6 +1223,8 @@ def add_experiment(name: str, config: str, notes: str = "", server: str = ""):
         "output": output,
         "status": "pending",
     }
+    if branch:
+        entry["branch"] = branch
     if server:
         entry["server"] = server
     if notes:
@@ -981,8 +1240,9 @@ def add_experiment(name: str, config: str, notes: str = "", server: str = ""):
 
     save_queue(queue)
     srv_str = f", server={server}" if server else ""
-    logging.info(f"Added experiment '{name}' ({task}{srv_str}) at position {insert_idx}")
-    print(f"Added '{name}' to queue (position {insert_idx}, task={task}{srv_str})")
+    branch_str = f", branch={branch}" if branch else ""
+    logging.info(f"Added experiment '{name}' ({task}{srv_str}{branch_str}) at position {insert_idx}")
+    print(f"Added '{name}' to queue (position {insert_idx}, task={task}{srv_str}{branch_str})")
 
 
 # ---------------------------------------------------------------------------
@@ -1016,10 +1276,20 @@ def main():
     parser.add_argument("--notes", type=str, default="", help="Notes (for --add)")
     parser.add_argument("--server", type=str, default="",
                         help="Pin to server (for --add). Default: any")
+    parser.add_argument("--branch", type=str, default="",
+                        help="Git branch for experiment (for --add). Default: current branch")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="Remove worktrees (optionally filter by --branch)")
 
     args = parser.parse_args()
 
     setup_logging()
+
+    if args.cleanup:
+        queue = load_queue()
+        servers = _parse_servers(queue.get("settings", {}))
+        cleanup_worktrees(args.branch, servers)
+        return
 
     if args.status:
         show_status()
@@ -1028,7 +1298,7 @@ def main():
     if args.add:
         if not args.name or not args.config:
             parser.error("--add requires --name and --config")
-        add_experiment(args.name, args.config, args.notes, args.server)
+        add_experiment(args.name, args.config, args.notes, args.server, args.branch)
         return
 
     if args.dry_run:

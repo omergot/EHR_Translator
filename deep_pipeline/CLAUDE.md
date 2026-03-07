@@ -91,4 +91,14 @@ All experiments are managed through `experiments/queue.yaml`. This is the single
 - If launching a one-off manual experiment (debugging), use GPU 3 to avoid conflicts.
 
 ### Queue Entry Format
-Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`.
+Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`, `server`, `branch`.
+
+### Branch-Aware Experiments
+- Add `branch` field to queue entries to run experiments from a specific git branch.
+- The scheduler uses git worktrees for code isolation — each branch gets its own copy.
+- Omitting `branch` defaults to current branch (backward compatible).
+- Checkpoints/logs/outputs are always centralized in the main tree (not in worktrees).
+- CLI: `--add --branch BRANCH` sets the branch. `--cleanup [--branch BRANCH]` removes worktrees.
+- Worktree locations: `EHR_Translator_worktrees/<sanitized-branch>/` (sibling of `EHR_Translator/`).
+- **Branches must be committed locally** (and pushed to origin for remote servers) before queuing.
+- `sync_remote.sh` is still needed for YAIB, pretrained models, and gin config path fixes.

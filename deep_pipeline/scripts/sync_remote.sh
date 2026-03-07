@@ -1,6 +1,15 @@
 #!/bin/bash
-# Sync code changes to remote A6000 server (maria)
-# Run this before launching experiments that use new code changes.
+# Sync code + dependencies to remote A6000 server (maria).
+#
+# This script handles items NOT managed by git worktrees:
+#   - deep_pipeline code (main branch only — other branches use git worktrees)
+#   - YAIB source code
+#   - Gin config path fixes (pretrained_models/)
+#   - Package reinstallation (pip install -e .)
+#
+# For branch-aware experiments, the scheduler creates git worktrees on the
+# remote server automatically. This script is still needed for YAIB, pretrained
+# models, and the initial deep_pipeline code sync.
 set -euo pipefail
 
 REMOTE="omerg@132.68.39.40"

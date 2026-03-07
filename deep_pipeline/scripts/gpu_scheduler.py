@@ -456,9 +456,9 @@ def _ensure_local_worktree(branch: str) -> Path | None:
 
 def _ensure_remote_worktree(branch: str, server: ServerConfig) -> str | None:
     """Ensure a remote git worktree exists for the given branch.
-    Returns remote deep_pipeline path, or None on failure."""
-    if branch == _get_current_branch():
-        return server.repo_path
+    Returns remote deep_pipeline path, or None on failure.
+    Always creates a worktree — the local current branch does NOT imply
+    the remote default path has the same code."""
 
     sanitized = _sanitize_branch_name(branch)
     remote_git_root = str(Path(server.repo_path).parent)

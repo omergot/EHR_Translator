@@ -59,11 +59,18 @@ def _pushd(path: str):
 
 def _find_yaib_root(task_config_path: str) -> str:
     # Derive YAIB root from the task_config path: .../YAIB/configs/tasks/X.gin -> .../YAIB
-    p = Path(task_config_path).resolve()
-    for parent in p.parents:
-        if parent.name == "YAIB" or (parent / "icu_benchmarks").is_dir():
-            return str(parent)
-    # Fallback: assume YAIB is sibling of EHR_Translator
+    if task_config_path:
+        p = Path(task_config_path).resolve()
+        for parent in p.parents:
+            if parent.name == "YAIB" or (parent / "icu_benchmarks").is_dir():
+                return str(parent)
+    # Fallback: walk up from this file looking for a sibling YAIB/
+    # (works in both main tree and git worktrees)
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "YAIB"
+        if candidate.is_dir() and (candidate / "icu_benchmarks").is_dir():
+            return str(candidate)
+    # Last resort: original hardcoded depth
     repo_root = Path(__file__).resolve().parent.parent.parent
     yaib_path = repo_root.parent.parent / "YAIB"
     return str(yaib_path.resolve())

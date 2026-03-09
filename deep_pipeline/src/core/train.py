@@ -1602,6 +1602,7 @@ class RetrievalTranslatorTrainer:
         lambda_range: float = 0.5,
         lambda_smooth: float = 0.1,
         lambda_importance_reg: float = 0.01,
+        lambda_align: float = 0.0,
         pretrain_epochs: int = 10,
         k_neighbors: int = 16,
         retrieval_window: int = 6,
@@ -1620,6 +1621,7 @@ class RetrievalTranslatorTrainer:
         self.lambda_range = lambda_range
         self.lambda_smooth = lambda_smooth
         self.lambda_importance_reg = lambda_importance_reg
+        self.lambda_align = lambda_align
         self.pretrain_epochs = pretrain_epochs
         self.k_neighbors = k_neighbors
         self.retrieval_window = retrieval_window
@@ -1654,6 +1656,8 @@ class RetrievalTranslatorTrainer:
             logging.info("Contrastive alignment enabled: lambda=%.4f", self.lambda_contrastive_align)
         if self.recon_positive_boost > 0:
             logging.info("Positive-weighted reconstruction enabled: boost=%.1f", self.recon_positive_boost)
+        if self.lambda_align > 0:
+            logging.info("Latent MMD alignment enabled: lambda_align=%.4f", self.lambda_align)
 
         # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
@@ -1843,8 +1847,9 @@ class RetrievalTranslatorTrainer:
         """Phase 2 training: retrieval-guided translation."""
         from ..core.retrieval_translator import query_memory_bank
         self.translator.train()
-        totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
-                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0, "contrastive": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
+                  "label_pred": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         for batch in train_loader:
@@ -1946,6 +1951,33 @@ class RetrievalTranslatorTrainer:
                         tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
                     ).float()
 
+                # Latent MMD alignment (distributional domain alignment)
+                l_align = src_latent.new_tensor(0.0)
+                if self.lambda_align > 0:
+                    src_mask_align = ~parts["M_pad"].bool()
+                    tgt_mask_align = ~tgt_parts["M_pad"].bool()
+                    src_z = src_latent[src_mask_align].float()
+                    tgt_z = tgt_latent[tgt_mask_align].float().detach()
+                    if src_z.shape[0] > 1 and tgt_z.shape[0] > 1:
+                        l_align = multi_kernel_mmd(src_z, tgt_z)
+
+                # Label prediction from latent (both domains)
+                l_label_pred = src_latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    src_lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    src_lp_mask = parts["M_label"].bool()
+                    l_src_lp = (F.binary_cross_entropy_with_logits(
+                        src_lp_logits[src_lp_mask].float(), parts["y"][src_lp_mask].float()
+                    ) if src_lp_mask.any() else src_latent.new_tensor(0.0))
+
+                    tgt_lp_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
+                    tgt_lp_mask = tgt_parts["M_label"].bool()
+                    l_tgt_lp = (F.binary_cross_entropy_with_logits(
+                        tgt_lp_logits[tgt_lp_mask].float(), tgt_parts["y"][tgt_lp_mask].float()
+                    ) if tgt_lp_mask.any() else tgt_latent.new_tensor(0.0))
+
+                    l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
+
                 # Cross-domain contrastive alignment (optional)
                 l_contrastive = src_latent.new_tensor(0.0)
                 if self.lambda_contrastive_align > 0:
@@ -1971,11 +2003,13 @@ class RetrievalTranslatorTrainer:
 
                 l_total = (
                     l_task
+                    + self.lambda_align * l_align
                     + self.lambda_recon * l_recon
                     + self.lambda_range * l_range
                     + self.lambda_smooth * l_smooth
                     + self.lambda_importance_reg * l_importance_reg
                     + self.lambda_target_task * l_target_task
+                    + self.lambda_label_pred * l_label_pred
                     + self.lambda_contrastive_align * l_contrastive
                 )
 
@@ -1986,11 +2020,13 @@ class RetrievalTranslatorTrainer:
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
+            totals["align"] += l_align.item()
             totals["recon"] += l_recon.item()
             totals["range"] += l_range.item()
             totals["smooth"] += l_smooth.item()
             totals["importance_reg"] += l_importance_reg.item()
             totals["target_task"] += l_target_task.item()
+            totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
             n_batches += 1
 
@@ -2001,8 +2037,9 @@ class RetrievalTranslatorTrainer:
         """Validation pass with retrieval."""
         from ..core.retrieval_translator import query_memory_bank
         self.translator.eval()
-        totals = {"total": 0.0, "task": 0.0, "recon": 0.0, "range": 0.0,
-                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0, "contrastive": 0.0}
+        totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
+                  "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
+                  "label_pred": 0.0, "contrastive": 0.0}
         n_batches = 0
 
         importance_w = self.translator.get_importance_weights()
@@ -2087,22 +2124,53 @@ class RetrievalTranslatorTrainer:
                         tgt_logits.float(), (tgt_yaib, tgt_parts["y"], tgt_label_mask)
                     ).float()
 
+                # Latent MMD alignment (validation)
+                l_align = src_latent.new_tensor(0.0)
+                if self.lambda_align > 0:
+                    src_mask_align = ~parts["M_pad"].bool()
+                    tgt_mask_align = ~tgt_parts["M_pad"].bool()
+                    src_z = src_latent[src_mask_align].float()
+                    tgt_z = tgt_latent[tgt_mask_align].float()
+                    if src_z.shape[0] > 1 and tgt_z.shape[0] > 1:
+                        l_align = multi_kernel_mmd(src_z, tgt_z)
+
+                # Label prediction from latent (validation)
+                l_label_pred = src_latent.new_tensor(0.0)
+                if self.lambda_label_pred > 0:
+                    src_lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    src_lp_mask = parts["M_label"].bool()
+                    l_src_lp = (F.binary_cross_entropy_with_logits(
+                        src_lp_logits[src_lp_mask].float(), parts["y"][src_lp_mask].float()
+                    ) if src_lp_mask.any() else src_latent.new_tensor(0.0))
+
+                    tgt_lp_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
+                    tgt_lp_mask = tgt_parts["M_label"].bool()
+                    l_tgt_lp = (F.binary_cross_entropy_with_logits(
+                        tgt_lp_logits[tgt_lp_mask].float(), tgt_parts["y"][tgt_lp_mask].float()
+                    ) if tgt_lp_mask.any() else tgt_latent.new_tensor(0.0))
+
+                    l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
+
                 l_total = (
                     l_task
+                    + self.lambda_align * l_align
                     + self.lambda_recon * l_recon
                     + self.lambda_range * l_range
                     + self.lambda_smooth * l_smooth
                     + self.lambda_importance_reg * l_importance_reg
                     + self.lambda_target_task * l_target_task
+                    + self.lambda_label_pred * l_label_pred
                 )
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
+            totals["align"] += l_align.item()
             totals["recon"] += l_recon.item()
             totals["range"] += l_range.item()
             totals["smooth"] += l_smooth.item()
             totals["importance_reg"] += l_importance_reg.item()
             totals["target_task"] += l_target_task.item()
+            totals["label_pred"] += l_label_pred.item()
             n_batches += 1
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
@@ -2176,16 +2244,18 @@ class RetrievalTranslatorTrainer:
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
-                train_metrics["recon"], train_metrics["range"], train_metrics["smooth"],
-                train_metrics["importance_reg"], train_metrics.get("target_task", 0.0),
+                train_metrics.get("align", 0.0), train_metrics["recon"], train_metrics["range"],
+                train_metrics["smooth"], train_metrics["importance_reg"],
+                train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
             )
             logging.info(
-                "Epoch %d/%d - val: total=%.4f task=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f",
+                "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
                 epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
-                val_metrics["recon"], val_metrics["range"], val_metrics["smooth"],
-                val_metrics["importance_reg"], val_metrics.get("target_task", 0.0),
+                val_metrics.get("align", 0.0), val_metrics["recon"], val_metrics["range"],
+                val_metrics["smooth"], val_metrics["importance_reg"],
+                val_metrics.get("target_task", 0.0), val_metrics.get("label_pred", 0.0),
             )
 
             self._log_retrieval_metrics(epoch + 1)

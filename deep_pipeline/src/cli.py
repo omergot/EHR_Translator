@@ -1168,6 +1168,7 @@ def train_translator(args):
             lambda_range=training_cfg.get("lambda_range", 0.5),
             lambda_smooth=training_cfg.get("lambda_smooth", 0.1),
             lambda_importance_reg=training_cfg.get("lambda_importance_reg", 0.01),
+            lambda_align=training_cfg.get("lambda_align", 0.0),
             pretrain_epochs=training_cfg.get("pretrain_epochs", 10),
             k_neighbors=training_cfg.get("k_neighbors", 16),
             retrieval_window=training_cfg.get("retrieval_window", 6),

@@ -1626,6 +1626,7 @@ class RetrievalTranslatorTrainer:
         self.k_neighbors = k_neighbors
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
+        self.window_stride = _tc.get("window_stride", None)  # None = window_size (non-overlapping)
         self.early_stopping_patience = early_stopping_patience
         self.best_metric = best_metric
         self.run_dir = Path(run_dir) if run_dir else Path("runs/retrieval")
@@ -1793,6 +1794,7 @@ class RetrievalTranslatorTrainer:
             schema_resolver=self.schema_resolver,
             device=self.device,
             window_size=self.retrieval_window,
+            window_stride=self.window_stride,
         )
         self.translator.train()  # restore train mode after build
 
@@ -1875,11 +1877,12 @@ class RetrievalTranslatorTrainer:
                     importance_weights=importance_w.detach(),
                 )
 
-                # Forward with retrieved context
+                # Forward with retrieved context (reuse src_latent to avoid double-encode)
                 x_out, _ = self.translator.forward_with_retrieval(
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                     context,
+                    latent=src_latent,
                 )
 
                 # Task loss via frozen LSTM
@@ -2068,6 +2071,7 @@ class RetrievalTranslatorTrainer:
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                     context,
+                    latent=src_latent,
                 )
 
                 x_yaib_translated = self.schema_resolver.rebuild(

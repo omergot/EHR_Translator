@@ -56,6 +56,7 @@ def build_memory_bank(
     schema_resolver,
     device: str,
     window_size: int = 6,
+    window_stride: int | None = None,
 ) -> MemoryBank:
     """Encode all MIMIC data and build the memory bank.
 
@@ -64,8 +65,12 @@ def build_memory_bank(
         target_loader: DataLoader over MIMIC training data
         schema_resolver: SchemaResolver instance
         device: CUDA device string
-        window_size: non-overlapping window size for bank storage
+        window_size: window size for bank storage
+        window_stride: stride between windows (default=window_size for non-overlapping,
+                       set < window_size for overlapping dense banks)
     """
+    if window_stride is None:
+        window_stride = window_size
     encoder.eval()
     all_timestep_latents = []  # list of (T_i, d_latent) on CPU
     all_pad_masks = []         # list of (T_i,) on CPU
@@ -84,15 +89,16 @@ def build_memory_bank(
                 all_timestep_latents.append(latent[i].cpu())    # (T, d_latent)
                 all_pad_masks.append(m_pad[i].cpu())             # (T,)
 
-    # Segment into non-overlapping windows and mean-pool each
+    # Segment into windows (overlapping if stride < window_size) and mean-pool each
     window_latent_list = []
     window_to_stay = []
     window_to_range = []
 
     W = window_size
+    stride = window_stride
     for stay_idx, (ts_lat, ts_mask) in enumerate(zip(all_timestep_latents, all_pad_masks)):
         T = ts_lat.shape[0]
-        for start in range(0, T, W):
+        for start in range(0, T, stride):
             end = min(start + W, T)
             window_mask = ~ts_mask[start:end]  # True = valid
             if window_mask.any():
@@ -109,9 +115,11 @@ def build_memory_bank(
     window_to_time_range = torch.tensor(window_to_range, dtype=torch.long)
 
     logger.info(
-        "Memory bank built: %d stays, %d windows, %.1f MB GPU",
+        "Memory bank built: %d stays, %d windows (W=%d, stride=%d), %.1f MB GPU",
         len(all_timestep_latents),
         window_latents.shape[0],
+        W,
+        stride,
         window_latents.nelement() * 4 / 1e6,
     )
     return MemoryBank(
@@ -643,17 +651,22 @@ class RetrievalTranslator(nn.Module):
         m_pad: torch.Tensor,
         x_static: torch.Tensor,
         context: torch.Tensor,
+        latent: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Full forward with pre-retrieved context.
 
         Args:
             context: (B, T, K*W, d_latent) from query_memory_bank
+            latent: (B, T, d_latent) pre-computed encoder output. If provided,
+                    skips encode() to avoid double-encode inconsistency
+                    (different dropout masks between auxiliary and task losses).
 
         Returns:
             x_out: (B, T, F) translated features
             latent: (B, T, d_latent) encoded latents (for logging)
         """
-        latent = self.encode(x_val, x_miss, t_abs, m_pad, x_static)
+        if latent is None:
+            latent = self.encode(x_val, x_miss, t_abs, m_pad, x_static)
         x_decoded = self.decode_with_context(latent, context, m_pad, x_static)
 
         if self.output_mode == "residual":

@@ -747,8 +747,9 @@ class RetrievalTranslatorWrapper(torch.nn.Module):
             importance_weights=importance_weights.detach() if importance_weights is not None else None,
         )
 
-        # Full forward with retrieval context
+        # Full forward with retrieval context (reuse latent to avoid double-encode)
         x_out, _ = self.translator.forward_with_retrieval(
             x_val, x_miss, t_abs, m_pad, x_static, context,
+            latent=latent,
         )
         return x_out

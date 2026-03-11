@@ -138,6 +138,7 @@ def _get_training_config(config: dict) -> dict:
         "n_cross_layers": training.get("n_cross_layers", 2),
         "output_mode": training.get("output_mode", "residual"),
         "memory_refresh_epochs": training.get("memory_refresh_epochs", 5),
+        "window_stride": training.get("window_stride", None),
         "lambda_importance_reg": training.get("lambda_importance_reg", 0.01),
         "lambda_smooth": training.get("lambda_smooth", 0.1),
         # Feature gate (for delta/SL comparison)
@@ -1593,6 +1594,7 @@ def translate_and_eval(args):
             schema_resolver=schema_resolver,
             device=device,
             window_size=training_cfg.get("retrieval_window", 6),
+            window_stride=training_cfg.get("window_stride", None),
         )
 
         # Wrap translator with memory bank for full retrieval at eval

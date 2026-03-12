@@ -1626,7 +1626,6 @@ class RetrievalTranslatorTrainer:
         self.k_neighbors = k_neighbors
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
-        self.window_stride = _tc.get("window_stride", None)  # None = window_size (non-overlapping)
         self.early_stopping_patience = early_stopping_patience
         self.best_metric = best_metric
         self.run_dir = Path(run_dir) if run_dir else Path("runs/retrieval")
@@ -1642,6 +1641,7 @@ class RetrievalTranslatorTrainer:
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
         self._training_config = _tc
+        self.window_stride = _tc.get("window_stride", None)  # None = window_size (non-overlapping)
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
         self.importance_reg_type = _tc.get("importance_reg_type", "l1")

@@ -2239,7 +2239,31 @@ class RetrievalTranslatorTrainer:
         # Phase 2: Retrieval-guided training
         logging.info("=== Phase 2: Retrieval-guided training (%d epochs) ===", epochs)
         epochs_without_improvement = 0
-        for epoch in range(epochs):
+        start_epoch = 0
+
+        # --- Resume from checkpoint ---
+        resume_path = self.run_dir / "latest_checkpoint.pt"
+        if resume_path.exists():
+            rk = torch.load(resume_path, map_location=self.device, weights_only=False)
+            self.translator.load_state_dict(rk["translator_state_dict"])
+            self.optimizer.load_state_dict(rk["optimizer_state_dict"])
+            self.scaler.load_state_dict(rk["scaler_state_dict"])
+            self.best_val = rk["best_val"]
+            self.best_state = rk.get("best_state")
+            self.history = rk.get("history", [])
+            epochs_without_improvement = rk.get("epochs_without_improvement", 0)
+            start_epoch = rk["epoch"] + 1
+            if self.feature_gate is not None and "feature_gate_state_dict" in rk:
+                self.feature_gate.load_state_dict(rk["feature_gate_state_dict"])
+            if rk.get("renorm_scale") is not None:
+                self.renorm_scale = rk["renorm_scale"]
+                self.renorm_offset = rk["renorm_offset"]
+            logging.info(
+                "Resumed from checkpoint epoch %d (best_val=%.6f, no_improve=%d)",
+                start_epoch, self.best_val, epochs_without_improvement,
+            )
+
+        for epoch in range(start_epoch, epochs):
             # Rebuild memory bank periodically
             if self.memory_bank is None or (epoch % self.memory_refresh_epochs == 0):
                 self._build_memory_bank()
@@ -2290,12 +2314,34 @@ class RetrievalTranslatorTrainer:
             else:
                 epochs_without_improvement += 1
 
+            # Save resume checkpoint every epoch
+            resume_ckpt = {
+                "epoch": epoch,
+                "translator_state_dict": self.translator.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "scaler_state_dict": self.scaler.state_dict(),
+                "best_val": self.best_val,
+                "best_state": self.best_state,
+                "history": self.history,
+                "epochs_without_improvement": epochs_without_improvement,
+                "renorm_scale": self.renorm_scale,
+                "renorm_offset": self.renorm_offset,
+            }
+            if self.feature_gate is not None:
+                resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()
+            torch.save(resume_ckpt, resume_path)
+
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
                 logging.info("Early stopping after %d epochs without improvement", epochs_without_improvement)
                 break
 
         if self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
+
+        # Clean exit — remove resume checkpoint
+        if resume_path.exists():
+            resume_path.unlink()
+            logging.info("Training completed — removed resume checkpoint")
 
         self._verify_baseline_frozen()
         self._plot_losses()

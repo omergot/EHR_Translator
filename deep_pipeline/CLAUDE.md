@@ -4,7 +4,7 @@ You are the best data scientist and deep learning engineer in the world who is e
 
 ## Project Overview
 
-**EHR Translator Deep Pipeline** — domain adaptation for EHR time-series (eICU → MIMIC-IV). Train a `Translator` to transform source-domain data so a **strictly frozen** target-domain LSTM baseline performs well. Three paradigms: delta-based (`EHRTranslator`), shared latent (`SharedLatentTranslator`), and retrieval-guided (`RetrievalTranslator`). Three tasks: Mortality24 (per-stay), AKI (per-timestep), Sepsis (per-timestep).
+**EHR Translator Deep Pipeline** — domain adaptation for EHR time-series (eICU → MIMIC-IV). Train a `Translator` to transform source-domain data so a **strictly frozen** target-domain LSTM baseline performs well. Three paradigms: delta-based (`EHRTranslator`), shared latent (`SharedLatentTranslator`), and retrieval-guided (`RetrievalTranslator`). Five tasks: Mortality24 (per-stay, binary), AKI (per-timestep, binary), Sepsis (per-timestep, binary), LoS (per-timestep, regression), KidneyFunction (per-stay, regression).
 
 ## Commands
 
@@ -39,8 +39,13 @@ pytest tests/
 - **Delta trainer** (`TransformerTranslatorTrainer` in `src/core/train.py`): task loss + fidelity loss + range loss.
 - **SL trainer** (`LatentTranslatorTrainer` at end of `src/core/train.py`): Phase 1 = autoencoder pretrain on MIMIC. Phase 2 = task + MMD alignment + reconstruction + range.
 - **Retrieval trainer** (`RetrievalTranslatorTrainer` in `src/core/train.py`): Phase 1 = autoencoder pretrain. Phase 2 = task + fidelity + range + smoothness + importance reg, with memory bank rebuilt every `memory_refresh_epochs`.
-- **Task strategy**: SL + target norm for mortality/AKI. Delta + target task + target norm for sepsis. Retrieval translator under active development (sepsis-focused).
+- **Task strategy**: Retrieval is the universal paradigm (best or tied on all 3 tasks). SL+FG for mortality. Retrieval V5 (n_cross_layers=3) for AKI. Retrieval V4+MMD for sepsis.
 - **Cross-domain normalization** (`use_target_normalization`): Affine renorm of source features to target stats. Params saved in checkpoint.
+- **Regression support** (`training.task_type: "regression"`): LoS (Length of Stay) and KF (KidneyFunction). Auto-detected from gin config (`Run.mode = "Regression"`). Uses MSE loss, MAE/MSE/RMSE/R2 metrics. Label prediction uses MSE instead of BCE. Oversampling/subsampling disabled for regression.
+- **MI-optional schema** (`src/core/schema.py`): LoS LSTM has 52 features (no MissingIndicator). SchemaResolver synthesizes zeros for MI when columns are absent.
+- **Generated feature recomputation** (`src/core/schema.py`): KF LSTM has 292 features including cumulative stats (`_min_hist`, `_max_hist`, `_count`, `_mean_hist`). After translation, `rebuild()` recomputes cumulative min/max/mean from translated values; count is unchanged.
+- **Phase 1 checkpoint reuse** (SL/Retrieval): Phase 1 (autoencoder pretrain) trains only on target data. The resulting `pretrain_checkpoint.pt` is reusable across experiments for the same task, provided: same architecture (`d_latent`, `d_model`, `n_enc_layers`, `n_dec_layers`), same target data (`target_data_dir`), same `pretrain_epochs`, same seed. Phase 2 hyperparams (`k_neighbors`, `retrieval_window`, `lambda_*`, `n_cross_layers`, `window_stride`, etc.) have no effect on Phase 1. To reuse: copy `pretrain_checkpoint.pt` into the new experiment's `run_dir/` before launching. The trainer auto-detects it and skips Phase 1.
+- **Checkpoint resume**: Training saves `latest_checkpoint.pt` every epoch. If training is interrupted, restarting with the same config auto-resumes from the latest checkpoint (epoch, optimizer state, best metric all restored).
 
 ## Safety & Validation (CRITICAL)
 
@@ -70,7 +75,7 @@ These rules prevent catastrophic failures. Violating any one can silently ruin r
 
 JSON configs with two main sections:
 - `"translator"`: `type` ("transformer"|"shared_latent"|"retrieval"), `d_model`, `d_latent`, `n_layers`, `n_enc_layers`, `n_dec_layers`, `n_cross_layers`, `output_mode`, etc.
-- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`, `training_seed`.
+- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`, `training_seed`, `task_type` ("classification"|"regression").
 
 ## Experiment Queue System
 

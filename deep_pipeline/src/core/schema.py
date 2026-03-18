@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+import logging
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
 
@@ -11,6 +12,8 @@ class SchemaIndices:
     dynamic: List[int]
     missing: List[int]
     static: List[int]
+    # generated[i] = (min_idx, max_idx, count_idx, mean_idx) or None per dynamic feature
+    generated: List[Optional[Tuple[int, int, int, int]]] = field(default_factory=list)
 
 
 class SchemaResolver:
@@ -31,34 +34,65 @@ class SchemaResolver:
         self.static_features = list(static_features)
         self.allow_missing_static = allow_missing_static
         self.missing_prefix = missing_prefix
-        self.indices = SchemaIndices(
-            dynamic=self._resolve_indices(self.dynamic_features),
-            missing=self._resolve_indices(
-                [f"{missing_prefix}{name}" for name in self.dynamic_features]
-            ),
-            static=self._resolve_indices(self.static_features, allow_missing=allow_missing_static),
-        )
-        missing_dynamic = [name for name, idx in zip(self.dynamic_features, self.indices.dynamic) if idx is None]
-        missing_missing = [
-            name
-            for name, idx in zip(
-                [f"{missing_prefix}{name}" for name in self.dynamic_features],
-                self.indices.missing,
-            )
-            if idx is None
-        ]
-        missing_static = [name for name, idx in zip(self.static_features, self.indices.static) if idx is None]
+
+        # Resolve dynamic (required)
+        raw_dynamic = self._resolve_indices(self.dynamic_features)
+        missing_dynamic = [name for name, idx in zip(self.dynamic_features, raw_dynamic) if idx is None]
         if missing_dynamic:
             raise ValueError(f"Missing dynamic features in YAIB batch: {missing_dynamic}")
-        if missing_missing:
-            raise ValueError(f"Missing missing-indicator features in YAIB batch: {missing_missing}")
+
+        # Resolve missing indicators (optional — LoS LSTM has none)
+        mi_names = [f"{missing_prefix}{name}" for name in self.dynamic_features]
+        raw_missing = self._resolve_indices(mi_names, allow_missing=True)
+        missing_mi = [name for name, idx in zip(mi_names, raw_missing) if idx is None]
+        has_mi = len(missing_mi) == 0
+        if not has_mi:
+            logging.info(
+                "[schema] %d/%d MissingIndicator columns not found — MI will be synthesized as zeros",
+                len(missing_mi), len(mi_names),
+            )
+
+        # Resolve static (optionally missing)
+        raw_static = self._resolve_indices(self.static_features, allow_missing=allow_missing_static)
+        missing_static = [name for name, idx in zip(self.static_features, raw_static) if idx is None]
         if missing_static and not allow_missing_static:
             raise ValueError(f"Missing static features in YAIB batch: {missing_static}")
+
+        # Detect generated features (cumulative min/max/count/mean per dynamic feature)
+        generated = self._detect_generated_features()
+
         self.indices = SchemaIndices(
-            dynamic=[idx for idx in self.indices.dynamic if idx is not None],
-            missing=[idx for idx in self.indices.missing if idx is not None],
-            static=[idx for idx in self.indices.static if idx is not None],
+            dynamic=[idx for idx in raw_dynamic if idx is not None],
+            missing=[idx for idx in raw_missing if idx is not None] if has_mi else [],
+            static=[idx for idx in raw_static if idx is not None],
+            generated=generated,
         )
+        self._has_mi = has_mi
+        self._has_generated = any(g is not None for g in generated)
+        if self._has_generated:
+            n_gen = sum(1 for g in generated if g is not None)
+            logging.info("[schema] Detected %d dynamic features with generated (cumulative) columns", n_gen)
+
+    def _detect_generated_features(self) -> List[Optional[Tuple[int, int, int, int]]]:
+        """Detect YAIB-generated cumulative stat columns (_min_hist, _max_hist, _count, _mean_hist)."""
+        fn_set = set(self.feature_names)
+        fn_index = {name: i for i, name in enumerate(self.feature_names)}
+        generated: List[Optional[Tuple[int, int, int, int]]] = []
+        for name in self.dynamic_features:
+            min_col = f"{name}_min_hist"
+            max_col = f"{name}_max_hist"
+            count_col = f"{name}_count"
+            mean_col = f"{name}_mean_hist"
+            if min_col in fn_set and max_col in fn_set and count_col in fn_set and mean_col in fn_set:
+                generated.append((
+                    fn_index[min_col],
+                    fn_index[max_col],
+                    fn_index[count_col],
+                    fn_index[mean_col],
+                ))
+            else:
+                generated.append(None)
+        return generated
 
     def _resolve_indices(self, names: Iterable[str], allow_missing: bool = False) -> List[Optional[int]]:
         indices: List[Optional[int]] = []
@@ -77,7 +111,11 @@ class SchemaResolver:
         label_mask = label_mask.bool()
         m_pad = self._infer_pad_mask(data)
         x_val = data[:, :, self.indices.dynamic]
-        x_miss = data[:, :, self.indices.missing]
+        if self._has_mi:
+            x_miss = data[:, :, self.indices.missing]
+        else:
+            # No MI columns — synthesize zeros (= "not missing")
+            x_miss = torch.zeros_like(x_val)
         if static_override is None:
             valid_mask = ~m_pad
             x_static = self._extract_static(data, valid_mask)
@@ -102,11 +140,58 @@ class SchemaResolver:
         x_val_translated: torch.Tensor,
         x_miss_unchanged: torch.Tensor | None = None,
         x_static_unchanged: torch.Tensor | None = None,
+        m_pad: torch.Tensor | None = None,
     ) -> torch.Tensor:
         rebuilt = x_yaib.clone()
         rebuilt[:, :, self.indices.dynamic] = x_val_translated
+
+        if self._has_generated and m_pad is not None:
+            self._recompute_generated_features(rebuilt, x_val_translated, m_pad)
+
         return rebuilt
 
+    def _recompute_generated_features(
+        self,
+        rebuilt: torch.Tensor,
+        x_val: torch.Tensor,
+        m_pad: torch.Tensor,
+    ) -> None:
+        """Recompute cumulative min/max/mean from translated values.
+
+        Keeps count_hist unchanged (depends on original missingness, not values).
+        """
+        valid = ~m_pad  # (B, T)
+
+        for feat_i, gen_tuple in enumerate(self.indices.generated):
+            if gen_tuple is None:
+                continue
+            min_idx, max_idx, count_idx, mean_idx = gen_tuple
+            vals = x_val[:, :, feat_i]  # (B, T)
+
+            # Cumulative min: fill padded with +inf, then cummin
+            vals_min = vals.clone()
+            vals_min[~valid] = float('inf')
+            cum_min, _ = torch.cummin(vals_min, dim=1)
+            cum_min[~valid] = 0.0
+            rebuilt[:, :, min_idx] = cum_min
+
+            # Cumulative max: fill padded with -inf, then cummax
+            vals_max = vals.clone()
+            vals_max[~valid] = float('-inf')
+            cum_max, _ = torch.cummax(vals_max, dim=1)
+            cum_max[~valid] = 0.0
+            rebuilt[:, :, max_idx] = cum_max
+
+            # count_hist stays from x_yaib.clone() — unchanged
+
+            # Cumulative mean
+            vals_mean = vals.clone()
+            vals_mean[~valid] = 0.0
+            cum_sum = vals_mean.cumsum(dim=1)
+            cum_count = valid.float().cumsum(dim=1).clamp(min=1)
+            cum_mean = cum_sum / cum_count
+            cum_mean[~valid] = 0.0
+            rebuilt[:, :, mean_idx] = cum_mean
 
     def _infer_pad_mask(self, data: torch.Tensor) -> torch.Tensor:
         return data.abs().sum(dim=-1) == 0

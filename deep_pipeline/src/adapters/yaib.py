@@ -151,6 +151,25 @@ class YAIBRuntime:
             self.wrap_load_gin_config(self.model_config)
         if (self.baseline_model_dir / "train_config.gin").exists():
             self.wrap_load_gin_config(self.baseline_model_dir / "train_config.gin")
+        # Auto-detect run mode from gin config (e.g. Regression.gin sets Run.mode)
+        self._mode = self._detect_run_mode()
+
+    def _detect_run_mode(self) -> RunMode:
+        """Auto-detect RunMode from gin config (Regression.gin sets Run.mode = 'Regression')."""
+        try:
+            mode_str = gin.query_parameter("Run.mode")
+            if hasattr(mode_str, '__str__'):
+                mode_str = str(mode_str).strip("'\"")
+            if mode_str == "Regression" or mode_str == str(RunMode.regression):
+                logging.info("[yaib] Auto-detected RunMode.regression from gin config")
+                return RunMode.regression
+        except Exception:
+            pass
+        return RunMode.classification
+
+    @property
+    def run_mode(self) -> RunMode:
+        return self._mode
 
     def _setup_gin_search_paths(self, task_config_path: str):
         gin.clear_config()
@@ -182,7 +201,7 @@ class YAIBRuntime:
         with _pushd(yaib_root):
             gin.parse_config_file(config_path)
         
-    def load_data(self, scaling_override: Optional[bool] = None) -> Dict[str, Dict[str, pl.DataFrame]]:
+    def load_data(self, scaling_override: Optional[bool] = None, load_cache: bool = True) -> Dict[str, Dict[str, pl.DataFrame]]:
         if self._data is not None:
             return self._data
             
@@ -225,10 +244,11 @@ class YAIBRuntime:
             fold_index=fold_index,
             train_size=train_size,
             complete_train=complete_train,
-            load_cache=True,
-            generate_cache=False,
+            load_cache=load_cache,
+            generate_cache=not load_cache,
             percentile_outliers_csv=self.percentile_outliers_csv,
             export_feature_stats=False,
+            runmode=self._mode,
         )
         if scaling_override is not None:
             if prev_scaling is not None:
@@ -302,7 +322,7 @@ class YAIBRuntime:
     ) -> DataLoader:
         self.load_baseline_model()
         train_dataset = None
-        if not self._loss_weight_set and hasattr(self._model, 'set_weight'):
+        if not self._loss_weight_set and hasattr(self._model, 'set_weight') and self._mode != RunMode.regression:
             train_dataset = self.create_dataset(DataSplit.train, ram_cache=False)
             self._model.set_weight('balanced', train_dataset)
             self._loss_weight_set = True
@@ -345,7 +365,7 @@ class YAIBRuntime:
             batch_size = min(self.batch_size * 4, len(dataset_to_use))
 
         if hasattr(self._model, 'run_mode'):
-            self._model.run_mode = RunMode(RunMode.classification)
+            self._model.run_mode = self._mode
             logging.info(f"Set run_mode to {self._model.run_mode} (overriding checkpoint value)")
         # Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods# Handle case where loaded ML models are raw sklearn models without YAIB wrapper methods
         # Add requires_backprop=False for sklearn models that don't have this attribute
@@ -380,19 +400,32 @@ class YAIBRuntime:
         if not label_col or label_col not in dataset.outcome_df.columns:
             return
         try:
-            counts = dataset.outcome_df[label_col].value_counts(parallel=True)
-            labels = counts.get_column(label_col).to_list()
-            count_col = counts.columns[1] if len(counts.columns) > 1 else counts.columns[0]
-            freqs = counts.get_column(count_col).to_list()
-            stats = {str(label): int(freq) for label, freq in zip(labels, freqs)}
-            total = sum(stats.values())
-            pos = stats.get("1", stats.get(1, 0))
-            neg = stats.get("0", stats.get(0, 0))
-            pos_rate = (pos / total) if total > 0 else 0.0
-            logging.info(
-                f"[debug] split={split} label_counts={stats} "
-                f"pos={pos} neg={neg} pos_rate={pos_rate:.6f} total={total}"
-            )
+            if self._mode == RunMode.regression:
+                # Continuous labels: log min/max/mean/std instead of 0/1 counts
+                label_series = dataset.outcome_df[label_col].cast(pl.Float64)
+                logging.info(
+                    "[debug] split=%s (regression) label_stats: min=%.4f max=%.4f mean=%.4f std=%.4f n=%d",
+                    split,
+                    label_series.min(),
+                    label_series.max(),
+                    label_series.mean(),
+                    label_series.std(),
+                    len(label_series),
+                )
+            else:
+                counts = dataset.outcome_df[label_col].value_counts(parallel=True)
+                labels = counts.get_column(label_col).to_list()
+                count_col = counts.columns[1] if len(counts.columns) > 1 else counts.columns[0]
+                freqs = counts.get_column(count_col).to_list()
+                stats = {str(label): int(freq) for label, freq in zip(labels, freqs)}
+                total = sum(stats.values())
+                pos = stats.get("1", stats.get(1, 0))
+                neg = stats.get("0", stats.get(0, 0))
+                pos_rate = (pos / total) if total > 0 else 0.0
+                logging.info(
+                    f"[debug] split={split} label_counts={stats} "
+                    f"pos={pos} neg={neg} pos_rate={pos_rate:.6f} total={total}"
+                )
         except Exception as exc:
             logging.info(f"[debug] split={split} label_counts=unavailable ({exc})")
 
@@ -458,7 +491,8 @@ class YAIBRuntime:
         group_col = self.vars.get("GROUP")
         label_col = self.vars.get("LABEL")
         can_stratify = (
-            hasattr(dataset, "outcome_df")
+            self._mode != RunMode.regression
+            and hasattr(dataset, "outcome_df")
             and group_col
             and label_col
             and label_col in dataset.outcome_df.columns
@@ -518,23 +552,36 @@ class YAIBRuntime:
         mask = mask.to(outputs.device).bool()
         prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
         target = torch.masked_select(labels.to(outputs.device), mask)
-        if outputs.shape[-1] > 1:
-            probs = torch.softmax(prediction, dim=-1)[:, 1]
+        if self._mode == RunMode.regression:
+            raw_pred = prediction[:, 0] if prediction.shape[-1] >= 1 else prediction.squeeze(-1)
+            logging.info(
+                "[debug] test_batch prediction stats (regression) "
+                f"min={raw_pred.min().item():.6f} max={raw_pred.max().item():.6f} "
+                f"mean={raw_pred.mean().item():.6f} std={raw_pred.std().item():.6f}"
+            )
+            logging.info(
+                "[debug] test_batch target stats (regression) "
+                f"min={target.min().item():.6f} max={target.max().item():.6f} "
+                f"mean={target.mean().item():.6f} std={target.std().item():.6f}"
+            )
         else:
-            probs = torch.sigmoid(prediction).squeeze(-1)
-        logging.info(
-            "[debug] test_batch logits stats "
-            f"min={prediction.min().item():.6f} max={prediction.max().item():.6f} "
-            f"mean={prediction.mean().item():.6f} std={prediction.std().item():.6f}"
-        )
-        logging.info(
-            "[debug] test_batch prob stats "
-            f"min={probs.min().item():.6f} max={probs.max().item():.6f} "
-            f"mean={probs.mean().item():.6f} std={probs.std().item():.6f}"
-        )
-        positives = int((target > 0.5).sum().item())
-        total = int(target.numel())
-        logging.info(f"[debug] test_batch targets pos={positives} neg={total - positives} total={total}")
+            if outputs.shape[-1] > 1:
+                probs = torch.softmax(prediction, dim=-1)[:, 1]
+            else:
+                probs = torch.sigmoid(prediction).squeeze(-1)
+            logging.info(
+                "[debug] test_batch logits stats "
+                f"min={prediction.min().item():.6f} max={prediction.max().item():.6f} "
+                f"mean={prediction.mean().item():.6f} std={prediction.std().item():.6f}"
+            )
+            logging.info(
+                "[debug] test_batch prob stats "
+                f"min={probs.min().item():.6f} max={probs.max().item():.6f} "
+                f"mean={probs.mean().item():.6f} std={probs.std().item():.6f}"
+            )
+            positives = int((target > 0.5).sum().item())
+            total = int(target.numel())
+            logging.info(f"[debug] test_batch targets pos={positives} neg={total - positives} total={total}")
     
     def compute_loss(self, outputs: torch.Tensor, batch: Tuple[torch.Tensor, ...]) -> torch.Tensor:
         if self._model is None:
@@ -659,48 +706,33 @@ class YAIBRuntime:
         labels = labels.to(device)
         mask = mask.to(device)
         
-        if isinstance(self._model, LightningModule):
-            prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
-            target = torch.masked_select(labels, mask)
-            
-            if outputs.shape[-1] > 1:
-                prediction_proba = torch.softmax(prediction, dim=-1)[:, 1].cpu().numpy()
-            else:
-                prediction_proba = torch.sigmoid(prediction).cpu().numpy()
-            
-            target_np = target.cpu().numpy()
-            
-            from sklearn.metrics import roc_auc_score, average_precision_score, log_loss
-            
-            try:
-                auroc = roc_auc_score(target_np, prediction_proba)
-            except ValueError:
-                auroc = 0.0
-            
-            try:
-                auprc = average_precision_score(target_np, prediction_proba)
-            except ValueError:
-                auprc = 0.0
-            
-            try:
-                loss = log_loss(target_np, prediction_proba)
-            except ValueError:
-                loss = float('inf')
-            
+        prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
+        target = torch.masked_select(labels, mask)
+        target_np = target.cpu().numpy()
+
+        run_mode = getattr(self._model, "run_mode", self._mode) if isinstance(self._model, LightningModule) else (self._mode or RunMode.classification)
+
+        if run_mode == RunMode.regression:
+            from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+            pred_np = prediction[:, 0].cpu().numpy() if prediction.shape[-1] >= 1 else prediction.squeeze(-1).cpu().numpy()
+            mae = mean_absolute_error(target_np, pred_np)
+            mse = mean_squared_error(target_np, pred_np)
             return {
-                "AUCROC": auroc,
-                "AUCPR": auprc,
-                "loss": loss,
+                "MAE": float(mae),
+                "MSE": float(mse),
+                "RMSE": float(mse ** 0.5),
+                "R2": float(r2_score(target_np, pred_np)),
+                "loss": float(mse),
             }
-        elif self._is_ml_model:
-            prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
-            target = torch.masked_select(labels, mask)
+
+        if isinstance(self._model, LightningModule) or self._is_ml_model:
             if outputs.shape[-1] > 1:
                 prediction_proba = torch.softmax(prediction, dim=-1)[:, 1].cpu().numpy()
             else:
                 prediction_proba = torch.sigmoid(prediction).cpu().numpy()
-            target_np = target.cpu().numpy()
+
             from sklearn.metrics import roc_auc_score, average_precision_score, log_loss
+
             try:
                 auroc = roc_auc_score(target_np, prediction_proba)
             except ValueError:

@@ -153,6 +153,8 @@ def _get_training_config(config: dict) -> dict:
         "lstm_informed_gate": training.get("lstm_informed_gate", False),
         # Separate training seed (weight init, dropout, shuffle) from data split seed
         "training_seed": training.get("training_seed", None),
+        # Task type: "classification" (default) or "regression" (LoS, KF)
+        "task_type": training.get("task_type", "classification"),
     }
 
 
@@ -588,15 +590,17 @@ def train_translator(args):
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
                 logging.info("Static conditioning disabled; using zero static features for translator.")
 
+        task_type = training_cfg.get("task_type", "classification")
+
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
-        if neg_subsample > 0:
+        if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
                 train_loader, neg_subsample, seed=config.get("seed", 2222)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
         vlb = training_cfg.get("variable_length_batching", False)
-        if not vlb and oversampling_factor > 0:
+        if not vlb and oversampling_factor > 0 and task_type != "regression":
             train_loader = _apply_oversampling(train_loader, oversampling_factor)
 
         schema_resolver = SchemaResolver(
@@ -824,15 +828,17 @@ def train_translator(args):
                 train_loader = _augment_loader_with_zero_static(train_loader, static_features)
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
 
+        task_type = training_cfg.get("task_type", "classification")
+
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
-        if neg_subsample > 0:
+        if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
                 train_loader, neg_subsample, seed=config.get("seed", 2222)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
         vlb = training_cfg.get("variable_length_batching", False)
-        if not vlb and oversampling_factor > 0:
+        if not vlb and oversampling_factor > 0 and task_type != "regression":
             train_loader = _apply_oversampling(train_loader, oversampling_factor)
 
         schema_resolver = SchemaResolver(
@@ -1026,15 +1032,17 @@ def train_translator(args):
                 train_loader = _augment_loader_with_zero_static(train_loader, static_features)
                 val_loader = _augment_loader_with_zero_static(val_loader, static_features)
 
+        task_type = training_cfg.get("task_type", "classification")
+
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
-        if neg_subsample > 0:
+        if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
                 train_loader, neg_subsample, seed=config.get("seed", 2222)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
         vlb = training_cfg.get("variable_length_batching", False)
-        if not vlb and oversampling_factor > 0:
+        if not vlb and oversampling_factor > 0 and task_type != "regression":
             train_loader = _apply_oversampling(train_loader, oversampling_factor)
 
         schema_resolver = SchemaResolver(
@@ -1361,6 +1369,7 @@ def translate_and_eval(args):
             device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
+            task_type=training_cfg.get("task_type", "classification"),
         )
         output_path = Path(args.output_parquet)
         sample_dir = translator_cfg.get(
@@ -1460,6 +1469,7 @@ def translate_and_eval(args):
             device=config.get("device", "cuda"),
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
+            task_type=training_cfg.get("task_type", "classification"),
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(
@@ -1612,6 +1622,7 @@ def translate_and_eval(args):
             device=device,
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
+            task_type=training_cfg.get("task_type", "classification"),
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(

@@ -467,7 +467,8 @@ class TransformerTranslatorTrainer:
                 else:
                     x_val_out = result
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
+                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
             # Retain grad on translator output for per-timestep gradient analysis
             _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
@@ -553,7 +554,8 @@ class TransformerTranslatorTrainer:
                     return_forecast=False,
                 )
                 tgt_yaib = self.schema_resolver.rebuild(
-                    target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"]
+                    target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"],
+                    m_pad=target_parts["M_pad"],
                 )
                 tgt_label_mask = target_parts["M_label"].bool()
                 tgt_logits = self.yaib_runtime.forward((tgt_yaib, target_parts["y"], tgt_label_mask))
@@ -721,7 +723,8 @@ class TransformerTranslatorTrainer:
                 else:
                     x_val_out = result
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
+                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 if not self._logged_val_batch:
                     self._log_debug_batch(parts, x_yaib_translated, "val")
@@ -786,7 +789,8 @@ class TransformerTranslatorTrainer:
                         return_forecast=False,
                     )
                     tgt_yaib = self.schema_resolver.rebuild(
-                        target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"]
+                        target_parts["X_yaib"], tgt_val_out.float(), target_parts["X_miss"], target_parts["X_static"],
+                        m_pad=target_parts["M_pad"],
                     )
                     tgt_label_mask = target_parts["M_label"].bool()
                     tgt_logits = self.yaib_runtime.forward((tgt_yaib, target_parts["y"], tgt_label_mask))
@@ -1024,6 +1028,7 @@ class LatentTranslatorTrainer:
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
         self._training_config = _tc
+        self.task_type = _tc.get("task_type", "classification")
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
         self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
@@ -1101,6 +1106,11 @@ class LatentTranslatorTrainer:
         self.best_val = float("inf")
         self.best_state = None
         self.history: list[dict] = []
+
+    def _label_pred_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if self.task_type == "regression":
+            return F.mse_loss(logits.float(), targets.float())
+        return F.binary_cross_entropy_with_logits(logits.float(), targets.float())
 
     def _load_feature_bounds(self, bounds_csv, feature_names):
         import pandas as pd
@@ -1182,9 +1192,9 @@ class LatentTranslatorTrainer:
                     label_logits = self.translator.predict_labels(latent, parts["M_pad"])
                     label_mask = parts["M_label"].bool()
                     if label_mask.any():
-                        l_label_pred = F.binary_cross_entropy_with_logits(
-                            label_logits[label_mask].float(),
-                            parts["y"][label_mask].float(),
+                        l_label_pred = self._label_pred_loss(
+                            label_logits[label_mask],
+                            parts["y"][label_mask],
                         )
 
                 loss = l_recon + self.lambda_label_pred * l_label_pred
@@ -1226,6 +1236,7 @@ class LatentTranslatorTrainer:
                 # Rebuild YAIB batch and get task loss (cast to float32 for schema rebuild)
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
                 logits = self.yaib_runtime.forward(
@@ -1257,7 +1268,7 @@ class LatentTranslatorTrainer:
                     gate = self.feature_gate()  # (F,)
                     tgt_diff = tgt_diff * gate.view(1, 1, -1)
                 tgt_recon_per_ts = tgt_diff.sum(dim=-1)  # (B, T)
-                if self.recon_positive_boost > 0:
+                if self.recon_positive_boost > 0 and self.task_type != "regression":
                     tgt_labels = tgt_parts["y"].float()
                     tgt_label_available = tgt_parts["M_label"].bool()
                     pos_mask = tgt_label_available & (tgt_labels > 0.5)
@@ -1278,7 +1289,8 @@ class LatentTranslatorTrainer:
                 l_target_task = tgt_out.new_tensor(0.0)
                 if self.lambda_target_task > 0:
                     tgt_yaib = self.schema_resolver.rebuild(
-                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"],
+                        m_pad=tgt_parts["M_pad"],
                     )
                     tgt_label_mask = tgt_parts["M_label"].bool()
                     tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
@@ -1293,9 +1305,9 @@ class LatentTranslatorTrainer:
                     src_label_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
                     src_label_mask = parts["M_label"].bool()
                     if src_label_mask.any():
-                        l_src_lp = F.binary_cross_entropy_with_logits(
-                            src_label_logits[src_label_mask].float(),
-                            parts["y"][src_label_mask].float(),
+                        l_src_lp = self._label_pred_loss(
+                            src_label_logits[src_label_mask],
+                            parts["y"][src_label_mask],
                         )
                     else:
                         l_src_lp = src_latent.new_tensor(0.0)
@@ -1303,9 +1315,9 @@ class LatentTranslatorTrainer:
                     tgt_label_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
                     tgt_label_mask_lp = tgt_parts["M_label"].bool()
                     if tgt_label_mask_lp.any():
-                        l_tgt_lp = F.binary_cross_entropy_with_logits(
-                            tgt_label_logits[tgt_label_mask_lp].float(),
-                            tgt_parts["y"][tgt_label_mask_lp].float(),
+                        l_tgt_lp = self._label_pred_loss(
+                            tgt_label_logits[tgt_label_mask_lp],
+                            tgt_parts["y"][tgt_label_mask_lp],
                         )
                     else:
                         l_tgt_lp = tgt_latent.new_tensor(0.0)
@@ -1383,6 +1395,7 @@ class LatentTranslatorTrainer:
 
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
                 logits = self.yaib_runtime.forward(
@@ -1423,7 +1436,8 @@ class LatentTranslatorTrainer:
                 l_target_task = tgt_out.new_tensor(0.0)
                 if self.lambda_target_task > 0:
                     tgt_yaib = self.schema_resolver.rebuild(
-                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"],
+                        m_pad=tgt_parts["M_pad"],
                     )
                     tgt_label_mask = tgt_parts["M_label"].bool()
                     tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
@@ -1437,18 +1451,18 @@ class LatentTranslatorTrainer:
                     src_label_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
                     src_label_mask = parts["M_label"].bool()
                     if src_label_mask.any():
-                        l_src_lp = F.binary_cross_entropy_with_logits(
-                            src_label_logits[src_label_mask].float(),
-                            parts["y"][src_label_mask].float(),
+                        l_src_lp = self._label_pred_loss(
+                            src_label_logits[src_label_mask],
+                            parts["y"][src_label_mask],
                         )
                     else:
                         l_src_lp = src_latent.new_tensor(0.0)
                     tgt_label_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
                     tgt_label_mask_lp = tgt_parts["M_label"].bool()
                     if tgt_label_mask_lp.any():
-                        l_tgt_lp = F.binary_cross_entropy_with_logits(
-                            tgt_label_logits[tgt_label_mask_lp].float(),
-                            tgt_parts["y"][tgt_label_mask_lp].float(),
+                        l_tgt_lp = self._label_pred_loss(
+                            tgt_label_logits[tgt_label_mask_lp],
+                            tgt_parts["y"][tgt_label_mask_lp],
                         )
                     else:
                         l_tgt_lp = tgt_latent.new_tensor(0.0)
@@ -1641,6 +1655,8 @@ class RetrievalTranslatorTrainer:
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
         self._training_config = _tc
+        self.task_type = _tc.get("task_type", "classification")
+        self.window_stride = _tc.get("window_stride", None)  # None = window_size (non-overlapping)
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
         self.importance_reg_type = _tc.get("importance_reg_type", "l1")
@@ -1722,6 +1738,11 @@ class RetrievalTranslatorTrainer:
         self.history: list[dict] = []
         self.memory_bank = None
 
+    def _label_pred_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if self.task_type == "regression":
+            return F.mse_loss(logits.float(), targets.float())
+        return F.binary_cross_entropy_with_logits(logits.float(), targets.float())
+
     def _load_feature_bounds(self, bounds_csv, feature_names):
         import pandas as pd
         df = pd.read_csv(bounds_csv)
@@ -1793,6 +1814,7 @@ class RetrievalTranslatorTrainer:
             schema_resolver=self.schema_resolver,
             device=self.device,
             window_size=self.retrieval_window,
+            window_stride=self.window_stride,
         )
         self.translator.train()  # restore train mode after build
 
@@ -1822,9 +1844,9 @@ class RetrievalTranslatorTrainer:
                     label_logits = self.translator.predict_labels(latent, parts["M_pad"])
                     label_mask = parts["M_label"].bool()
                     if label_mask.any():
-                        l_label_pred = F.binary_cross_entropy_with_logits(
-                            label_logits[label_mask].float(),
-                            parts["y"][label_mask].float(),
+                        l_label_pred = self._label_pred_loss(
+                            label_logits[label_mask],
+                            parts["y"][label_mask],
                         )
 
                 loss = l_recon + self.lambda_label_pred * l_label_pred
@@ -1875,16 +1897,18 @@ class RetrievalTranslatorTrainer:
                     importance_weights=importance_w.detach(),
                 )
 
-                # Forward with retrieved context
+                # Forward with retrieved context (reuse src_latent to avoid double-encode)
                 x_out, _ = self.translator.forward_with_retrieval(
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                     context,
+                    latent=src_latent,
                 )
 
                 # Task loss via frozen LSTM
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
                 logits = self.yaib_runtime.forward(
@@ -1910,7 +1934,7 @@ class RetrievalTranslatorTrainer:
                 # Per-feature recon → per-timestep scalar
                 tgt_recon_per_ts = tgt_diff.sum(dim=-1)  # (B, T)
                 # Positive-weighted reconstruction: boost recon loss at positive timesteps
-                if self.recon_positive_boost > 0:
+                if self.recon_positive_boost > 0 and self.task_type != "regression":
                     tgt_labels = tgt_parts["y"].float()
                     tgt_label_available = tgt_parts["M_label"].bool()
                     pos_mask = tgt_label_available & (tgt_labels > 0.5)
@@ -1943,7 +1967,8 @@ class RetrievalTranslatorTrainer:
                 l_target_task = tgt_out.new_tensor(0.0)
                 if self.lambda_target_task > 0:
                     tgt_yaib = self.schema_resolver.rebuild(
-                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"],
+                        m_pad=tgt_parts["M_pad"],
                     )
                     tgt_label_mask = tgt_parts["M_label"].bool()
                     tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
@@ -1966,14 +1991,14 @@ class RetrievalTranslatorTrainer:
                 if self.lambda_label_pred > 0:
                     src_lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
                     src_lp_mask = parts["M_label"].bool()
-                    l_src_lp = (F.binary_cross_entropy_with_logits(
-                        src_lp_logits[src_lp_mask].float(), parts["y"][src_lp_mask].float()
+                    l_src_lp = (self._label_pred_loss(
+                        src_lp_logits[src_lp_mask], parts["y"][src_lp_mask]
                     ) if src_lp_mask.any() else src_latent.new_tensor(0.0))
 
                     tgt_lp_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
                     tgt_lp_mask = tgt_parts["M_label"].bool()
-                    l_tgt_lp = (F.binary_cross_entropy_with_logits(
-                        tgt_lp_logits[tgt_lp_mask].float(), tgt_parts["y"][tgt_lp_mask].float()
+                    l_tgt_lp = (self._label_pred_loss(
+                        tgt_lp_logits[tgt_lp_mask], tgt_parts["y"][tgt_lp_mask]
                     ) if tgt_lp_mask.any() else tgt_latent.new_tensor(0.0))
 
                     l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
@@ -2068,10 +2093,12 @@ class RetrievalTranslatorTrainer:
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                     context,
+                    latent=src_latent,
                 )
 
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
                 logits = self.yaib_runtime.forward(
@@ -2116,7 +2143,8 @@ class RetrievalTranslatorTrainer:
                 l_target_task = tgt_out.new_tensor(0.0)
                 if self.lambda_target_task > 0:
                     tgt_yaib = self.schema_resolver.rebuild(
-                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"]
+                        tgt_parts["X_yaib"], tgt_out.float(), tgt_parts["X_miss"], tgt_parts["X_static"],
+                        m_pad=tgt_parts["M_pad"],
                     )
                     tgt_label_mask = tgt_parts["M_label"].bool()
                     tgt_logits = self.yaib_runtime.forward((tgt_yaib, tgt_parts["y"], tgt_label_mask))
@@ -2139,14 +2167,14 @@ class RetrievalTranslatorTrainer:
                 if self.lambda_label_pred > 0:
                     src_lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
                     src_lp_mask = parts["M_label"].bool()
-                    l_src_lp = (F.binary_cross_entropy_with_logits(
-                        src_lp_logits[src_lp_mask].float(), parts["y"][src_lp_mask].float()
+                    l_src_lp = (self._label_pred_loss(
+                        src_lp_logits[src_lp_mask], parts["y"][src_lp_mask]
                     ) if src_lp_mask.any() else src_latent.new_tensor(0.0))
 
                     tgt_lp_logits = self.translator.predict_labels(tgt_latent, tgt_parts["M_pad"])
                     tgt_lp_mask = tgt_parts["M_label"].bool()
-                    l_tgt_lp = (F.binary_cross_entropy_with_logits(
-                        tgt_lp_logits[tgt_lp_mask].float(), tgt_parts["y"][tgt_lp_mask].float()
+                    l_tgt_lp = (self._label_pred_loss(
+                        tgt_lp_logits[tgt_lp_mask], tgt_parts["y"][tgt_lp_mask]
                     ) if tgt_lp_mask.any() else tgt_latent.new_tensor(0.0))
 
                     l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
@@ -2235,7 +2263,31 @@ class RetrievalTranslatorTrainer:
         # Phase 2: Retrieval-guided training
         logging.info("=== Phase 2: Retrieval-guided training (%d epochs) ===", epochs)
         epochs_without_improvement = 0
-        for epoch in range(epochs):
+        start_epoch = 0
+
+        # --- Resume from checkpoint ---
+        resume_path = self.run_dir / "latest_checkpoint.pt"
+        if resume_path.exists():
+            rk = torch.load(resume_path, map_location=self.device, weights_only=False)
+            self.translator.load_state_dict(rk["translator_state_dict"])
+            self.optimizer.load_state_dict(rk["optimizer_state_dict"])
+            self.scaler.load_state_dict(rk["scaler_state_dict"])
+            self.best_val = rk["best_val"]
+            self.best_state = rk.get("best_state")
+            self.history = rk.get("history", [])
+            epochs_without_improvement = rk.get("epochs_without_improvement", 0)
+            start_epoch = rk["epoch"] + 1
+            if self.feature_gate is not None and "feature_gate_state_dict" in rk:
+                self.feature_gate.load_state_dict(rk["feature_gate_state_dict"])
+            if rk.get("renorm_scale") is not None:
+                self.renorm_scale = rk["renorm_scale"]
+                self.renorm_offset = rk["renorm_offset"]
+            logging.info(
+                "Resumed from checkpoint epoch %d (best_val=%.6f, no_improve=%d)",
+                start_epoch, self.best_val, epochs_without_improvement,
+            )
+
+        for epoch in range(start_epoch, epochs):
             # Rebuild memory bank periodically
             if self.memory_bank is None or (epoch % self.memory_refresh_epochs == 0):
                 self._build_memory_bank()
@@ -2286,12 +2338,34 @@ class RetrievalTranslatorTrainer:
             else:
                 epochs_without_improvement += 1
 
+            # Save resume checkpoint every epoch
+            resume_ckpt = {
+                "epoch": epoch,
+                "translator_state_dict": self.translator.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "scaler_state_dict": self.scaler.state_dict(),
+                "best_val": self.best_val,
+                "best_state": self.best_state,
+                "history": self.history,
+                "epochs_without_improvement": epochs_without_improvement,
+                "renorm_scale": self.renorm_scale,
+                "renorm_offset": self.renorm_offset,
+            }
+            if self.feature_gate is not None:
+                resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()
+            torch.save(resume_ckpt, resume_path)
+
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
                 logging.info("Early stopping after %d epochs without improvement", epochs_without_improvement)
                 break
 
         if self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
+
+        # Clean exit — remove resume checkpoint
+        if resume_path.exists():
+            resume_path.unlink()
+            logging.info("Training completed — removed resume checkpoint")
 
         self._verify_baseline_frozen()
         self._plot_losses()

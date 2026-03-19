@@ -48,16 +48,31 @@ def _compute_calibration_metrics(targets: np.ndarray, probs: np.ndarray, n_bins:
     return {"brier": float(brier), "ece": float(ece)}
 
 
+def _compute_regression_metrics(targets: np.ndarray, predictions: np.ndarray) -> Dict[str, float]:
+    """Compute regression metrics: MAE, MSE, RMSE, R2."""
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    mae = mean_absolute_error(targets, predictions)
+    mse = mean_squared_error(targets, predictions)
+    return {
+        "MAE": float(mae),
+        "MSE": float(mse),
+        "RMSE": float(mse ** 0.5),
+        "R2": float(r2_score(targets, predictions)),
+    }
+
+
 class TranslatorEvaluator:
     def __init__(
         self,
         yaib_runtime: YAIBRuntime,
         translator: Translator,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
+        task_type: str = "classification",
     ):
         self.yaib_runtime = yaib_runtime
         self.translator = translator.to(device)
         self.device = device
+        self.task_type = task_type
     
     def translate_and_evaluate(
         self,
@@ -86,12 +101,16 @@ class TranslatorEvaluator:
                 ).reshape(-1, baseline_outputs.shape[-1])
                 target = torch.masked_select(batch[1].to(baseline_outputs.device), mask)
 
-                if baseline_outputs.shape[-1] > 1:
-                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                if self.task_type == "regression":
+                    raw_pred = prediction[:, 0] if prediction.shape[-1] >= 1 else prediction.squeeze(-1)
+                    all_probs.append(raw_pred.detach().cpu())
                 else:
-                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    if baseline_outputs.shape[-1] > 1:
+                        prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                    else:
+                        prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    all_probs.append(prediction_proba.detach().cpu())
 
-                all_probs.append(prediction_proba.detach().cpu())
                 all_targets.append(target.detach().cpu())
                 total_loss += self.yaib_runtime.compute_loss(
                     baseline_outputs, (translated_data, batch[1], batch[2])
@@ -103,32 +122,36 @@ class TranslatorEvaluator:
 
         probs_np, targets_np = None, None
         if not all_probs:
-            avg_metrics = {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            avg_metrics = {"MAE": float("inf"), "MSE": float("inf"), "loss": float("inf")} if self.task_type == "regression" else {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
         else:
             probs_np = torch.cat(all_probs).numpy()
             targets_np = torch.cat(all_targets).numpy()
 
-            from sklearn.metrics import roc_auc_score, average_precision_score
+            if self.task_type == "regression":
+                avg_metrics = _compute_regression_metrics(targets_np, probs_np)
+                avg_metrics["loss"] = total_loss / num_batches if num_batches > 0 else float("inf")
+            else:
+                from sklearn.metrics import roc_auc_score, average_precision_score
 
-            try:
-                auroc = roc_auc_score(targets_np, probs_np)
-            except ValueError:
-                auroc = 0.0
-            try:
-                auprc = average_precision_score(targets_np, probs_np)
-            except ValueError:
-                auprc = 0.0
+                try:
+                    auroc = roc_auc_score(targets_np, probs_np)
+                except ValueError:
+                    auroc = 0.0
+                try:
+                    auprc = average_precision_score(targets_np, probs_np)
+                except ValueError:
+                    auprc = 0.0
 
-            avg_metrics = {
-                "AUCROC": auroc,
-                "AUCPR": auprc,
-                "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
-            }
-            try:
-                cal = _compute_calibration_metrics(targets_np, probs_np)
-                avg_metrics.update(cal)
-            except Exception as e:
-                logging.warning("Calibration metrics failed: %s", e)
+                avg_metrics = {
+                    "AUCROC": auroc,
+                    "AUCPR": auprc,
+                    "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+                }
+                try:
+                    cal = _compute_calibration_metrics(targets_np, probs_np)
+                    avg_metrics.update(cal)
+                except Exception as e:
+                    logging.warning("Calibration metrics failed: %s", e)
 
         if output_parquet_path:
             self.export_translated_parquet(
@@ -210,38 +233,47 @@ class TranslatorEvaluator:
                 ).reshape(-1, baseline_outputs.shape[-1])
                 target = torch.masked_select(batch[1].to(baseline_outputs.device), mask)
 
-                if baseline_outputs.shape[-1] > 1:
-                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                if self.task_type == "regression":
+                    raw_pred = prediction[:, 0] if prediction.shape[-1] >= 1 else prediction.squeeze(-1)
+                    all_probs.append(raw_pred.detach().cpu())
                 else:
-                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    if baseline_outputs.shape[-1] > 1:
+                        prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                    else:
+                        prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    all_probs.append(prediction_proba.detach().cpu())
 
-                all_probs.append(prediction_proba.detach().cpu())
                 all_targets.append(target.detach().cpu())
                 total_loss += self.yaib_runtime.compute_loss(baseline_outputs, batch).item()
                 num_batches += 1
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
+            empty = {"MAE": float("inf"), "MSE": float("inf"), "loss": float("inf")} if self.task_type == "regression" else {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return empty, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
 
-        from sklearn.metrics import roc_auc_score, average_precision_score
+        if self.task_type == "regression":
+            metrics = _compute_regression_metrics(targets, probs)
+            metrics["loss"] = total_loss / num_batches if num_batches > 0 else float("inf")
+        else:
+            from sklearn.metrics import roc_auc_score, average_precision_score
 
-        try:
-            auroc = roc_auc_score(targets, probs)
-        except ValueError:
-            auroc = 0.0
-        try:
-            auprc = average_precision_score(targets, probs)
-        except ValueError:
-            auprc = 0.0
+            try:
+                auroc = roc_auc_score(targets, probs)
+            except ValueError:
+                auroc = 0.0
+            try:
+                auprc = average_precision_score(targets, probs)
+            except ValueError:
+                auprc = 0.0
 
-        metrics = {
-            "AUCROC": auroc,
-            "AUCPR": auprc,
-            "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
-        }
+            metrics = {
+                "AUCROC": auroc,
+                "AUCPR": auprc,
+                "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+            }
         try:
             cal = _compute_calibration_metrics(targets, probs)
             metrics.update(cal)
@@ -259,6 +291,7 @@ class TransformerTranslatorEvaluator:
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         renorm_scale: Optional[torch.Tensor] = None,
         renorm_offset: Optional[torch.Tensor] = None,
+        task_type: str = "classification",
     ):
         self.yaib_runtime = yaib_runtime
         self.translator = translator.to(device)
@@ -266,6 +299,7 @@ class TransformerTranslatorEvaluator:
         self.device = device
         self.renorm_scale = renorm_scale.to(device) if renorm_scale is not None else None
         self.renorm_offset = renorm_offset.to(device) if renorm_offset is not None else None
+        self.task_type = task_type
 
     def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
         if self.renorm_scale is None:
@@ -298,7 +332,8 @@ class TransformerTranslatorEvaluator:
                     parts["X_static"],
                 )
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
+                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
                 if export_full_sequence:
                     # Export all non-padded steps, not just the label mask (which is often only last-timestep).
@@ -337,43 +372,52 @@ class TransformerTranslatorEvaluator:
                 prediction = torch.masked_select(outputs, mask.unsqueeze(-1)).reshape(-1, outputs.shape[-1])
                 target = torch.masked_select(yaib_batch[1].to(outputs.device), mask)
 
-                if outputs.shape[-1] > 1:
-                    prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                if self.task_type == "regression":
+                    raw_pred = prediction[:, 0] if prediction.shape[-1] >= 1 else prediction.squeeze(-1)
+                    all_probs.append(raw_pred.detach().cpu())
                 else:
-                    prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    if outputs.shape[-1] > 1:
+                        prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                    else:
+                        prediction_proba = torch.sigmoid(prediction).squeeze(-1)
+                    all_probs.append(prediction_proba.detach().cpu())
 
-                all_probs.append(prediction_proba.detach().cpu())
                 all_targets.append(target.detach().cpu())
                 total_loss += self.yaib_runtime.compute_loss(outputs, yaib_batch).item()
                 num_batches += 1
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
+            empty = {"MAE": float("inf"), "MSE": float("inf"), "loss": float("inf")} if self.task_type == "regression" else {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return empty, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
 
-        from sklearn.metrics import roc_auc_score, average_precision_score
+        if self.task_type == "regression":
+            metrics = _compute_regression_metrics(targets, probs)
+            metrics["loss"] = total_loss / num_batches if num_batches > 0 else float("inf")
+        else:
+            from sklearn.metrics import roc_auc_score, average_precision_score
 
-        try:
-            auroc = roc_auc_score(targets, probs)
-        except ValueError:
-            auroc = 0.0
-        try:
-            auprc = average_precision_score(targets, probs)
-        except ValueError:
-            auprc = 0.0
+            try:
+                auroc = roc_auc_score(targets, probs)
+            except ValueError:
+                auroc = 0.0
+            try:
+                auprc = average_precision_score(targets, probs)
+            except ValueError:
+                auprc = 0.0
 
-        metrics = {
-            "AUCROC": auroc,
-            "AUCPR": auprc,
-            "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
-        }
-        try:
-            cal = _compute_calibration_metrics(targets, probs)
-            metrics.update(cal)
-        except Exception as e:
-            logging.warning("Calibration metrics failed: %s", e)
+            metrics = {
+                "AUCROC": auroc,
+                "AUCPR": auprc,
+                "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+            }
+            try:
+                cal = _compute_calibration_metrics(targets, probs)
+                metrics.update(cal)
+            except Exception as e:
+                logging.warning("Calibration metrics failed: %s", e)
         return metrics, probs, targets
 
     def translate_and_evaluate(
@@ -418,7 +462,8 @@ class TransformerTranslatorEvaluator:
                     parts["X_static"],
                 )
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"]
+                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    m_pad=parts["M_pad"],
                 )
 
                 # D2: Accumulate per-feature delta stats
@@ -443,12 +488,15 @@ class TransformerTranslatorEvaluator:
                 prediction = torch.masked_select(logits, mask.unsqueeze(-1)).reshape(-1, logits.shape[-1])
                 target = torch.masked_select(parts["y"].to(logits.device), mask)
 
-                if logits.shape[-1] > 1:
+                if self.task_type == "regression":
+                    raw_pred = prediction[:, 0] if prediction.shape[-1] >= 1 else prediction.squeeze(-1)
+                    all_probs.append(raw_pred.detach().cpu())
+                elif logits.shape[-1] > 1:
                     prediction_proba = torch.softmax(prediction, dim=-1)[:, 1]
+                    all_probs.append(prediction_proba.detach().cpu())
                 else:
                     prediction_proba = torch.sigmoid(prediction).squeeze(-1)
-
-                all_probs.append(prediction_proba.detach().cpu())
+                    all_probs.append(prediction_proba.detach().cpu())
                 all_targets.append(target.detach().cpu())
                 total_loss += self.yaib_runtime.compute_loss(
                     logits, (x_yaib_translated, parts["y"], mask)
@@ -525,32 +573,37 @@ class TransformerTranslatorEvaluator:
                 logging.warning("[delta-analysis] Failed to compute delta stats: %s", e)
 
         if not all_probs:
-            return {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}, None, None
+            empty = {"MAE": float("inf"), "MSE": float("inf"), "loss": float("inf")} if self.task_type == "regression" else {"AUCROC": 0.0, "AUCPR": 0.0, "loss": float("inf")}
+            return empty, None, None
 
         probs = torch.cat(all_probs).numpy()
         targets = torch.cat(all_targets).numpy()
 
-        from sklearn.metrics import roc_auc_score, average_precision_score
+        if self.task_type == "regression":
+            metrics = _compute_regression_metrics(targets, probs)
+            metrics["loss"] = total_loss / num_batches if num_batches > 0 else float("inf")
+        else:
+            from sklearn.metrics import roc_auc_score, average_precision_score
 
-        try:
-            auroc = roc_auc_score(targets, probs)
-        except ValueError:
-            auroc = 0.0
-        try:
-            auprc = average_precision_score(targets, probs)
-        except ValueError:
-            auprc = 0.0
+            try:
+                auroc = roc_auc_score(targets, probs)
+            except ValueError:
+                auroc = 0.0
+            try:
+                auprc = average_precision_score(targets, probs)
+            except ValueError:
+                auprc = 0.0
 
-        metrics = {
-            "AUCROC": auroc,
-            "AUCPR": auprc,
-            "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
-        }
-        try:
-            cal = _compute_calibration_metrics(targets, probs)
-            metrics.update(cal)
-        except Exception as e:
-            logging.warning("Calibration metrics failed: %s", e)
+            metrics = {
+                "AUCROC": auroc,
+                "AUCPR": auprc,
+                "loss": total_loss / num_batches if num_batches > 0 else float("inf"),
+            }
+            try:
+                cal = _compute_calibration_metrics(targets, probs)
+                metrics.update(cal)
+            except Exception as e:
+                logging.warning("Calibration metrics failed: %s", e)
         return metrics, probs, targets
 
     def evaluate_original_vs_translated(
@@ -747,8 +800,9 @@ class RetrievalTranslatorWrapper(torch.nn.Module):
             importance_weights=importance_weights.detach() if importance_weights is not None else None,
         )
 
-        # Full forward with retrieval context
+        # Full forward with retrieval context (reuse latent to avoid double-encode)
         x_out, _ = self.translator.forward_with_retrieval(
             x_val, x_miss, t_abs, m_pad, x_static, context,
+            latent=latent,
         )
         return x_out

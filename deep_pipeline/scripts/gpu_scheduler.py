@@ -274,7 +274,7 @@ def select_gpus(server: ServerConfig, free_gpus: list[int], running_gpus: set[in
 def infer_task(config_path: str) -> str:
     """Infer task name from config filename."""
     name = Path(config_path).stem.lower()
-    for task in ["mortality", "aki", "sepsis"]:
+    for task in ["mortality", "aki", "sepsis", "los", "kf", "kidney_function"]:
         if task in name:
             return task
     return "unknown"
@@ -846,9 +846,16 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                 pid = exp.get("pid")
                 if pid and not pid_is_alive(pid):
                     logging.warning(f"Experiment '{name}' PID {pid} no longer running")
-                    exp["status"] = "failed"
                     exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    exp["error"] = "Process died (detected during monitoring)"
+                    # Check if experiment actually completed (output file exists)
+                    output_path = REPO / exp.get("output", "")
+                    if output_path.exists():
+                        logging.info(f"Experiment '{name}' output found — marking as done")
+                        exp["status"] = "done"
+                        collect_results(exp, servers)
+                    else:
+                        exp["status"] = "failed"
+                        exp["error"] = "Process died (detected during monitoring)"
                     _running_procs.pop(name, None)
         elif server and not server.is_local:
             # Queue for batch remote check

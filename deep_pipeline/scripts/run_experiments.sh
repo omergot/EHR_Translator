@@ -57,7 +57,7 @@ for exp in "${EXPERIMENTS[@]}"; do
     python scripts/collect_result.py "$exp" "$task" 2>/dev/null || true
 
     echo "$key" >> "$STATE_FILE"
-    git checkout deep_pipeline 2>/dev/null
+    git checkout master 2>/dev/null
   done
 done
 

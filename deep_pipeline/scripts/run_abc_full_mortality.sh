@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run remaining A/B/C experiments on full mortality data.
 # Each experiment runs on its own exp/ branch via git worktree,
-# merged with latest deep_pipeline before running.
+# merged with latest master before running.
 # GPU 1: c3, b3, b2, c1 (4 experiments, sequential)
 # GPU 2: b1, b5, a1 (3 experiments, sequential)
 set -eo pipefail
@@ -43,13 +43,13 @@ run_experiment() {
   }
 
   # Merge latest deep_pipeline into the worktree branch
-  echo "[$(date +%H:%M:%S)] [GPU $gpu] Merging deep_pipeline into $branch..."
+  echo "[$(date +%H:%M:%S)] [GPU $gpu] Merging master into $branch..."
   cd "$worktree"
-  git merge deep_pipeline --no-edit --quiet 2>&1 || {
+  git merge master --no-edit --quiet 2>&1 || {
     echo "[$(date +%H:%M:%S)] [GPU $gpu] [warn] Merge conflict for $branch, attempting auto-resolution..."
     git checkout --theirs . 2>/dev/null || true
     git add -A 2>/dev/null || true
-    git commit --no-edit -m "Auto-merge deep_pipeline into $branch" 2>/dev/null || true
+    git commit --no-edit -m "Auto-merge master into $branch" 2>/dev/null || true
   }
   cd "$DEEP_DIR"
 

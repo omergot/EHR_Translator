@@ -98,7 +98,7 @@ echo "========================================"
 echo "  All experiments done. Aggregating..."
 echo "========================================"
 cd "$REPO_DIR"
-git checkout deep_pipeline 2>/dev/null
+git checkout master 2>/dev/null
 python scripts/aggregate_results.py
 
 echo "COMPLETE at $(date)"

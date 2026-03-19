@@ -40,7 +40,7 @@ for exp in "${EXPERIMENTS[@]}"; do
     config="experiments/configs/${exp}_${task}_debug.json"
     if [ ! -f "$config" ]; then
       echo "ERROR: Config $config not found. Skipping $key."
-      git checkout deep_pipeline 2>/dev/null
+      git checkout master 2>/dev/null
       continue
     fi
 
@@ -67,5 +67,5 @@ echo "  All experiments done. Aggregating..."
 echo "========================================"
 
 cd "$REPO_DIR"
-git checkout deep_pipeline 2>/dev/null
+git checkout master 2>/dev/null
 python scripts/aggregate_results.py

@@ -6,15 +6,22 @@ Domain adaptation for EHR time-series data. Trains a **Translator** network to t
 
 Five clinical prediction tasks (3 classification, 2 regression). Deltas are improvements over the frozen eICU-applied baseline.
 
-| Task | Metric | Frozen Baseline | Translated | Delta | eICU-native LSTM |
-|---|---|---|---|---|---|
-| **Mortality** (per-stay) | AUCROC | 0.8079 | **0.8555** | **+0.0476** | 0.855 |
-| **AKI** (per-timestep) | AUCROC | 0.8558 | **0.9114** | **+0.0556** | 0.902 |
-| **Sepsis** (per-timestep) | AUCROC | 0.7159 | **0.7671** | **+0.0512** | 0.740 |
-| **Length of Stay** (per-timestep) | MAE (hours) | 42.5 | **39.2** | **-3.3h** | 39.2 |
-| **Kidney Function** (per-stay) | MAE (mg/dL) | 0.403 | **0.382** | **-0.021** | 0.28 |
+### Classification
 
-All 3 classification tasks surpass the eICU-native LSTM reference (YAIB, van de Water et al., ICLR 2024). AKI also surpasses the MIMIC-native LSTM. LoS matches the eICU-native reference.
+| Task | AUCROC Baseline | AUCROC Translated | AUCROC Delta | AUCPR Delta | eICU-native LSTM (AUCROC / AUCPR) |
+|---|---|---|---|---|---|
+| **Mortality** (per-stay) | 0.8079 | **0.8555** | **+0.0476** | **+0.0546** | 0.855 / 0.357 |
+| **AKI** (per-timestep) | 0.8558 | **0.9114** | **+0.0556** | **+0.1608** | 0.902 / 0.699 |
+| **Sepsis** (per-timestep) | 0.7159 | **0.7671** | **+0.0512** | **+0.0225** | 0.740 / 0.040 |
+
+### Regression
+
+| Task | Baseline MAE | Translated MAE | Delta | eICU-native LSTM |
+|---|---|---|---|---|
+| **Length of Stay** (per-timestep) | 42.5h | **39.2h** | **-3.3h** | 39.2h |
+| **Kidney Function** (per-stay) | 0.403 mg/dL | **0.382 mg/dL** | **-0.021** | 0.28 mg/dL |
+
+All 3 classification tasks surpass the eICU-native LSTM AUCROC reference (YAIB, van de Water et al., ICLR 2024). AKI surpasses both the eICU-native LSTM in AUCROC and AUCPR. LoS matches the eICU-native reference.
 
 ## Project Structure
 

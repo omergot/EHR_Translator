@@ -155,6 +155,17 @@ def _get_training_config(config: dict) -> dict:
         "training_seed": training.get("training_seed", None),
         # Task type: "classification" (default) or "regression" (LoS, KF)
         "task_type": training.get("task_type", "classification"),
+        # V6: LR scheduling
+        "lr_scheduler": training.get("lr_scheduler", None),           # "cosine" | "plateau" | null
+        "lr_min": training.get("lr_min", 0.0),                        # eta_min for cosine
+        "lr_warmup_epochs": training.get("lr_warmup_epochs", 0),      # linear warmup
+        # V6: Gradient clipping
+        "grad_clip_norm": training.get("grad_clip_norm", 0.0),        # max grad norm (0=disabled)
+        # V6: Self-retrieval Phase 1
+        "phase1_self_retrieval": training.get("phase1_self_retrieval", False),
+        "phase1_memory_refresh_epochs": training.get("phase1_memory_refresh_epochs", None),
+        # V6: Gradient accumulation
+        "accumulate_grad_batches": training.get("accumulate_grad_batches", 1),
     }
 
 

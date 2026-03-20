@@ -11,10 +11,35 @@ from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 import time
 
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, LambdaLR, SequentialLR
+
 from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
 from ..core.schema import SchemaResolver
 from ..core.mmd import multi_kernel_mmd
+
+
+def _create_lr_scheduler(optimizer, scheduler_type, total_epochs, lr_min=0.0, warmup_epochs=0):
+    """Create an LR scheduler (cosine or plateau) with optional linear warmup."""
+    if scheduler_type is None:
+        return None
+    warmup_sched = None
+    if warmup_epochs > 0:
+        warmup_sched = LambdaLR(
+            optimizer, lr_lambda=lambda ep: min(1.0, (ep + 1) / warmup_epochs)
+        )
+    if scheduler_type == "cosine":
+        cosine_epochs = max(1, total_epochs - warmup_epochs)
+        main_sched = CosineAnnealingLR(optimizer, T_max=cosine_epochs, eta_min=lr_min)
+        if warmup_sched is not None:
+            return SequentialLR(optimizer, [warmup_sched, main_sched], milestones=[warmup_epochs])
+        return main_sched
+    elif scheduler_type == "plateau":
+        # ReduceLROnPlateau doesn't compose well with warmup, skip warmup for this type
+        return ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, min_lr=lr_min)
+    else:
+        logging.warning("Unknown lr_scheduler type '%s', ignoring", scheduler_type)
+        return None
 
 
 def _compute_loader_stats(loader: DataLoader, schema_resolver: "SchemaResolver", device: str):
@@ -286,6 +311,13 @@ class TransformerTranslatorTrainer:
 
         # Store training config for experiment-specific features
         self._training_config = training_config or {}
+
+        # V6: LR scheduling, grad clipping, grad accumulation
+        self.lr_scheduler_type = self._training_config.get("lr_scheduler", None)
+        self.lr_min = self._training_config.get("lr_min", 0.0)
+        self.lr_warmup_epochs = self._training_config.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = self._training_config.get("grad_clip_norm", 0.0)
+        self.accumulate_grad_batches = max(1, self._training_config.get("accumulate_grad_batches", 1))
 
         # MIMIC target task loss
         self.lambda_target_task = self._training_config.get("lambda_target_task", 0.0)
@@ -641,26 +673,40 @@ class TransformerTranslatorTrainer:
                 else:
                     logging.info("[grad-ts] epoch=%d batch=%d x_val_out.grad is None (no task grad reached output)", epoch, num_batches)
 
-            self.optimizer.zero_grad()
+            if num_batches % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
             if use_amp:
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t_backward = time.time()
-                self.scaler.scale(l_total).backward()
+                self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 backward_time = time.time() - t_backward
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if (num_batches + 1) % self.accumulate_grad_batches == 0:
+                    if self.grad_clip_norm > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for g in self.optimizer.param_groups for p in g["params"]],
+                            self.grad_clip_norm,
+                        )
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
             else:
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t_backward = time.time()
-                l_total.backward()
+                (l_total / self.accumulate_grad_batches).backward()
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 backward_time = time.time() - t_backward
-                self.optimizer.step()
+                if (num_batches + 1) % self.accumulate_grad_batches == 0:
+                    if self.grad_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for g in self.optimizer.param_groups for p in g["params"]],
+                            self.grad_clip_norm,
+                        )
+                    self.optimizer.step()
 
             if not logged_this_epoch:
                 logging.info(
@@ -692,6 +738,25 @@ class TransformerTranslatorTrainer:
             totals["mmd_trans"] += l_mmd_trans.item()
             totals["target_task"] += l_target_task.item()
             num_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and num_batches % self.accumulate_grad_batches != 0:
+            if use_amp:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                if self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.optimizer.step()
 
         if num_batches == 0:
             return {k: float("inf") for k in totals}
@@ -833,8 +898,12 @@ class TransformerTranslatorTrainer:
         self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
         logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
         for epoch in range(epochs):
-            logging.info("Epoch %d/%d - training", epoch + 1, epochs)
+            logging.info("Epoch %d/%d - training (lr=%.2e)", epoch + 1, epochs, self.optimizer.param_groups[0]["lr"])
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             logging.info("Epoch %d/%d - validating", epoch + 1, epochs)
             val_metrics = self._validate(val_loader)
@@ -869,6 +938,7 @@ class TransformerTranslatorTrainer:
             self.history.append(
                 {
                     "epoch": epoch + 1,
+                    "lr": self.optimizer.param_groups[0]["lr"],
                     "train_total": train_metrics["total"],
                     "train_task": train_metrics["task"],
                     "train_fidelity": train_metrics["fidelity"],
@@ -887,6 +957,13 @@ class TransformerTranslatorTrainer:
                     "val_target_task": val_metrics.get("target_task", 0.0),
                 }
             )
+
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
 
             candidate = val_metrics["total"] if self.best_metric == "val_total" else val_metrics["task"]
             if candidate < self.best_val:
@@ -1033,6 +1110,13 @@ class LatentTranslatorTrainer:
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
         self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
         self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
+
+        # V6: LR scheduling, grad clipping, grad accumulation
+        self.lr_scheduler_type = _tc.get("lr_scheduler", None)
+        self.lr_min = _tc.get("lr_min", 0.0)
+        self.lr_warmup_epochs = _tc.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = _tc.get("grad_clip_norm", 0.0)
+        self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
 
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
@@ -1356,10 +1440,18 @@ class LatentTranslatorTrainer:
                     + self.lambda_contrastive_align * l_contrastive
                 )
 
-            self.optimizer.zero_grad()
-            self.scaler.scale(l_total).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if n_batches % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
+            self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
+            if (n_batches + 1) % self.accumulate_grad_batches == 0:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
@@ -1370,6 +1462,17 @@ class LatentTranslatorTrainer:
             totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
             n_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and n_batches % self.accumulate_grad_batches != 0:
+            if self.grad_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    [p for g in self.optimizer.param_groups for p in g["params"]],
+                    self.grad_clip_norm,
+                )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
 
@@ -1548,15 +1651,20 @@ class LatentTranslatorTrainer:
         # Phase 2: Joint training
         logging.info("=== Phase 2: Joint training (%d epochs) ===", epochs)
         epochs_without_improvement = 0
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
         for epoch in range(epochs):
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f (lr=%.2e)",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
                 train_metrics["align"], train_metrics["recon"], train_metrics["range"],
                 train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
+                self.optimizer.param_groups[0]["lr"],
             )
             logging.info(
                 "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
@@ -1567,9 +1675,17 @@ class LatentTranslatorTrainer:
 
             self.history.append({
                 "epoch": epoch + 1,
+                "lr": self.optimizer.param_groups[0]["lr"],
                 **{f"train_{k}": v for k, v in train_metrics.items()},
                 **{f"val_{k}": v for k, v in val_metrics.items()},
             })
+
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
             if candidate < self.best_val:
@@ -1662,6 +1778,18 @@ class RetrievalTranslatorTrainer:
         self.importance_reg_type = _tc.get("importance_reg_type", "l1")
         self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
         self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
+
+        # V6: LR scheduling, grad clipping, self-retrieval, grad accumulation
+        self.lr_scheduler_type = _tc.get("lr_scheduler", None)
+        self.lr_min = _tc.get("lr_min", 0.0)
+        self.lr_warmup_epochs = _tc.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = _tc.get("grad_clip_norm", 0.0)
+        self.phase1_self_retrieval = _tc.get("phase1_self_retrieval", False)
+        self.phase1_memory_refresh_epochs = _tc.get(
+            "phase1_memory_refresh_epochs", self.memory_refresh_epochs
+        )
+        self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
+
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
@@ -1674,6 +1802,14 @@ class RetrievalTranslatorTrainer:
             logging.info("Positive-weighted reconstruction enabled: boost=%.1f", self.recon_positive_boost)
         if self.lambda_align > 0:
             logging.info("Latent MMD alignment enabled: lambda_align=%.4f", self.lambda_align)
+        if self.phase1_self_retrieval:
+            logging.info("Phase 1 self-retrieval enabled (refresh every %d epochs)", self.phase1_memory_refresh_epochs)
+        if self.lr_scheduler_type:
+            logging.info("LR scheduler: %s (min=%.1e, warmup=%d)", self.lr_scheduler_type, self.lr_min, self.lr_warmup_epochs)
+        if self.grad_clip_norm > 0:
+            logging.info("Gradient clipping: max_norm=%.1f", self.grad_clip_norm)
+        if self.accumulate_grad_batches > 1:
+            logging.info("Gradient accumulation: %d batches", self.accumulate_grad_batches)
 
         # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
@@ -1819,11 +1955,18 @@ class RetrievalTranslatorTrainer:
         self.translator.train()  # restore train mode after build
 
     def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
-        """Autoencoder pretraining on MIMIC target data."""
+        """Autoencoder pretraining on MIMIC target data.
+
+        When phase1_self_retrieval is enabled, builds a MIMIC memory bank from the
+        encoder's own representations and uses it to provide real context to
+        cross-attention blocks during pretraining (instead of zero tensors).
+        """
+        from ..core.retrieval_translator import query_memory_bank
         self.translator.train()
         total_recon = 0.0
         total_label_pred = 0.0
         n_batches = 0
+        use_self_retrieval = self.phase1_self_retrieval and self.memory_bank is not None
 
         for batch in target_loader:
             batch = tuple(b.to(self.device) for b in batch)
@@ -1834,7 +1977,25 @@ class RetrievalTranslatorTrainer:
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                 )
-                x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
+
+                if use_self_retrieval:
+                    # Self-retrieval: use the memory bank to provide real context
+                    importance_w = self.translator.get_importance_weights()
+                    context = query_memory_bank(
+                        latent.detach(),  # safety: prevent backprop through k-NN
+                        parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w.detach(),
+                    )
+                    x_out = self.translator.decode_with_context(
+                        latent, context, parts["M_pad"], parts["X_static"],
+                    )
+                else:
+                    # Standard zero-context decode (backward compat)
+                    x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
+
                 mask = ~parts["M_pad"].bool()
                 diff = (x_out.float() - parts["X_val"].float()) ** 2
                 l_recon = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
@@ -2038,10 +2199,18 @@ class RetrievalTranslatorTrainer:
                     + self.lambda_contrastive_align * l_contrastive
                 )
 
-            self.optimizer.zero_grad()
-            self.scaler.scale(l_total).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if n_batches % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
+            self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
+            if (n_batches + 1) % self.accumulate_grad_batches == 0:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
@@ -2054,6 +2223,17 @@ class RetrievalTranslatorTrainer:
             totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
             n_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and n_batches % self.accumulate_grad_batches != 0:
+            if self.grad_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    [p for g in self.optimizer.param_groups for p in g["params"]],
+                    self.grad_clip_norm,
+                )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
 
@@ -2232,8 +2412,15 @@ class RetrievalTranslatorTrainer:
             self.translator.load_state_dict(ckpt["translator_state_dict"])
             logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
         elif self.pretrain_epochs > 0:
-            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
+            sr_label = " with self-retrieval" if self.phase1_self_retrieval else ""
+            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs%s) ===",
+                         self.pretrain_epochs, sr_label)
             for ep in range(self.pretrain_epochs):
+                # Build/refresh memory bank for self-retrieval
+                if self.phase1_self_retrieval:
+                    if self.memory_bank is None or (ep % self.phase1_memory_refresh_epochs == 0):
+                        self._build_memory_bank()
+
                 metrics = self._pretrain_epoch(self.target_train_loader)
                 lp_str = ""
                 if self.lambda_label_pred > 0:
@@ -2242,6 +2429,9 @@ class RetrievalTranslatorTrainer:
                     "Pretrain epoch %d/%d - recon=%.4f%s",
                     ep + 1, self.pretrain_epochs, metrics["pretrain_recon"], lp_str,
                 )
+
+            # Force Phase 2 to build a fresh memory bank (encoder changed during pretrain)
+            self.memory_bank = None
 
             torch.save({"translator_state_dict": self.translator.state_dict()}, pretrain_path)
             logging.info("Saved pretrain checkpoint to %s", pretrain_path)
@@ -2265,6 +2455,12 @@ class RetrievalTranslatorTrainer:
         epochs_without_improvement = 0
         start_epoch = 0
 
+        # Create LR scheduler for Phase 2
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
+
         # --- Resume from checkpoint ---
         resume_path = self.run_dir / "latest_checkpoint.pt"
         if resume_path.exists():
@@ -2282,6 +2478,8 @@ class RetrievalTranslatorTrainer:
             if rk.get("renorm_scale") is not None:
                 self.renorm_scale = rk["renorm_scale"]
                 self.renorm_offset = rk["renorm_offset"]
+            if self.scheduler is not None and "scheduler_state_dict" in rk:
+                self.scheduler.load_state_dict(rk["scheduler_state_dict"])
             logging.info(
                 "Resumed from checkpoint epoch %d (best_val=%.6f, no_improve=%d)",
                 start_epoch, self.best_val, epochs_without_improvement,
@@ -2295,12 +2493,14 @@ class RetrievalTranslatorTrainer:
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
+            cur_lr = self.optimizer.param_groups[0]["lr"]
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f (lr=%.2e)",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
                 train_metrics.get("align", 0.0), train_metrics["recon"], train_metrics["range"],
                 train_metrics["smooth"], train_metrics["importance_reg"],
                 train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
+                cur_lr,
             )
             logging.info(
                 "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
@@ -2314,9 +2514,17 @@ class RetrievalTranslatorTrainer:
 
             self.history.append({
                 "epoch": epoch + 1,
+                "lr": cur_lr,
                 **{f"train_{k}": v for k, v in train_metrics.items()},
                 **{f"val_{k}": v for k, v in val_metrics.items()},
             })
+
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
             if candidate < self.best_val:
@@ -2353,6 +2561,8 @@ class RetrievalTranslatorTrainer:
             }
             if self.feature_gate is not None:
                 resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()
+            if self.scheduler is not None:
+                resume_ckpt["scheduler_state_dict"] = self.scheduler.state_dict()
             torch.save(resume_ckpt, resume_path)
 
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:

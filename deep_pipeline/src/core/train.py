@@ -121,6 +121,87 @@ def verify_baseline_determinism(
     print(f"[Safety Check] PASSED. Baseline is deterministic (Max Diff: {diff:.2e}).\n")
 
 
+def _gradient_diagnostic(
+    optimizer: torch.optim.Optimizer,
+    translator: nn.Module,
+    x_out: torch.Tensor,
+    l_task: torch.Tensor,
+    l_reg: torch.Tensor,
+    l_range: torch.Tensor,
+    parts: dict,
+    epoch: int,
+    batch_idx: int,
+    reg_label: str = "fid",
+) -> None:
+    """Log gradient magnitude, cosine alignment, and per-timestep gradient analysis.
+
+    Called periodically during training to diagnose task vs regularization gradient
+    dynamics.  Performs 3+1 extra backward passes (retain_graph=True) — caller must
+    zero_grad before the real backward.
+    """
+    all_params = list(translator.parameters())
+
+    def _grad_vec(loss_val):
+        optimizer.zero_grad()
+        if x_out.grad is not None:
+            x_out.grad = None
+        loss_val.backward(retain_graph=True)
+        grads = [p.grad.detach().flatten() if p.grad is not None
+                 else torch.zeros(p.numel(), device=x_out.device)
+                 for p in all_params]
+        return torch.cat(grads)
+
+    task_vec = _grad_vec(l_task)
+    reg_vec = _grad_vec(l_reg)
+    range_vec = _grad_vec(l_range)
+
+    task_norm = task_vec.norm().item()
+    reg_norm = reg_vec.norm().item()
+    range_norm = range_vec.norm().item()
+
+    cos_task_reg = F.cosine_similarity(task_vec.unsqueeze(0), reg_vec.unsqueeze(0)).item()
+
+    logging.info(
+        "[grad-diag] epoch=%d batch=%d task_grad=%.6f %s_grad=%.6f range_grad=%.6f "
+        "ratio_%s/task=%.2f ratio_range/task=%.2f cos_task_%s=%.4f",
+        epoch, batch_idx, task_norm, reg_label, reg_norm, range_norm,
+        reg_label, reg_norm / (task_norm + 1e-12),
+        range_norm / (task_norm + 1e-12),
+        reg_label, cos_task_reg,
+    )
+
+    # Per-timestep gradient analysis
+    if x_out.grad is not None:
+        x_out.grad = None
+    optimizer.zero_grad()
+    l_task.backward(retain_graph=True)
+    if x_out.grad is not None:
+        grad = x_out.grad.detach().float()
+        label_m = parts["M_label"].bool()
+        pad_m = parts["M_pad"]
+        y = parts["y"]
+        pos_mask = (y >= 1) & label_m
+        neg_mask = (y < 1) & label_m
+        unlabeled_mask = (~label_m) & (~pad_m)
+        grad_per_ts = grad.norm(dim=-1)
+        pos_norm = grad_per_ts[pos_mask].mean().item() if pos_mask.any() else 0.0
+        neg_norm = grad_per_ts[neg_mask].mean().item() if neg_mask.any() else 0.0
+        unlabeled_norm = grad_per_ts[unlabeled_mask].mean().item() if unlabeled_mask.any() else 0.0
+        logging.info(
+            "[grad-ts] epoch=%d batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
+            "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
+            epoch, batch_idx, pos_norm, neg_norm, unlabeled_norm,
+            pos_norm / (neg_norm + 1e-12),
+            pos_mask.sum().item(), neg_mask.sum().item(),
+            unlabeled_mask.sum().item(), pad_m.sum().item(),
+        )
+    else:
+        logging.info(
+            "[grad-ts] epoch=%d batch=%d x_out.grad is None (no task grad reached output)",
+            epoch, batch_idx,
+        )
+
+
 class TranslatorTrainer:
     def __init__(
         self,
@@ -607,71 +688,11 @@ class TransformerTranslatorTrainer:
 
             # Gradient magnitude diagnostic (periodic: epoch 0 detailed, then batch 0 at intervals)
             if _do_grad_diag:
-                # Measure per-component gradient norms before the real step
-                def _grad_vec(loss_val):
-                    self.optimizer.zero_grad()
-                    if x_val_out.grad is not None:
-                        x_val_out.grad = None
-                    loss_val.backward(retain_graph=True)
-                    vec = torch.cat([
-                        p.grad.detach().flatten()
-                        for p in self.translator.parameters()
-                        if p.grad is not None
-                    ])
-                    return vec
-
-                task_grad_vec = _grad_vec(l_task)
-                fid_grad_vec = _grad_vec(self.lambda_fidelity * l_fidelity)
-                range_grad_vec = _grad_vec(self.lambda_range * l_range)
-
-                task_grad = task_grad_vec.norm().item()
-                fid_grad = fid_grad_vec.norm().item()
-                range_grad = range_grad_vec.norm().item()
-
-                # Cosine similarity between task and fidelity gradient directions
-                cos_task_fid = F.cosine_similarity(
-                    task_grad_vec.unsqueeze(0), fid_grad_vec.unsqueeze(0)
-                ).item()
-
-                logging.info(
-                    "[grad-diag] epoch=%d batch=%d task_grad=%.6f fid_grad=%.6f range_grad=%.6f "
-                    "ratio_fid/task=%.2f ratio_range/task=%.2f cos_task_fid=%.4f",
-                    epoch, num_batches, task_grad, fid_grad, range_grad,
-                    fid_grad / (task_grad + 1e-12),
-                    range_grad / (task_grad + 1e-12),
-                    cos_task_fid,
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_val_out,
+                    l_task, self.lambda_fidelity * l_fidelity, self.lambda_range * l_range,
+                    parts, epoch, num_batches, reg_label="fid",
                 )
-
-                # Per-timestep gradient analysis on x_val_out
-                if x_val_out.grad is not None:
-                    x_val_out.grad = None
-                self.optimizer.zero_grad()
-                l_task.backward(retain_graph=True)
-                if x_val_out.grad is not None:
-                    grad = x_val_out.grad.detach().float()  # (B, T, F)
-                    label_m = parts["M_label"].bool()
-                    pad_m = parts["M_pad"]
-                    y = parts["y"]
-                    pos_mask = (y >= 1) & label_m  # positive labeled timesteps
-                    neg_mask = (y < 1) & label_m   # negative labeled timesteps
-                    unlabeled_mask = (~label_m) & (~pad_m)  # non-padded, unlabeled
-                    grad_per_ts = grad.norm(dim=-1)  # (B, T)
-                    pos_norm = grad_per_ts[pos_mask].mean().item() if pos_mask.any() else 0.0
-                    neg_norm = grad_per_ts[neg_mask].mean().item() if neg_mask.any() else 0.0
-                    unlabeled_norm = grad_per_ts[unlabeled_mask].mean().item() if unlabeled_mask.any() else 0.0
-                    n_pos = pos_mask.sum().item()
-                    n_neg = neg_mask.sum().item()
-                    n_unlab = unlabeled_mask.sum().item()
-                    n_pad = pad_m.sum().item()
-                    logging.info(
-                        "[grad-ts] epoch=%d batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
-                        "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
-                        epoch, num_batches, pos_norm, neg_norm, unlabeled_norm,
-                        pos_norm / (neg_norm + 1e-12),
-                        n_pos, n_neg, n_unlab, n_pad,
-                    )
-                else:
-                    logging.info("[grad-ts] epoch=%d batch=%d x_val_out.grad is None (no task grad reached output)", epoch, num_batches)
 
             if num_batches % self.accumulate_grad_batches == 0:
                 self.optimizer.zero_grad()
@@ -1309,6 +1330,10 @@ class LatentTranslatorTrainer:
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
+            _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
+            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
+                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path ──
                 src_latent = self.translator.encode(
@@ -1316,6 +1341,8 @@ class LatentTranslatorTrainer:
                     parts["M_pad"], parts["X_static"],
                 )
                 x_out = self.translator.decode(src_latent, parts["M_pad"], parts["X_static"])
+                if _do_grad_diag:
+                    x_out.retain_grad()
 
                 # Rebuild YAIB batch and get task loss (cast to float32 for schema rebuild)
                 x_yaib_translated = self.schema_resolver.rebuild(
@@ -1438,6 +1465,13 @@ class LatentTranslatorTrainer:
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
                     + self.lambda_contrastive_align * l_contrastive
+                )
+
+            if _do_grad_diag:
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_out,
+                    l_task, self.lambda_recon * l_recon, self.lambda_range * l_range,
+                    parts, epoch, n_batches, reg_label="recon",
                 )
 
             if n_batches % self.accumulate_grad_batches == 0:
@@ -1650,6 +1684,8 @@ class LatentTranslatorTrainer:
 
         # Phase 2: Joint training
         logging.info("=== Phase 2: Joint training (%d epochs) ===", epochs)
+        self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
+        logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
         self.scheduler = _create_lr_scheduler(
             self.optimizer, self.lr_scheduler_type, epochs,
@@ -2040,6 +2076,10 @@ class RetrievalTranslatorTrainer:
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
+            _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
+            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
+                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path with retrieval ──
                 src_latent = self.translator.encode(
@@ -2065,6 +2105,8 @@ class RetrievalTranslatorTrainer:
                     context,
                     latent=src_latent,
                 )
+                if _do_grad_diag:
+                    x_out.retain_grad()
 
                 # Task loss via frozen LSTM
                 x_yaib_translated = self.schema_resolver.rebuild(
@@ -2197,6 +2239,13 @@ class RetrievalTranslatorTrainer:
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
                     + self.lambda_contrastive_align * l_contrastive
+                )
+
+            if _do_grad_diag:
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_out,
+                    l_task, self.lambda_recon * l_recon, self.lambda_range * l_range,
+                    parts, epoch, n_batches, reg_label="recon",
                 )
 
             if n_batches % self.accumulate_grad_batches == 0:
@@ -2452,6 +2501,8 @@ class RetrievalTranslatorTrainer:
 
         # Phase 2: Retrieval-guided training
         logging.info("=== Phase 2: Retrieval-guided training (%d epochs) ===", epochs)
+        self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
+        logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
         start_epoch = 0
 

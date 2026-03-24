@@ -83,7 +83,7 @@
     "d_latent": 128,
     "d_model": 128,
     "n_enc_layers": 4,
-    "n_dec_layers": 2,
+    "n_dec_layers": 3,
     "temporal_attention_mode": "bidirectional",
     "temporal_attention_window": 25
   },
@@ -93,7 +93,7 @@
     "batch_size": 16,
     "lambda_recon": 0.1,
     "lambda_range": 0.5,
-    "lambda_smooth": 0.0,
+    "lambda_smooth": 0.1,
     "lambda_align": 0.5,
     "lambda_target_task": 0.5,
     "lambda_importance_reg": 0.0,

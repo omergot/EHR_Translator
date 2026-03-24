@@ -103,7 +103,7 @@
     "retrieval_window": 6,
     "n_cross_layers": 2,
     "output_mode": "absolute",
-    "memory_refresh_epochs": 5,
+    "memory_refresh_epochs": 3,
     "feature_gate": true,
     "use_target_normalization": true,
     "variable_length_batching": true,

@@ -89,7 +89,7 @@
   },
   "training": {
     "lr": 0.0001,
-    "epochs": 50,
+    "epochs": 30,
     "batch_size": 16,
     "lambda_recon": 0.1,
     "lambda_range": 0.5,
@@ -108,7 +108,7 @@
     "use_target_normalization": true,
     "variable_length_batching": true,
     "shuffle": true,
-    "early_stopping_patience": 50,
+    "early_stopping_patience": 15,
     "best_metric": "val_task",
     "phase1_self_retrieval": true,
     "phase1_memory_refresh_epochs": 3,

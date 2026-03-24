@@ -83,7 +83,7 @@
     "d_latent": 128,
     "d_model": 128,
     "n_enc_layers": 4,
-    "n_dec_layers": 3,
+    "n_dec_layers": 2,
     "temporal_attention_mode": "bidirectional",
     "temporal_attention_window": 25
   },

@@ -171,6 +171,10 @@ def _get_training_config(config: dict) -> dict:
         "phase1_memory_refresh_epochs": training.get("phase1_memory_refresh_epochs", None),
         # V6: Gradient accumulation
         "accumulate_grad_batches": training.get("accumulate_grad_batches", 1),
+        # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline
+        "lambda_tcr": training.get("lambda_tcr", 0.0),
+        # V7 (NeurIPS): FJS — initialize FeatureGate from frozen model Jacobian sensitivity
+        "jacobian_init": training.get("jacobian_init", False),
     }
 
 

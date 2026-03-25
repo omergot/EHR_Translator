@@ -1826,6 +1826,13 @@ class RetrievalTranslatorTrainer:
         )
         self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
 
+        # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline
+        self.lambda_tcr = _tc.get("lambda_tcr", 0.0)
+        # V7 (NeurIPS): FJS — Jacobian-initialized feature gate
+        self.jacobian_init = _tc.get("jacobian_init", False)
+
+        if self.lambda_tcr > 0:
+            logging.info("TCR (target context reconstruction) enabled: lambda_tcr=%.4f", self.lambda_tcr)
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
@@ -1875,7 +1882,10 @@ class RetrievalTranslatorTrainer:
             from ..core.feature_gate import FeatureGate
             num_features = len(schema_resolver.dynamic_features)
             init_logits = None
-            if _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
+            if self.jacobian_init and hasattr(self.yaib_runtime, "_model"):
+                init_logits = self._compute_jacobian_sensitivity(num_features)
+                logging.info("FJS: Jacobian-initialized feature gate enabled")
+            elif _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
                 from ..core.lstm_importance import extract_lstm_feature_importance
                 init_logits = extract_lstm_feature_importance(
                     self.yaib_runtime._model,
@@ -1909,6 +1919,56 @@ class RetrievalTranslatorTrainer:
         self.best_state = None
         self.history: list[dict] = []
         self.memory_bank = None
+
+    @torch.no_grad()
+    def _compute_jacobian_sensitivity(self, num_features: int) -> torch.Tensor:
+        """FJS: Compute frozen model's per-feature input sensitivity via Jacobian.
+
+        Returns init_logits (num_features,) suitable for FeatureGate initialization.
+        """
+        from itertools import islice
+        logging.info("FJS: Computing frozen model Jacobian sensitivity...")
+        sensitivities = []
+        model = self.yaib_runtime._model
+        was_training = model.training
+        model.eval()
+        for batch in islice(self.target_train_loader, 50):
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+            x_val = parts["X_val"].clone().detach().requires_grad_(True)
+            # Build YAIB input with grad-enabled x_val
+            x_yaib = self.schema_resolver.rebuild(
+                parts["X_yaib"], x_val.float(), parts["X_miss"], parts["X_static"],
+                m_pad=parts["M_pad"],
+            )
+            label_mask = parts["M_label"].bool()
+            with torch.enable_grad():
+                logits = self.yaib_runtime.forward((x_yaib, parts["y"], label_mask))
+                loss = self.yaib_runtime.compute_loss(
+                    logits.float(), (x_yaib, parts["y"], label_mask)
+                ).float()
+                grad = torch.autograd.grad(loss, x_val, allow_unused=True)[0]
+            if grad is not None:
+                mask = ~parts["M_pad"].bool()
+                # Per-feature mean absolute gradient (averaged over valid timesteps)
+                abs_grad = grad.abs().float()
+                abs_grad[~mask] = 0.0
+                n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)
+                feat_sens = (abs_grad.sum(dim=1) / n_valid.squeeze(1)).mean(dim=0)  # (F,)
+                sensitivities.append(feat_sens[:num_features])
+        if was_training:
+            model.train()
+        if not sensitivities:
+            logging.warning("FJS: No valid batches, falling back to zero init")
+            return None
+        S = torch.stack(sensitivities).mean(0)  # (F,)
+        S = S / S.max().clamp(min=1e-8)  # normalize to [0, 1]
+        # Convert to logits: logit(S) = log(S / (1-S)), clamped for stability
+        S_clamped = S.clamp(0.05, 0.95)
+        init_logits = torch.log(S_clamped / (1.0 - S_clamped))
+        logging.info("FJS: Sensitivity range [%.4f, %.4f], logit range [%.4f, %.4f]",
+                      S.min().item(), S.max().item(), init_logits.min().item(), init_logits.max().item())
+        return init_logits.cpu()
 
     def _label_pred_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         if self.task_type == "regression":
@@ -2068,7 +2128,7 @@ class RetrievalTranslatorTrainer:
         self.translator.train()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
                   "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
-                  "label_pred": 0.0, "contrastive": 0.0}
+                  "label_pred": 0.0, "contrastive": 0.0, "tcr": 0.0}
         n_batches = 0
 
         for batch in train_loader:
@@ -2145,6 +2205,28 @@ class RetrievalTranslatorTrainer:
                     ts_weight[pos_mask] = 1.0 + self.recon_positive_boost
                     tgt_recon_per_ts = tgt_recon_per_ts * ts_weight
                 l_recon = tgt_recon_per_ts[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                # ── TCR: Target Context Reconstruction ──
+                # Route MIMIC through full retrieval pipeline (cross-attention gets gradient)
+                l_tcr = tgt_out.new_tensor(0.0)
+                if self.lambda_tcr > 0 and self.memory_bank is not None:
+                    tgt_context = query_memory_bank(
+                        tgt_latent.detach(),
+                        tgt_parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w.detach(),
+                    )
+                    tgt_out_full, _ = self.translator.forward_with_retrieval(
+                        tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                        tgt_parts["M_pad"], tgt_parts["X_static"],
+                        tgt_context, latent=tgt_latent,
+                    )
+                    l_tcr = F.mse_loss(
+                        tgt_out_full[tgt_mask].float(),
+                        tgt_parts["X_val"][tgt_mask].float(),
+                    )
 
                 # Range loss on source output
                 src_mask = ~parts["M_pad"].bool()
@@ -2239,6 +2321,7 @@ class RetrievalTranslatorTrainer:
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
                     + self.lambda_contrastive_align * l_contrastive
+                    + self.lambda_tcr * l_tcr
                 )
 
             if _do_grad_diag:
@@ -2271,6 +2354,7 @@ class RetrievalTranslatorTrainer:
             totals["target_task"] += l_target_task.item()
             totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
+            totals["tcr"] += l_tcr.item()
             n_batches += 1
 
         # Flush remaining accumulated gradients
@@ -2293,7 +2377,7 @@ class RetrievalTranslatorTrainer:
         self.translator.eval()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
                   "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
-                  "label_pred": 0.0, "contrastive": 0.0}
+                  "label_pred": 0.0, "contrastive": 0.0, "tcr": 0.0}
         n_batches = 0
 
         importance_w = self.translator.get_importance_weights()

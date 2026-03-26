@@ -1920,48 +1920,47 @@ class RetrievalTranslatorTrainer:
         self.history: list[dict] = []
         self.memory_bank = None
 
-    @torch.no_grad()
     def _compute_jacobian_sensitivity(self, num_features: int) -> torch.Tensor:
         """FJS: Compute frozen model's per-feature input sensitivity via Jacobian.
 
         Returns init_logits (num_features,) suitable for FeatureGate initialization.
+        Computes |∂loss/∂x_yaib| averaged over MIMIC batches, then extracts the
+        dynamic feature columns to get per-translator-feature sensitivity.
         """
         from itertools import islice
         logging.info("FJS: Computing frozen model Jacobian sensitivity...")
         sensitivities = []
         model = self.yaib_runtime._model
         was_training = model.training
-        model.eval()
+
         for batch in islice(self.target_train_loader, 50):
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
-            x_val = parts["X_val"].clone().detach().requires_grad_(True)
-            # Build YAIB input with grad-enabled x_val
-            x_yaib = self.schema_resolver.rebuild(
-                parts["X_yaib"], x_val.float(), parts["X_miss"], parts["X_static"],
-                m_pad=parts["M_pad"],
-            )
+            # Work directly on the YAIB-format tensor to avoid rebuild grad issues
+            x_yaib = parts["X_yaib"].clone().detach().float().requires_grad_(True)
             label_mask = parts["M_label"].bool()
             with torch.enable_grad():
+                model.train()  # cuDNN RNN backward requires train mode
                 logits = self.yaib_runtime.forward((x_yaib, parts["y"], label_mask))
                 loss = self.yaib_runtime.compute_loss(
                     logits.float(), (x_yaib, parts["y"], label_mask)
                 ).float()
-                grad = torch.autograd.grad(loss, x_val, allow_unused=True)[0]
-            if grad is not None:
-                mask = ~parts["M_pad"].bool()
-                # Per-feature mean absolute gradient (averaged over valid timesteps)
-                abs_grad = grad.abs().float()
-                abs_grad[~mask] = 0.0
-                n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)
-                feat_sens = (abs_grad.sum(dim=1) / n_valid.squeeze(1)).mean(dim=0)  # (F,)
-                sensitivities.append(feat_sens[:num_features])
+                grad = torch.autograd.grad(loss, x_yaib)[0]  # (B, T, F_yaib)
+            mask = ~parts["M_pad"].bool()
+            abs_grad = grad.abs().float()
+            abs_grad[~mask] = 0.0
+            n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)
+            # Per-YAIB-feature mean absolute gradient
+            feat_sens = (abs_grad.sum(dim=1) / n_valid.squeeze(1)).mean(dim=0)  # (F_yaib,)
+            # Extract only the dynamic feature columns (first num_features)
+            sensitivities.append(feat_sens[:num_features].detach())
+
         if was_training:
             model.train()
         if not sensitivities:
             logging.warning("FJS: No valid batches, falling back to zero init")
             return None
-        S = torch.stack(sensitivities).mean(0)  # (F,)
+        S = torch.stack(sensitivities).mean(0)  # (num_features,)
         S = S / S.max().clamp(min=1e-8)  # normalize to [0, 1]
         # Convert to logits: logit(S) = log(S / (1-S)), clamped for stability
         S_clamped = S.clamp(0.05, 0.95)

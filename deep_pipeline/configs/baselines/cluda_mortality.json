@@ -94,8 +94,8 @@
     "shuffle": true,
     "early_stopping_patience": 15,
     "best_metric": "val_task",
-    "lambda_cluda_temporal": 0.5,
-    "lambda_cluda_contextual": 0.3,
+    "lambda_cluda_temporal": 0.2,
+    "lambda_cluda_contextual": 0.1,
     "cluda_temperature": 0.07,
     "cluda_k_neighbors": 5
   },

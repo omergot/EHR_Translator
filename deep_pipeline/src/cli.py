@@ -188,13 +188,13 @@ def _get_training_config(config: dict) -> dict:
         # DA Baselines V2: RAINCOAT (ICML 2023)
         "lambda_raincoat_temporal": training.get("lambda_raincoat_temporal", 0.0),
         "lambda_raincoat_freq": training.get("lambda_raincoat_freq", 0.0),
-        "raincoat_sinkhorn_eps": training.get("raincoat_sinkhorn_eps", 0.1),
-        "raincoat_sinkhorn_iters": training.get("raincoat_sinkhorn_iters", 50),
+        "raincoat_sinkhorn_eps": training.get("raincoat_sinkhorn_eps", 0.001),
+        "raincoat_sinkhorn_iters": training.get("raincoat_sinkhorn_iters", 1000),
         # DA Baselines V2: ACON (NeurIPS 2024)
         "lambda_acon_temporal": training.get("lambda_acon_temporal", 0.0),
         "lambda_acon_freq": training.get("lambda_acon_freq", 0.0),
         "lambda_acon_cross": training.get("lambda_acon_cross", 0.0),
-        "acon_freq_hidden_dim": training.get("acon_freq_hidden_dim", 256),
+        "acon_freq_hidden_dim": training.get("acon_freq_hidden_dim", 128),
     }
 
 

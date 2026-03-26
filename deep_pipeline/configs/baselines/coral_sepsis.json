@@ -90,7 +90,7 @@
     "batch_size": 16,
     "lambda_fidelity": 0.1,
     "lambda_range": 0.5,
-    "lambda_coral": 0.3,
+    "lambda_coral": 0.5,
     "use_target_normalization": true,
     "variable_length_batching": true,
     "shuffle": true,

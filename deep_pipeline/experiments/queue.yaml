@@ -2218,55 +2218,55 @@ experiments:
   output: experiments/results/dann_mortality_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: DANN v2 (lambda=0.5) - mortality
+  notes: DANN v2 (lambda=1.0) - mortality
 - name: dann_aki_v2
   config: configs/baselines/dann_aki.json
   output: experiments/results/dann_aki_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: DANN v2 (lambda=0.5) - aki
+  notes: DANN v2 (lambda=1.0) - aki
 - name: dann_sepsis_v2
   config: configs/baselines/dann_sepsis.json
   output: experiments/results/dann_sepsis_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: DANN v2 (lambda=0.5) - sepsis
+  notes: DANN v2 (lambda=1.0) - sepsis
 - name: coral_mortality_v2
   config: configs/baselines/coral_mortality.json
   output: experiments/results/coral_mortality_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CORAL v2 (lambda=0.3) - mortality
+  notes: CORAL v2 (lambda=0.5) - mortality
 - name: coral_aki_v2
   config: configs/baselines/coral_aki.json
   output: experiments/results/coral_aki_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CORAL v2 (lambda=0.3) - aki
+  notes: CORAL v2 (lambda=0.5) - aki
 - name: coral_sepsis_v2
   config: configs/baselines/coral_sepsis.json
   output: experiments/results/coral_sepsis_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CORAL v2 (lambda=0.3) - sepsis
+  notes: CORAL v2 (lambda=0.5) - sepsis
 - name: codats_mortality_v2
   config: configs/baselines/codats_mortality.json
   output: experiments/results/codats_mortality_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=0.5) - mortality
+  notes: CoDATS v2 (lambda=1.0) - mortality
 - name: codats_aki_v2
   config: configs/baselines/codats_aki.json
   output: experiments/results/codats_aki_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=0.5) - aki
+  notes: CoDATS v2 (lambda=1.0) - aki
 - name: codats_sepsis_v2
   config: configs/baselines/codats_sepsis.json
   output: experiments/results/codats_sepsis_v2.parquet
   status: pending
   branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=0.5) - sepsis
+  notes: CoDATS v2 (lambda=1.0) - sepsis
 - name: cluda_mortality
   config: configs/baselines/cluda_mortality.json
   output: experiments/results/cluda_mortality.parquet

@@ -2048,39 +2048,17 @@ experiments:
 - name: sepsis_v4_mmd_eval_local
   config: configs/v6/sepsis_v4_mmd_eval_only.json
   output: runs/sepsis_retr_v4_mmd/eval_local_rerun.parquet
-  status: done
+  status: pending
   notes: 'Eval-only: V4 MMD record checkpoint on local GPU for fair comparison with
     SR cross2'
-  server: '3090'
-  gpu: 0
-  pid: 580590
-  started: '2026-03-26 04:46:48'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v4_mmd_eval_local.json
-  finished: '2026-03-26 06:26:06'
-  results:
-    AUCROC: -0.0385
-    AUCPR: -0.0083
-    loss: 0.004
-    brier: -0.0534
-    ece: -0.0622
+  server: local
 - name: sepsis_v6_sr_cross2_eval_local
   config: configs/v6/sepsis_v6_sr_cross2_eval_only.json
   output: runs/sepsis_v6_sr_cross2/eval_local_rerun.parquet
-  status: done
+  status: pending
   notes: 'Eval-only: SR cross2 checkpoint on local GPU for fair comparison with V4
     MMD'
-  server: '3090'
-  gpu: 0
-  pid: 585597
-  started: '2026-03-26 06:26:12'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v6_sr_cross2_eval_local.json
-  finished: '2026-03-26 06:55:02'
-  results:
-    AUCROC: 0.0427
-    AUCPR: 0.018
-    loss: -0.1103
-    brier: -0.0633
-    ece: -0.0538
+  server: local
 - name: sepsis_neurips_tcr_fjs
   config: configs/neurips/sepsis_neurips_tcr_fjs.json
   output: runs/sepsis_neurips_tcr_fjs/eval.parquet
@@ -2103,67 +2081,57 @@ experiments:
 - name: mas_sepsis_gru
   config: configs/neurips/mas_sepsis_gru.json
   output: runs/mas_sepsis_gru/eval.parquet
-  status: running
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best sepsis translator on frozen GRU (zero training).'
-  server: a6000
-  gpu: 3
-  pid: 1672008
-  started: '2026-03-26 06:53:01'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mas_sepsis_gru.json
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_sepsis_tcn
   config: configs/neurips/mas_sepsis_tcn.json
   output: runs/mas_sepsis_tcn/eval.parquet
-  status: running
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best sepsis translator on frozen TCN (zero training).'
-  server: '3090'
-  gpu: 0
-  pid: 587581
-  started: '2026-03-26 06:55:11'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mas_sepsis_tcn.json
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_sepsis_transformer
   config: configs/neurips/mas_sepsis_transformer.json
   output: runs/mas_sepsis_transformer/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best sepsis translator on frozen Transformer (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_aki_gru
   config: configs/neurips/mas_aki_gru.json
   output: runs/mas_aki_gru/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best AKI translator on frozen GRU (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_aki_tcn
   config: configs/neurips/mas_aki_tcn.json
   output: runs/mas_aki_tcn/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best AKI translator on frozen TCN (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_aki_transformer
   config: configs/neurips/mas_aki_transformer.json
   output: runs/mas_aki_transformer/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best AKI translator on frozen Transformer (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_mortality_gru
   config: configs/neurips/mas_mortality_gru.json
   output: runs/mas_mortality_gru/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best mortality translator on frozen GRU (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_mortality_tcn
   config: configs/neurips/mas_mortality_tcn.json
   output: runs/mas_mortality_tcn/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best mortality translator on frozen TCN (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: mas_mortality_transformer
   config: configs/neurips/mas_mortality_transformer.json
   output: runs/mas_mortality_transformer/eval.parquet
-  status: pending
+  status: skip
   branch: neurips-tcr-fjs
-  notes: 'MAS: Evaluate best mortality translator on frozen Transformer (zero training).'
+  notes: 'SKIP: Run locally with translate_and_eval (needs existing checkpoints).'
 - name: kf_hirid_v5_cross3
   config: configs/hirid/kf_hirid_v5_cross3.json
   output: runs/kf_hirid_v5_cross3/eval_kf.parquet

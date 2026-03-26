@@ -2062,25 +2062,15 @@ experiments:
 - name: sepsis_neurips_tcr_fjs
   config: configs/neurips/sepsis_neurips_tcr_fjs.json
   output: runs/sepsis_neurips_tcr_fjs/eval.parquet
-  status: running
+  status: pending
   branch: neurips-tcr-fjs
   notes: NeurIPS TCR+FJS on sepsis (1.13% labels, n_cross=2). Must beat +0.0512 AUROC.
-  server: a6000
-  gpu: 3
-  pid: 1828713
-  started: '2026-03-26 12:20:29'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_neurips_tcr_fjs.json
 - name: aki_neurips_tcr_fjs
   config: configs/neurips/aki_neurips_tcr_fjs.json
   output: runs/aki_neurips_tcr_fjs/eval.parquet
-  status: running
+  status: pending
   branch: neurips-tcr-fjs
   notes: NeurIPS TCR+FJS on AKI (11.95% labels, n_cross=3). Must beat +0.0556 AUROC.
-  server: '3090'
-  gpu: 0
-  pid: 600462
-  started: '2026-03-26 12:20:37'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_neurips_tcr_fjs.json
 - name: mortality_neurips_tcr_fjs
   config: configs/neurips/mortality_neurips_tcr_fjs.json
   output: runs/mortality_neurips_tcr_fjs/eval.parquet
@@ -2091,15 +2081,25 @@ experiments:
 - name: mas_sepsis_gru
   config: configs/neurips/mas_sepsis_gru.json
   output: runs/mas_sepsis_gru/eval.parquet
-  status: pending
+  status: running
   branch: neurips-tcr-fjs
   notes: 'MAS eval-only: mas_sepsis_gru. Run locally (needs existing checkpoints).'
+  server: '3090'
+  gpu: 0
+  pid: 603824
+  started: '2026-03-26 12:28:03'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mas_sepsis_gru.json
 - name: mas_sepsis_tcn
   config: configs/neurips/mas_sepsis_tcn.json
   output: runs/mas_sepsis_tcn/eval.parquet
-  status: pending
+  status: running
   branch: neurips-tcr-fjs
   notes: 'MAS eval-only: mas_sepsis_tcn. Run locally (needs existing checkpoints).'
+  server: a6000
+  gpu: 3
+  pid: 1849054
+  started: '2026-03-26 12:30:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mas_sepsis_tcn.json
 - name: mas_sepsis_transformer
   config: configs/neurips/mas_sepsis_transformer.json
   output: runs/mas_sepsis_transformer/eval.parquet

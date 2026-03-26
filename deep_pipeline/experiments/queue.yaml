@@ -2027,14 +2027,11 @@ experiments:
 - name: los_v6_sr
   config: configs/v6/los_v6_sr.json
   output: runs/los_v6_sr/eval.parquet
-  status: running
+  status: cancelled
   branch: v6-universal
   notes: 'V6 SR-only: LoS best config (v5_cross3, n_cross=3) + self-retrieval pretrain.
-    Must beat MAE -0.0196.'
-  server: local
-  gpu: 0
-  pid: 3113533
-  started: '2026-03-24 16:16:38'
+    Must beat MAE -0.0196. [KILLED: NaN divergence at ep13, SR init instability on
+    regression]'
 - name: kf_v6_sr
   config: configs/v6/kf_v6_sr.json
   output: runs/kf_v6_sr/eval.parquet
@@ -2048,10 +2045,13 @@ experiments:
 - name: sepsis_v4_mmd_eval_local
   config: configs/v6/sepsis_v4_mmd_eval_only.json
   output: runs/sepsis_retr_v4_mmd/eval_local_rerun.parquet
-  status: pending
+  status: running
   notes: 'Eval-only: V4 MMD record checkpoint on local GPU for fair comparison with
     SR cross2'
   server: local
+  gpu: 0
+  pid: 3205913
+  started: '2026-03-26 12:16:20'
 - name: sepsis_v6_sr_cross2_eval_local
   config: configs/v6/sepsis_v6_sr_cross2_eval_only.json
   output: runs/sepsis_v6_sr_cross2/eval_local_rerun.parquet

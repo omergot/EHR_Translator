@@ -180,6 +180,21 @@ def _get_training_config(config: dict) -> dict:
         "adaptive_refresh_patience": training.get("adaptive_refresh_patience", 2),
         "adaptive_refresh_metric": training.get("adaptive_refresh_metric", "align"),
         "adaptive_refresh_min_delta": training.get("adaptive_refresh_min_delta", 0.001),
+        # DA Baselines V2: CLUDA (ICLR 2023)
+        "lambda_cluda_temporal": training.get("lambda_cluda_temporal", 0.0),
+        "lambda_cluda_contextual": training.get("lambda_cluda_contextual", 0.0),
+        "cluda_temperature": training.get("cluda_temperature", 0.07),
+        "cluda_k_neighbors": training.get("cluda_k_neighbors", 5),
+        # DA Baselines V2: RAINCOAT (ICML 2023)
+        "lambda_raincoat_temporal": training.get("lambda_raincoat_temporal", 0.0),
+        "lambda_raincoat_freq": training.get("lambda_raincoat_freq", 0.0),
+        "raincoat_sinkhorn_eps": training.get("raincoat_sinkhorn_eps", 0.1),
+        "raincoat_sinkhorn_iters": training.get("raincoat_sinkhorn_iters", 50),
+        # DA Baselines V2: ACON (NeurIPS 2024)
+        "lambda_acon_temporal": training.get("lambda_acon_temporal", 0.0),
+        "lambda_acon_freq": training.get("lambda_acon_freq", 0.0),
+        "lambda_acon_cross": training.get("lambda_acon_cross", 0.0),
+        "acon_freq_hidden_dim": training.get("acon_freq_hidden_dim", 256),
     }
 
 
@@ -1240,7 +1255,7 @@ def train_translator(args):
         logging.info("Linear regression translator fitted on training set.")
         return
 
-    elif translator_type in ("dann", "coral", "codats"):
+    elif translator_type in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
         from .baselines.trainer import DABaselineTrainer
 
         translator_cfg = _get_translator_config(config)
@@ -1385,7 +1400,7 @@ def train_translator(args):
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for DA baselines.")
 
-        # Build translator: EHRTranslator for DANN/CORAL, CoDATS1DCNN for CoDATS
+        # Build translator backbone
         if translator_type == "codats":
             from .baselines.codats_backbone import CoDATS1DCNN
             translator = CoDATS1DCNN(
@@ -1396,7 +1411,27 @@ def train_translator(args):
                 dropout=translator_cfg.get("dropout", 0.2),
                 temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
             )
+        elif translator_type == "stats_only":
+            from .baselines.components import IdentityDATranslator
+            translator = IdentityDATranslator()
+            # Stats-only: save renorm params + identity translator and return
+            run_dir = Path(output_cfg["run_dir"])
+            run_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint = {
+                "epoch": 0,
+                "translator_state_dict": translator.state_dict(),
+                "val_metrics": {},
+                "train_metrics": {},
+                "renorm_scale": renorm_params[0] if renorm_params else None,
+                "renorm_offset": renorm_params[1] if renorm_params else None,
+                "da_method": "stats_only",
+            }
+            torch.save(checkpoint, run_dir / "best_translator.pt")
+            torch.save(checkpoint, run_dir / "latest_checkpoint.pt")
+            logging.info("[stats_only] Saved renorm-only checkpoint to %s (no training)", run_dir)
+            return
         else:
+            # DANN, CORAL, CLUDA, RAINCOAT, ACON all use EHRTranslator backbone
             translator = EHRTranslator(
                 num_features=len(schema_resolver.indices.dynamic),
                 d_latent=translator_cfg.get("d_latent", 16),
@@ -1858,7 +1893,7 @@ def translate_and_eval(args):
             export_full_sequence=getattr(args, "export_full_sequence", True),
         )
 
-    elif translator_type in ("dann", "coral", "codats"):
+    elif translator_type in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
             config,
@@ -1912,7 +1947,11 @@ def translate_and_eval(args):
                 dropout=translator_cfg.get("dropout", 0.2),
                 temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
             )
+        elif translator_type == "stats_only":
+            from .baselines.components import IdentityDATranslator
+            translator = IdentityDATranslator()
         else:
+            # DANN, CORAL, CLUDA, RAINCOAT, ACON all use EHRTranslator
             translator = EHRTranslator(
                 num_features=len(schema_resolver.indices.dynamic),
                 d_latent=translator_cfg.get("d_latent", 16),
@@ -2001,12 +2040,12 @@ def translate_and_eval(args):
         input_size = data_shape[-1]
         translator = IdentityTranslator(input_size=input_size)
 
-    if translator_type not in {"linear_regression", "transformer", "shared_latent", "retrieval", "dann", "coral", "codats"} and args.translator_checkpoint:
+    if translator_type not in {"linear_regression", "transformer", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
         translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
 
-    if translator_type not in ("transformer", "shared_latent", "retrieval", "dann", "coral", "codats"):
+    if translator_type not in ("transformer", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
         evaluator = TranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,

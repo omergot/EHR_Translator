@@ -214,7 +214,7 @@ def select_qos(config_path: str, name: str = "", chain: int = 1) -> tuple[str, s
     epochs = cfg.get("training", {}).get("epochs", 50)
 
     # DA baselines (fast, no pretrain)
-    if ttype in ("dann", "coral", "codats"):
+    if ttype in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
         if epochs <= 30:
             return "12h_4g", QOS_TIERS["12h_4g"]["wall"]
         return "24h_1g", QOS_TIERS["24h_1g"]["wall"]

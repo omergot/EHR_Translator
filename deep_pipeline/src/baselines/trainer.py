@@ -129,6 +129,60 @@ class DABaselineTrainer:
         elif da_method == "coral":
             hidden_dim = self._detect_hidden_dim()
             logging.info("[DA] CORAL: covariance matching on hidden_dim=%d", hidden_dim)
+        elif da_method == "cluda":
+            from .components import TemporalContrastiveLoss
+            self.lambda_cluda_temporal = self._training_config.get("lambda_cluda_temporal", 0.5)
+            self.lambda_cluda_contextual = self._training_config.get("lambda_cluda_contextual", 0.3)
+            self.contrastive_loss = TemporalContrastiveLoss(
+                temperature=self._training_config.get("cluda_temperature", 0.07),
+                k_neighbors=self._training_config.get("cluda_k_neighbors", 5),
+            )
+            logging.info(
+                "[DA] CLUDA: lambda_temporal=%.3f, lambda_contextual=%.3f, temp=%.3f, k=%d",
+                self.lambda_cluda_temporal, self.lambda_cluda_contextual,
+                self._training_config.get("cluda_temperature", 0.07),
+                self._training_config.get("cluda_k_neighbors", 5),
+            )
+        elif da_method == "raincoat":
+            from .components import SinkhornDivergence
+            self.lambda_raincoat_temporal = self._training_config.get("lambda_raincoat_temporal", 0.5)
+            self.lambda_raincoat_freq = self._training_config.get("lambda_raincoat_freq", 0.5)
+            self.sinkhorn = SinkhornDivergence(
+                eps=self._training_config.get("raincoat_sinkhorn_eps", 0.1),
+                max_iters=self._training_config.get("raincoat_sinkhorn_iters", 50),
+            )
+            logging.info(
+                "[DA] RAINCOAT: lambda_temporal=%.3f, lambda_freq=%.3f, eps=%.3f, iters=%d",
+                self.lambda_raincoat_temporal, self.lambda_raincoat_freq,
+                self._training_config.get("raincoat_sinkhorn_eps", 0.1),
+                self._training_config.get("raincoat_sinkhorn_iters", 50),
+            )
+        elif da_method == "acon":
+            hidden_dim = self._detect_hidden_dim()
+            freq_hidden_dim = self._training_config.get("acon_freq_hidden_dim", 256)
+            self.lambda_acon_temporal = self._training_config.get("lambda_acon_temporal", 0.2)
+            self.lambda_acon_freq = self._training_config.get("lambda_acon_freq", 0.2)
+            self.lambda_acon_cross = self._training_config.get("lambda_acon_cross", 0.1)
+            # Temporal branch
+            self.disc_temporal = DomainDiscriminator(
+                input_dim=hidden_dim, hidden_dim=discriminator_hidden_dim,
+            ).to(device)
+            self.grl_temporal = GradientReversalLayer(lambda_=1.0)
+            self.disc_temporal_optimizer = Adam(self.disc_temporal.parameters(), lr=discriminator_lr)
+            # Frequency branch
+            self.disc_freq = DomainDiscriminator(
+                input_dim=hidden_dim, hidden_dim=freq_hidden_dim,
+            ).to(device)
+            self.grl_freq = GradientReversalLayer(lambda_=1.0)
+            self.disc_freq_optimizer = Adam(self.disc_freq.parameters(), lr=discriminator_lr)
+            logging.info(
+                "[DA] ACON: lambda_temporal=%.3f, lambda_freq=%.3f, lambda_cross=%.3f, "
+                "hidden=%d, freq_hidden=%d",
+                self.lambda_acon_temporal, self.lambda_acon_freq, self.lambda_acon_cross,
+                hidden_dim, freq_hidden_dim,
+            )
+        elif da_method == "stats_only":
+            logging.info("[DA] Stats-only: no DA components (identity + renorm)")
 
         # Feature gate (optional)
         self.feature_gate = None
@@ -245,12 +299,18 @@ class DABaselineTrainer:
         if self.discriminator is not None:
             self.discriminator.train()
 
-        # Update GRL lambda
+        # Update GRL lambda (DANN/CoDATS use self.grl, ACON uses grl_temporal + grl_freq)
         if self.grl is not None and self.grl_schedule:
             grl_lam = grl_lambda_schedule(epoch, total_epochs)
             self.grl.set_lambda(grl_lam)
             if epoch == 0 or (epoch + 1) % 5 == 0:
                 logging.info("[GRL] epoch %d: lambda=%.4f", epoch + 1, grl_lam)
+        if self.da_method == "acon" and self.grl_schedule:
+            grl_lam = grl_lambda_schedule(epoch, total_epochs)
+            self.grl_temporal.set_lambda(grl_lam)
+            self.grl_freq.set_lambda(grl_lam)
+            if epoch == 0 or (epoch + 1) % 5 == 0:
+                logging.info("[ACON GRL] epoch %d: lambda=%.4f", epoch + 1, grl_lam)
 
         totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "da": 0.0, "disc_acc": 0.0}
         num_batches = 0
@@ -340,6 +400,58 @@ class DABaselineTrainer:
             elif self.da_method == "coral":
                 l_da = coral_loss(h_s, h_t.detach())
 
+            elif self.da_method == "cluda":
+                l_contrastive, l_contextual = self.contrastive_loss(
+                    h_source, h_target, src_mask, tgt_mask,
+                )
+                l_da = (self.lambda_cluda_temporal * l_contrastive
+                        + self.lambda_cluda_contextual * l_contextual)
+
+            elif self.da_method == "raincoat":
+                from .components import frequency_features
+                l_temporal = self.sinkhorn(h_s, h_t.detach())
+                h_s_freq = frequency_features(h_source, parts["M_pad"])
+                h_t_freq = frequency_features(h_target, target_parts["M_pad"])
+                l_freq = self.sinkhorn(h_s_freq, h_t_freq.detach())
+                l_da = (self.lambda_raincoat_temporal * l_temporal
+                        + self.lambda_raincoat_freq * l_freq)
+
+            elif self.da_method == "acon":
+                from .components import frequency_features
+                # Temporal adversarial
+                h_s_grl_t = self.grl_temporal(h_s)
+                pred_src_t = self.disc_temporal(h_s_grl_t)
+                pred_tgt_t = self.disc_temporal(h_t.detach())
+                l_adv_temporal = (
+                    F.binary_cross_entropy_with_logits(pred_src_t, torch.zeros_like(pred_src_t))
+                    + F.binary_cross_entropy_with_logits(pred_tgt_t, torch.ones_like(pred_tgt_t))
+                ) / 2.0
+                # Frequency adversarial
+                h_s_freq = frequency_features(h_source, parts["M_pad"])
+                h_t_freq = frequency_features(h_target, target_parts["M_pad"])
+                h_s_freq_grl = self.grl_freq(h_s_freq)
+                pred_src_f = self.disc_freq(h_s_freq_grl)
+                pred_tgt_f = self.disc_freq(h_t_freq.detach())
+                l_adv_freq = (
+                    F.binary_cross_entropy_with_logits(pred_src_f, torch.zeros_like(pred_src_f))
+                    + F.binary_cross_entropy_with_logits(pred_tgt_f, torch.ones_like(pred_tgt_f))
+                ) / 2.0
+                # Cross-branch consistency: compare mean domain predictions
+                # Temporal and frequency branches have different numbers of samples,
+                # so compare per-domain mean confidence rather than per-sample
+                l_cross = F.mse_loss(
+                    pred_src_t.sigmoid().mean(),
+                    pred_src_f.sigmoid().mean().detach(),
+                )
+                l_da = (self.lambda_acon_temporal * l_adv_temporal
+                        + self.lambda_acon_freq * l_adv_freq
+                        + self.lambda_acon_cross * l_cross)
+                # Discriminator accuracy (temporal branch for monitoring)
+                with torch.no_grad():
+                    acc_s = (pred_src_t.detach() < 0).float().mean()
+                    acc_t = (pred_tgt_t.detach() > 0).float().mean()
+                    disc_acc = ((acc_s + acc_t) / 2.0).item()
+
             # --- Total loss ---
             l_total = (
                 l_task
@@ -350,6 +462,8 @@ class DABaselineTrainer:
                 l_total = l_total + self.lambda_adversarial * l_da
             elif self.da_method == "coral":
                 l_total = l_total + self.lambda_coral * l_da
+            elif self.da_method in ("cluda", "raincoat", "acon"):
+                l_total = l_total + l_da  # lambdas already applied inside
 
             # --- Backward + optimizer step (translator) ---
             if num_batches % self.accumulate_grad_batches == 0:
@@ -389,6 +503,31 @@ class DABaselineTrainer:
                 l_disc.backward()
                 self.disc_optimizer.step()
 
+            elif self.da_method == "acon":
+                from .components import frequency_features as _freq_feat
+                # Temporal discriminator update
+                self.disc_temporal_optimizer.zero_grad()
+                pred_src_td = self.disc_temporal(h_s.detach())
+                pred_tgt_td = self.disc_temporal(h_t.detach())
+                l_disc_t = (
+                    F.binary_cross_entropy_with_logits(pred_src_td, torch.zeros_like(pred_src_td))
+                    + F.binary_cross_entropy_with_logits(pred_tgt_td, torch.ones_like(pred_tgt_td))
+                ) / 2.0
+                l_disc_t.backward()
+                self.disc_temporal_optimizer.step()
+                # Frequency discriminator update
+                self.disc_freq_optimizer.zero_grad()
+                h_s_freq_d = _freq_feat(h_source, parts["M_pad"]).detach()
+                h_t_freq_d = _freq_feat(h_target, target_parts["M_pad"]).detach()
+                pred_src_fd = self.disc_freq(h_s_freq_d)
+                pred_tgt_fd = self.disc_freq(h_t_freq_d)
+                l_disc_f = (
+                    F.binary_cross_entropy_with_logits(pred_src_fd, torch.zeros_like(pred_src_fd))
+                    + F.binary_cross_entropy_with_logits(pred_tgt_fd, torch.ones_like(pred_tgt_fd))
+                ) / 2.0
+                l_disc_f.backward()
+                self.disc_freq_optimizer.step()
+
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
             totals["fidelity"] += l_fidelity.item()
@@ -424,6 +563,9 @@ class DABaselineTrainer:
         self.translator.eval()
         if self.discriminator is not None:
             self.discriminator.eval()
+        if self.da_method == "acon":
+            self.disc_temporal.eval()
+            self.disc_freq.eval()
 
         totals = {"total": 0.0, "task": 0.0, "fidelity": 0.0, "range": 0.0, "da": 0.0, "disc_acc": 0.0}
         num_batches = 0
@@ -494,12 +636,51 @@ class DABaselineTrainer:
                     disc_acc = ((acc_s + acc_t) / 2.0).item()
                 elif self.da_method == "coral":
                     l_da = coral_loss(h_s, h_t)
+                elif self.da_method == "cluda":
+                    l_contrastive, l_contextual = self.contrastive_loss(
+                        h_source, h_target, src_mask, tgt_mask,
+                    )
+                    l_da = (self.lambda_cluda_temporal * l_contrastive
+                            + self.lambda_cluda_contextual * l_contextual)
+                elif self.da_method == "raincoat":
+                    from .components import frequency_features
+                    l_temporal = self.sinkhorn(h_s, h_t)
+                    h_s_freq = frequency_features(h_source, parts["M_pad"])
+                    h_t_freq = frequency_features(h_target, target_parts["M_pad"])
+                    l_freq = self.sinkhorn(h_s_freq, h_t_freq)
+                    l_da = (self.lambda_raincoat_temporal * l_temporal
+                            + self.lambda_raincoat_freq * l_freq)
+                elif self.da_method == "acon":
+                    from .components import frequency_features
+                    pred_src_t = self.disc_temporal(h_s)
+                    pred_tgt_t = self.disc_temporal(h_t)
+                    l_adv_temporal = (
+                        F.binary_cross_entropy_with_logits(pred_src_t, torch.zeros_like(pred_src_t))
+                        + F.binary_cross_entropy_with_logits(pred_tgt_t, torch.ones_like(pred_tgt_t))
+                    ) / 2.0
+                    h_s_freq = frequency_features(h_source, parts["M_pad"])
+                    h_t_freq = frequency_features(h_target, target_parts["M_pad"])
+                    pred_src_f = self.disc_freq(h_s_freq)
+                    pred_tgt_f = self.disc_freq(h_t_freq)
+                    l_adv_freq = (
+                        F.binary_cross_entropy_with_logits(pred_src_f, torch.zeros_like(pred_src_f))
+                        + F.binary_cross_entropy_with_logits(pred_tgt_f, torch.ones_like(pred_tgt_f))
+                    ) / 2.0
+                    l_cross = F.mse_loss(pred_src_t.sigmoid().mean(), pred_src_f.sigmoid().mean())
+                    l_da = (self.lambda_acon_temporal * l_adv_temporal
+                            + self.lambda_acon_freq * l_adv_freq
+                            + self.lambda_acon_cross * l_cross)
+                    acc_s = (pred_src_t < 0).float().mean()
+                    acc_t = (pred_tgt_t > 0).float().mean()
+                    disc_acc = ((acc_s + acc_t) / 2.0).item()
 
                 l_total = l_task + self.lambda_fidelity * l_fidelity + self.lambda_range * l_range
                 if self.da_method in ("dann", "codats"):
                     l_total = l_total + self.lambda_adversarial * l_da
                 elif self.da_method == "coral":
                     l_total = l_total + self.lambda_coral * l_da
+                elif self.da_method in ("cluda", "raincoat", "acon"):
+                    l_total = l_total + l_da
 
                 totals["total"] += l_total.item()
                 totals["task"] += l_task.item()
@@ -597,6 +778,9 @@ class DABaselineTrainer:
                 }
                 if self.discriminator is not None:
                     checkpoint["discriminator_state_dict"] = self.discriminator.state_dict()
+                if self.da_method == "acon":
+                    checkpoint["disc_temporal_state_dict"] = self.disc_temporal.state_dict()
+                    checkpoint["disc_freq_state_dict"] = self.disc_freq.state_dict()
                 torch.save(checkpoint, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
                 epochs_without_improvement = 0
@@ -617,6 +801,11 @@ class DABaselineTrainer:
             if self.discriminator is not None:
                 latest["discriminator_state_dict"] = self.discriminator.state_dict()
                 latest["disc_optimizer_state_dict"] = self.disc_optimizer.state_dict()
+            if self.da_method == "acon":
+                latest["disc_temporal_state_dict"] = self.disc_temporal.state_dict()
+                latest["disc_temporal_optimizer_state_dict"] = self.disc_temporal_optimizer.state_dict()
+                latest["disc_freq_state_dict"] = self.disc_freq.state_dict()
+                latest["disc_freq_optimizer_state_dict"] = self.disc_freq_optimizer.state_dict()
             if self.scheduler is not None:
                 latest["scheduler_state_dict"] = self.scheduler.state_dict()
             torch.save(latest, self.run_dir / "latest_checkpoint.pt")

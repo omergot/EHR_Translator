@@ -1,1 +1,1 @@
-# Domain adaptation baselines (DANN, CORAL, CoDATS)
+# Domain adaptation baselines (DANN, CORAL, CoDATS, CLUDA, RAINCOAT, ACON, Stats-only)

@@ -175,6 +175,11 @@ def _get_training_config(config: dict) -> dict:
         "lambda_tcr": training.get("lambda_tcr", 0.0),
         # V7 (NeurIPS): FJS — initialize FeatureGate from frozen model Jacobian sensitivity
         "jacobian_init": training.get("jacobian_init", False),
+        # V7: Adaptive memory bank refresh
+        "adaptive_refresh": training.get("adaptive_refresh", False),
+        "adaptive_refresh_patience": training.get("adaptive_refresh_patience", 2),
+        "adaptive_refresh_metric": training.get("adaptive_refresh_metric", "align"),
+        "adaptive_refresh_min_delta": training.get("adaptive_refresh_min_delta", 0.001),
     }
 
 

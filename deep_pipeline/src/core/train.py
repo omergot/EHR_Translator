@@ -1831,6 +1831,23 @@ class RetrievalTranslatorTrainer:
         # V7 (NeurIPS): FJS — Jacobian-initialized feature gate
         self.jacobian_init = _tc.get("jacobian_init", False)
 
+        # V7: Adaptive memory bank refresh
+        self.adaptive_refresh = _tc.get("adaptive_refresh", False)
+        self.adaptive_refresh_patience = max(1, _tc.get("adaptive_refresh_patience", 2))
+        self.adaptive_refresh_metric = _tc.get("adaptive_refresh_metric", "align")
+        self.adaptive_refresh_min_delta = _tc.get("adaptive_refresh_min_delta", 0.001)
+        self._last_refresh_epoch = -999
+        self._metric_at_last_refresh = None
+        self._refresh_history = []
+
+        # Guard: if adaptive + align metric but no MMD loss, fall back to recon
+        if self.adaptive_refresh and self.adaptive_refresh_metric == "align" and self.lambda_align <= 0:
+            logging.warning(
+                "adaptive_refresh_metric='align' but lambda_align=0 (val_align always 0). "
+                "Falling back to metric='recon'."
+            )
+            self.adaptive_refresh_metric = "recon"
+
         if self.lambda_tcr > 0:
             logging.info("TCR (target context reconstruction) enabled: lambda_tcr=%.4f", self.lambda_tcr)
         if self.lambda_target_task > 0:
@@ -1853,6 +1870,12 @@ class RetrievalTranslatorTrainer:
             logging.info("Gradient clipping: max_norm=%.1f", self.grad_clip_norm)
         if self.accumulate_grad_batches > 1:
             logging.info("Gradient accumulation: %d batches", self.accumulate_grad_batches)
+        if self.adaptive_refresh:
+            logging.info(
+                "Adaptive memory refresh enabled: metric=%s, min_delta=%.4f, patience=%d",
+                self.adaptive_refresh_metric, self.adaptive_refresh_min_delta,
+                self.adaptive_refresh_patience,
+            )
 
         # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
@@ -2048,6 +2071,52 @@ class RetrievalTranslatorTrainer:
             window_stride=self.window_stride,
         )
         self.translator.train()  # restore train mode after build
+
+    def _get_refresh_metric(self, val_metrics: dict) -> float:
+        """Extract the tracked metric value from validation metrics."""
+        if self.adaptive_refresh_metric == "both":
+            return val_metrics.get("align", 0.0) + val_metrics.get("recon", 0.0)
+        elif self.adaptive_refresh_metric == "align":
+            return val_metrics.get("align", 0.0)
+        else:  # "recon"
+            return val_metrics.get("recon", 0.0)
+
+    def _update_refresh_baseline(self, val_metrics: dict | None) -> None:
+        """Record the metric value at the time of last refresh."""
+        if val_metrics is None:
+            self._metric_at_last_refresh = None
+            return
+        self._metric_at_last_refresh = self._get_refresh_metric(val_metrics)
+
+    def _should_refresh_memory_bank(self, epoch: int, val_metrics: dict | None) -> tuple[bool, str]:
+        """Decide whether to rebuild the memory bank.
+
+        Returns: (should_refresh, reason)
+        """
+        if self.memory_bank is None:
+            return True, "initial_build"
+
+        # Fixed interval mode (backward compat)
+        if not self.adaptive_refresh:
+            if epoch % self.memory_refresh_epochs == 0:
+                return True, "fixed_interval"
+            return False, "fixed_not_due"
+
+        # Adaptive mode: check validation metric improvement
+        epochs_since = epoch - self._last_refresh_epoch
+        if epochs_since < self.adaptive_refresh_patience:
+            return False, "patience"
+
+        if val_metrics is None or self._metric_at_last_refresh is None:
+            return True, "no_baseline"
+
+        # Lower is better for both align and recon
+        current = self._get_refresh_metric(val_metrics)
+        improvement = self._metric_at_last_refresh - current  # positive = improved
+        if improvement > self.adaptive_refresh_min_delta:
+            return True, f"improved_{self.adaptive_refresh_metric}"
+
+        return False, "no_improvement"
 
     def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
         """Autoencoder pretraining on MIMIC target data.
@@ -2614,16 +2683,24 @@ class RetrievalTranslatorTrainer:
                 self.renorm_offset = rk["renorm_offset"]
             if self.scheduler is not None and "scheduler_state_dict" in rk:
                 self.scheduler.load_state_dict(rk["scheduler_state_dict"])
+            ar_state = rk.get("adaptive_refresh_state")
+            if ar_state:
+                self._last_refresh_epoch = ar_state["last_refresh_epoch"]
+                self._metric_at_last_refresh = ar_state.get("metric_at_last_refresh")
+                self._refresh_history = ar_state.get("refresh_history", [])
             logging.info(
                 "Resumed from checkpoint epoch %d (best_val=%.6f, no_improve=%d)",
                 start_epoch, self.best_val, epochs_without_improvement,
             )
 
-        for epoch in range(start_epoch, epochs):
-            # Rebuild memory bank periodically
-            if self.memory_bank is None or (epoch % self.memory_refresh_epochs == 0):
-                self._build_memory_bank()
+        # Initial memory bank build (before loop)
+        if self.memory_bank is None:
+            self._build_memory_bank()
+            self._last_refresh_epoch = start_epoch
+            self._update_refresh_baseline(None)
+            self._refresh_history.append({"epoch": start_epoch, "reason": "initial_build"})
 
+        for epoch in range(start_epoch, epochs):
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
@@ -2649,6 +2726,7 @@ class RetrievalTranslatorTrainer:
             self.history.append({
                 "epoch": epoch + 1,
                 "lr": cur_lr,
+                "bank_last_refresh_epoch": self._last_refresh_epoch,
                 **{f"train_{k}": v for k, v in train_metrics.items()},
                 **{f"val_{k}": v for k, v in val_metrics.items()},
             })
@@ -2659,6 +2737,27 @@ class RetrievalTranslatorTrainer:
                     self.scheduler.step(val_metrics["task"])
                 else:
                     self.scheduler.step()
+
+            # Adaptive / fixed memory bank refresh (AFTER validation)
+            should_refresh, refresh_reason = self._should_refresh_memory_bank(epoch, val_metrics)
+            if should_refresh:
+                self._build_memory_bank()
+                self._last_refresh_epoch = epoch
+                self._update_refresh_baseline(val_metrics)
+                self._refresh_history.append({
+                    "epoch": epoch, "reason": refresh_reason,
+                    "val_align": val_metrics.get("align", 0.0),
+                    "val_recon": val_metrics.get("recon", 0.0),
+                })
+                logging.info(
+                    "[adaptive-refresh] Epoch %d: rebuilt (reason=%s, val_align=%.6f, val_recon=%.6f)",
+                    epoch, refresh_reason, val_metrics.get("align", 0.0), val_metrics.get("recon", 0.0),
+                )
+            else:
+                logging.info(
+                    "[adaptive-refresh] Epoch %d: skipped (reason=%s, val_align=%.6f, val_recon=%.6f)",
+                    epoch, refresh_reason, val_metrics.get("align", 0.0), val_metrics.get("recon", 0.0),
+                )
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
             if candidate < self.best_val:
@@ -2671,6 +2770,7 @@ class RetrievalTranslatorTrainer:
                     "train_metrics": train_metrics,
                     "renorm_scale": self.renorm_scale,
                     "renorm_offset": self.renorm_offset,
+                    "bank_last_refresh_epoch": self._last_refresh_epoch,
                 }
                 if self.feature_gate is not None:
                     ckpt_data["feature_gate_state_dict"] = self.feature_gate.state_dict()
@@ -2697,6 +2797,11 @@ class RetrievalTranslatorTrainer:
                 resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()
             if self.scheduler is not None:
                 resume_ckpt["scheduler_state_dict"] = self.scheduler.state_dict()
+            resume_ckpt["adaptive_refresh_state"] = {
+                "last_refresh_epoch": self._last_refresh_epoch,
+                "metric_at_last_refresh": self._metric_at_last_refresh,
+                "refresh_history": self._refresh_history,
+            }
             torch.save(resume_ckpt, resume_path)
 
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
@@ -2710,6 +2815,19 @@ class RetrievalTranslatorTrainer:
         if resume_path.exists():
             resume_path.unlink()
             logging.info("Training completed — removed resume checkpoint")
+
+        # Log adaptive refresh summary
+        if self._refresh_history:
+            total = len(self._refresh_history)
+            reasons = [r["reason"] for r in self._refresh_history]
+            adaptive_count = sum(1 for r in reasons if r.startswith("improved_"))
+            logging.info(
+                "[adaptive-refresh] Summary: %d total refreshes (%d initial, %d adaptive, %d fixed/other). "
+                "Epochs without refresh: %d/%d",
+                total, reasons.count("initial_build"), adaptive_count,
+                total - reasons.count("initial_build") - adaptive_count,
+                epochs - total, epochs,
+            )
 
         self._verify_baseline_frozen()
         self._plot_losses()

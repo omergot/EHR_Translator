@@ -109,7 +109,16 @@ All experiments are managed through `experiments/queue.yaml`. This is the single
 - If launching a one-off manual experiment (debugging), use GPU 3 to avoid conflicts.
 
 ### Queue Entry Format
-Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`, `server`, `branch`.
+Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`, `server`, `branch`, `command`.
+- `command`: The run.py subcommand to execute. Default: `"train_and_eval"`. Alternative: `"translate_and_eval"` (eval-only, reuses existing checkpoint).
+
+### Queue File Locking
+The scheduler uses `fcntl.flock()` on `experiments/queue.yaml.lock` for exclusive file locking during all load+modify+save cycles. This prevents race conditions between the scheduler daemon and concurrent `--add` or `--status` operations. The lock file is created automatically.
+
+### SLURM Server Rules
+- Servers with `slurm: true` are **never auto-assigned** by the scheduler. They are managed by `athena_submit.py`.
+- Pinning an experiment to a SLURM server (via `server` field) will log a warning and skip the experiment.
+- `--status` displays active SLURM jobs via `squeue` for SLURM servers.
 
 ### Screening & Calibration
 Fast-iteration screening system for testing config changes before committing to full runs:

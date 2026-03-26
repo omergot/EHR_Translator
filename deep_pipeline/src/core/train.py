@@ -1949,9 +1949,9 @@ class RetrievalTranslatorTrainer:
             mask = ~parts["M_pad"].bool()
             abs_grad = grad.abs().float()
             abs_grad[~mask] = 0.0
-            n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)
-            # Per-YAIB-feature mean absolute gradient
-            feat_sens = (abs_grad.sum(dim=1) / n_valid.squeeze(1)).mean(dim=0)  # (F_yaib,)
+            n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)  # (B, 1)
+            # Per-YAIB-feature mean absolute gradient: (B, F) / (B, 1) broadcasts
+            feat_sens = (abs_grad.sum(dim=1) / n_valid).mean(dim=0)  # (F_yaib,)
             # Extract only the dynamic feature columns (first num_features)
             sensitivities.append(feat_sens[:num_features].detach())
 

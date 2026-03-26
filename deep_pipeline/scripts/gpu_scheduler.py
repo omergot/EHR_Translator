@@ -82,6 +82,7 @@ class ServerConfig:
     repo_path: str = ""
     conda_env: str = "yaib"
     path_mappings: dict[str, str] = field(default_factory=dict)
+    slurm: bool = False  # SLURM-managed servers are skipped by this scheduler
 
     @property
     def is_local(self) -> bool:
@@ -114,6 +115,7 @@ def _parse_servers(settings: dict) -> dict[str, ServerConfig]:
             repo_path=cfg.get("repo_path", ""),
             conda_env=cfg.get("conda_env", "yaib"),
             path_mappings=cfg.get("path_mappings", {}),
+            slurm=cfg.get("slurm", False),
         )
     return servers
 
@@ -207,6 +209,8 @@ def _parse_nvidia_smi_output(output: str, threshold_mb: int) -> list[int]:
 
 def get_free_gpus(threshold_mb: int, server: ServerConfig | None = None) -> list[int]:
     """Return GPU indices with memory usage below threshold (local or remote)."""
+    if server is not None and server.slurm:
+        return []  # SLURM servers managed by athena_submit.py, not this scheduler
     if server is not None and not server.is_local:
         return get_free_gpus_remote(server, threshold_mb)
 

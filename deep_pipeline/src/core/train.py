@@ -354,11 +354,13 @@ class TransformerTranslatorTrainer:
         run_dir: Path | None = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         training_config: dict | None = None,
+        freeze_baseline: bool = True,
     ) -> None:
         self.yaib_runtime = yaib_runtime
         self.schema_resolver = schema_resolver
         self.translator = translator.to(device)
         self.device = device
+        self.freeze_baseline = freeze_baseline
         self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
         self.lambda_fidelity = lambda_fidelity
         self.lambda_range = lambda_range
@@ -376,9 +378,20 @@ class TransformerTranslatorTrainer:
         self.yaib_runtime.load_baseline_model()
         if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             self.yaib_runtime._model = self.yaib_runtime._model.to(device)
-            for param in self.yaib_runtime._model.parameters():
-                param.requires_grad = False
-            self._apply_baseline_speed_safe_mode()
+            if self.freeze_baseline:
+                for param in self.yaib_runtime._model.parameters():
+                    param.requires_grad = False
+                self._apply_baseline_speed_safe_mode()
+            else:
+                # Unfrozen baseline (fine-tuning): add LSTM params to optimizer
+                # and keep model in train() mode with active dropout
+                baseline_params = list(self.yaib_runtime._model.parameters())
+                self.optimizer.add_param_group({"params": baseline_params})
+                self.yaib_runtime._model.train()
+                logging.info(
+                    "Baseline UNFROZEN: %d params added to optimizer (fine-tune mode)",
+                    sum(p.numel() for p in baseline_params),
+                )
 
         self.lower_bounds, self.upper_bounds = self._load_feature_bounds(bounds_csv, schema_resolver.dynamic_features)
         self.lower_bounds = self.lower_bounds.to(device)
@@ -909,7 +922,7 @@ class TransformerTranslatorTrainer:
         return {k: v / num_batches for k, v in totals.items()}
 
     def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
-        if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+        if self.freeze_baseline and hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             try:
                 sample_batch = next(iter(train_loader))
                 sample_batch = tuple(b.to(self.device) for b in sample_batch)
@@ -998,6 +1011,9 @@ class TransformerTranslatorTrainer:
                     "renorm_scale": self.renorm_scale,
                     "renorm_offset": self.renorm_offset,
                 }
+                # Save baseline model state when fine-tuning (unfrozen)
+                if not self.freeze_baseline and hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+                    checkpoint["model_state_dict"] = self.yaib_runtime._model.state_dict()
                 torch.save(checkpoint, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
                 epochs_without_improvement = 0

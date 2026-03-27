@@ -97,7 +97,7 @@
     "lambda_raincoat_temporal": 0.5,
     "lambda_raincoat_freq": 0.5,
     "raincoat_sinkhorn_eps": 0.001,
-    "raincoat_sinkhorn_iters": 1000
+    "raincoat_sinkhorn_iters": 200
   },
   "output": {
     "run_dir": "runs/raincoat_mortality",

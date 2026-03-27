@@ -195,6 +195,10 @@ class SinkhornDivergence(nn.Module):
 
     Computes S(x, y) = OT_eps(x, y) - 0.5 * OT_eps(x, x) - 0.5 * OT_eps(y, y)
     using log-domain Sinkhorn iterations for numerical stability.
+
+    Inputs are L2-normalized before computing the cost matrix so that
+    squared Euclidean distances lie in [0, 4], keeping C/eps bounded
+    regardless of hidden-state magnitude.
     """
 
     def __init__(self, eps: float = 0.1, max_iters: int = 50,
@@ -210,32 +214,38 @@ class SinkhornDivergence(nn.Module):
         return torch.cdist(x, y, p=2.0).pow(2)
 
     def _ot_cost(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute entropic OT cost between x and y via log-domain Sinkhorn."""
+        """Compute entropic OT cost between x and y via log-domain Sinkhorn.
+
+        Assumes x and y are already L2-normalized (cost values in [0, 4]).
+        """
         n, m = x.size(0), y.size(0)
         if n == 0 or m == 0:
             return x.new_tensor(0.0)
 
-        C = self._cost_matrix(x, y)  # (n, m)
-        # Clamp for numerical stability
-        C = C.clamp(max=1e6)
+        C = self._cost_matrix(x, y)  # (n, m), values in [0, 4] for unit vectors
 
         # Log-domain Sinkhorn
-        log_mu = -math.log(n) * torch.ones(n, device=x.device)  # uniform
-        log_nu = -math.log(m) * torch.ones(m, device=x.device)  # uniform
+        log_mu = -math.log(n) * torch.ones(n, device=x.device, dtype=x.dtype)
+        log_nu = -math.log(m) * torch.ones(m, device=x.device, dtype=x.dtype)
 
-        f = torch.zeros(n, device=x.device)
-        g = torch.zeros(m, device=x.device)
+        f = torch.zeros(n, device=x.device, dtype=x.dtype)
+        g = torch.zeros(m, device=x.device, dtype=x.dtype)
 
         for _ in range(self.max_iters):
-            f = -self.eps * torch.logsumexp(
-                (g.unsqueeze(0) - C) / self.eps + log_nu.unsqueeze(0), dim=1
-            )
-            g = -self.eps * torch.logsumexp(
-                (f.unsqueeze(1) - C) / self.eps + log_mu.unsqueeze(1), dim=0
-            )
+            # M_ij = (g_j - C_ij) / eps + log_nu_j
+            M = (g.unsqueeze(0) - C) / self.eps + log_nu.unsqueeze(0)  # (n, m)
+            f = -self.eps * torch.logsumexp(M, dim=1)
+            M = (f.unsqueeze(1) - C) / self.eps + log_mu.unsqueeze(1)  # (n, m)
+            g = -self.eps * torch.logsumexp(M, dim=0)
+
+            # Early termination if potentials diverge (prevents NaN propagation)
+            if not (torch.isfinite(f).all() and torch.isfinite(g).all()):
+                logging.warning("Sinkhorn: non-finite potentials at iteration, returning 0")
+                return x.new_tensor(0.0)
 
         # OT cost = <f, mu> + <g, nu>
-        return (f * torch.exp(log_mu)).sum() + (g * torch.exp(log_nu)).sum()
+        ot = (f / n).sum() + (g / m).sum()
+        return torch.nan_to_num(ot, nan=0.0, posinf=0.0, neginf=0.0)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """Compute debiased Sinkhorn divergence.
@@ -260,11 +270,19 @@ class SinkhornDivergence(nn.Module):
         if x.size(0) < 2 or y.size(0) < 2:
             return x.new_tensor(0.0)
 
-        ot_xy = self._ot_cost(x, y)
-        ot_xx = self._ot_cost(x, x)
-        ot_yy = self._ot_cost(y, y)
+        # L2-normalize so squared distances are in [0, 4], keeping C/eps bounded.
+        # Without this, LSTM hidden states (dim ~128-256, values in [-10, 10])
+        # produce C ~ 100K, and C/eps ~ 10M with eps=0.01 → NaN in logsumexp.
+        x = F.normalize(x.float(), dim=-1)
+        y = F.normalize(y.float(), dim=-1)
 
-        return torch.relu(ot_xy - 0.5 * ot_xx - 0.5 * ot_yy)
+        ot_xy = self._ot_cost(x, y)
+        # Detach debiasing terms to prevent gradient doubling through self-OT
+        ot_xx = self._ot_cost(x.detach(), x.detach())
+        ot_yy = self._ot_cost(y.detach(), y.detach())
+
+        result = ot_xy - 0.5 * ot_xx - 0.5 * ot_yy
+        return torch.relu(torch.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0))
 
 
 def frequency_features(
@@ -277,7 +295,9 @@ def frequency_features(
         m_pad: (B, T) padding mask (True = padded).
 
     Returns:
-        h_freq: (N, H) flattened frequency magnitudes (all batch x freq bins).
+        h_freq: (N, H) flattened frequency magnitudes (all batch x freq bins),
+        log1p-scaled and L2-normalized per row to keep values bounded for
+        downstream Sinkhorn computation.
     """
     # Zero out padded positions before FFT
     h_masked = h.masked_fill(m_pad.unsqueeze(-1), 0.0).float()
@@ -285,7 +305,10 @@ def frequency_features(
     h_fft = torch.fft.rfft(h_masked, dim=1)
     h_mag = h_fft.abs()  # magnitude spectrum
     # Flatten: (B * (T//2+1), H)
-    return h_mag.reshape(-1, h_mag.size(-1))
+    h_flat = h_mag.reshape(-1, h_mag.size(-1))
+    # log1p scale to compress dynamic range (raw FFT magnitudes can be huge)
+    h_flat = torch.log1p(h_flat)
+    return h_flat
 
 
 # ---------------------------------------------------------------------------

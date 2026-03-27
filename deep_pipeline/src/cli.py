@@ -579,7 +579,7 @@ def train_translator(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    if translator_type == "transformer":
+    if translator_type in ("transformer", "affine"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
             config,
@@ -751,20 +751,27 @@ def train_translator(args):
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for transformer translator.")
 
-        translator = EHRTranslator(
-            num_features=len(schema_resolver.indices.dynamic),
-            d_latent=translator_cfg.get("d_latent", 16),
-            d_model=translator_cfg.get("d_model", 128),
-            d_time=translator_cfg.get("d_time", 16),
-            n_layers=translator_cfg.get("n_layers", 4),
-            n_heads=translator_cfg.get("n_heads", 8),
-            d_ff=translator_cfg.get("d_ff", 512),
-            dropout=translator_cfg.get("dropout", 0.2),
-            out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(static_features),
-            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
-            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
-        )
+        if translator_type == "affine":
+            from .core.translator import AffineTranslator
+            translator = AffineTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                static_dim=len(static_features),
+            )
+        else:
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
 
         # MLM pretraining phase (optional, controlled by config)
         mlm_pretrain_epochs = translator_cfg.get("mlm_pretrain_epochs", 0)
@@ -1537,7 +1544,7 @@ def translate_and_eval(args):
     lr_target_loader = None
     results = None
 
-    if translator_type == "transformer":
+    if translator_type in ("transformer", "affine"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
             config,
@@ -1594,20 +1601,27 @@ def translate_and_eval(args):
             group_col=group_col,
         )
 
-        translator = EHRTranslator(
-            num_features=len(schema_resolver.indices.dynamic),
-            d_latent=translator_cfg.get("d_latent", 16),
-            d_model=translator_cfg.get("d_model", 128),
-            d_time=translator_cfg.get("d_time", 16),
-            n_layers=translator_cfg.get("n_layers", 4),
-            n_heads=translator_cfg.get("n_heads", 8),
-            d_ff=translator_cfg.get("d_ff", 512),
-            dropout=translator_cfg.get("dropout", 0.2),
-            out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(static_features),
-            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
-            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
-        )
+        if translator_type == "affine":
+            from .core.translator import AffineTranslator
+            translator = AffineTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                static_dim=len(static_features),
+            )
+        else:
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
 
         checkpoint_path = args.translator_checkpoint
         if not checkpoint_path:

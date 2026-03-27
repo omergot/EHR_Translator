@@ -2069,13 +2069,20 @@ experiments:
 - name: sepsis_neurips_tcr_fjs
   config: configs/neurips/sepsis_neurips_tcr_fjs.json
   output: runs/sepsis_neurips_tcr_fjs/eval.parquet
-  status: running
+  status: done
   branch: neurips-tcr-fjs
   notes: NeurIPS TCR+FJS on sepsis (1.13% labels, n_cross=2). Must beat +0.0512 AUROC.
   server: '3090'
   gpu: 0
   pid: 606230
   started: '2026-03-26 13:03:58'
+  finished: '2026-03-27 18:21:14'
+  results:
+    AUCROC: 0.0207
+    AUCPR: 0.0164
+    loss: 0.018
+    brier: -0.1405
+    ece: -0.21
 - name: aki_neurips_tcr_fjs
   config: configs/neurips/aki_neurips_tcr_fjs.json
   output: runs/aki_neurips_tcr_fjs/eval.parquet
@@ -2140,15 +2147,37 @@ experiments:
 - name: mas_aki_gru
   config: configs/neurips/mas_aki_gru.json
   output: runs/mas_aki_gru/eval.parquet
-  status: pending
+  status: done
   branch: neurips-tcr-fjs
   notes: 'MAS eval-only: mas_aki_gru. Run locally (needs existing checkpoints).'
+  server: local
+  gpu: 0
+  pid: 4054765
+  started: '2026-03-27 09:00:20'
+  finished: '2026-03-27 10:33:54'
+  results:
+    AUCROC: 0.0311
+    AUCPR: 0.0997
+    loss: -0.0446
+    brier: 0.0127
+    ece: 0.0363
 - name: mas_aki_tcn
   config: configs/neurips/mas_aki_tcn.json
   output: runs/mas_aki_tcn/eval.parquet
-  status: pending
+  status: done
   branch: neurips-tcr-fjs
   notes: 'MAS eval-only: mas_aki_tcn. Run locally (needs existing checkpoints).'
+  server: local
+  gpu: 0
+  pid: 4080907
+  started: '2026-03-27 10:33:55'
+  finished: '2026-03-27 11:50:15'
+  results:
+    AUCROC: 0.0316
+    AUCPR: 0.1129
+    loss: -0.0382
+    brier: 0.004
+    ece: 0.0202
 - name: mas_aki_transformer
   config: configs/neurips/mas_aki_transformer.json
   output: runs/mas_aki_transformer/eval.parquet
@@ -2165,26 +2194,42 @@ experiments:
 - name: mortality_v7_adaptive
   config: configs/v7/mortality_v7_adaptive.json
   output: runs/mortality_v7_adaptive/eval.parquet
-  status: running
+  status: done
   branch: adaptive-refresh
   notes: 'V7: mortality V4 best + adaptive refresh (MMD-driven). Must beat +0.0470.'
   server: local
   gpu: 0
   pid: 3446261
   started: '2026-03-26 17:07:08'
+  finished: '2026-03-27 09:00:19'
+  results:
+    AUCROC: 0.0399
+    AUCPR: 0.0338
+    loss: -0.0617
+    brier: -0.0425
+    ece: -0.0684
 - name: mortality_v7_adaptive_sr
   config: configs/v7/mortality_v7_adaptive_sr.json
   output: runs/mortality_v7_adaptive_sr/eval.parquet
-  status: pending
+  status: running
   branch: adaptive-refresh
   notes: 'V7: mortality V4 best + adaptive refresh + SR pretrain. Clean SR test (V6
     crashed).'
+  server: local
+  gpu: 0
+  pid: 4102952
+  started: '2026-03-27 11:50:17'
 - name: aki_v7_adaptive
   config: configs/v7/aki_v7_adaptive.json
   output: runs/aki_v7_adaptive/eval.parquet
-  status: pending
+  status: running
   branch: adaptive-refresh
   notes: 'V7 negative control: AKI V5 best + adaptive refresh. Should match +0.0556.'
+  server: '3090'
+  gpu: 0
+  pid: 643584
+  started: '2026-03-27 18:21:25'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v7_adaptive.json
 - name: mas_mortality_gru
   config: configs/neurips/mas_mortality_gru.json
   output: runs/mas_mortality_gru/eval.parquet
@@ -2216,108 +2261,96 @@ experiments:
 - name: dann_mortality_v2
   config: configs/baselines/dann_mortality.json
   output: experiments/results/dann_mortality_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: DANN v2 (lambda=1.0) - mortality
+  server: athena
+  slurm_job_id: '66149'
+  submitted: '2026-03-27 00:39:29'
 - name: dann_aki_v2
   config: configs/baselines/dann_aki.json
   output: experiments/results/dann_aki_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: DANN v2 (lambda=1.0) - aki
+  server: athena
+  slurm_job_id: '66150'
+  submitted: '2026-03-27 00:39:34'
 - name: dann_sepsis_v2
   config: configs/baselines/dann_sepsis.json
   output: experiments/results/dann_sepsis_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: DANN v2 (lambda=1.0) - sepsis
+  server: athena
+  slurm_job_id: '66151'
+  submitted: '2026-03-27 00:39:38'
 - name: coral_mortality_v2
   config: configs/baselines/coral_mortality.json
   output: experiments/results/coral_mortality_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: CORAL v2 (lambda=0.5) - mortality
+  server: athena
+  slurm_job_id: '66152'
+  submitted: '2026-03-27 00:39:43'
 - name: coral_aki_v2
   config: configs/baselines/coral_aki.json
   output: experiments/results/coral_aki_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: CORAL v2 (lambda=0.5) - aki
+  server: athena
+  slurm_job_id: '66153'
+  submitted: '2026-03-27 00:39:48'
 - name: coral_sepsis_v2
   config: configs/baselines/coral_sepsis.json
   output: experiments/results/coral_sepsis_v2.parquet
-  status: pending
+  status: athena_pending
   branch: da-baselines-v2
   notes: CORAL v2 (lambda=0.5) - sepsis
-- name: codats_mortality_v2
-  config: configs/baselines/codats_mortality.json
-  output: experiments/results/codats_mortality_v2.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=1.0) - mortality
-- name: codats_aki_v2
-  config: configs/baselines/codats_aki.json
-  output: experiments/results/codats_aki_v2.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=1.0) - aki
-- name: codats_sepsis_v2
-  config: configs/baselines/codats_sepsis.json
-  output: experiments/results/codats_sepsis_v2.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CoDATS v2 (lambda=1.0) - sepsis
-- name: cluda_mortality
-  config: configs/baselines/cluda_mortality.json
-  output: experiments/results/cluda_mortality.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CLUDA v2 (paper params) - mortality
-- name: cluda_aki
-  config: configs/baselines/cluda_aki.json
-  output: experiments/results/cluda_aki.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CLUDA v2 (paper params) - aki
-- name: cluda_sepsis
-  config: configs/baselines/cluda_sepsis.json
-  output: experiments/results/cluda_sepsis.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: CLUDA v2 (paper params) - sepsis
+  server: athena
+  slurm_job_id: '66154'
+  submitted: '2026-03-27 00:39:53'
 - name: raincoat_mortality
   config: configs/baselines/raincoat_mortality.json
-  output: experiments/results/raincoat_mortality.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: RAINCOAT v2 (eps=1e-3, iters=1000) - mortality
+  output: runs/raincoat_mortality/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_4g, chain=1
+  submitted: '2026-03-27 16:18:00'
+  slurm_job_id: '66193'
 - name: raincoat_aki
   config: configs/baselines/raincoat_aki.json
-  output: experiments/results/raincoat_aki.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: RAINCOAT v2 (eps=1e-3, iters=1000) - aki
+  output: runs/raincoat_aki/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_4g, chain=1
+  submitted: '2026-03-27 16:18:04'
+  slurm_job_id: '66194'
 - name: raincoat_sepsis
   config: configs/baselines/raincoat_sepsis.json
-  output: experiments/results/raincoat_sepsis.parquet
+  output: runs/raincoat_sepsis/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-03-27 16:18:10'
+  slurm_job_id: '66195'
+- name: affine_mortality
+  config: configs/baselines/affine_mortality.json
+  output: experiments/results/affine_mortality.parquet
   status: pending
   branch: da-baselines-v2
-  notes: RAINCOAT v2 (eps=1e-3, iters=1000) - sepsis
-- name: acon_mortality
-  config: configs/baselines/acon_mortality.json
-  output: experiments/results/acon_mortality.parquet
+  notes: Affine baseline (96 params) - mortality
+- name: affine_aki
+  config: configs/baselines/affine_aki.json
+  output: experiments/results/affine_aki.parquet
   status: pending
   branch: da-baselines-v2
-  notes: ACON v2 (paper lambdas=1.0) - mortality
-- name: acon_aki
-  config: configs/baselines/acon_aki.json
-  output: experiments/results/acon_aki.parquet
+  notes: Affine baseline (96 params) - aki
+- name: affine_sepsis
+  config: configs/baselines/affine_sepsis.json
+  output: experiments/results/affine_sepsis.parquet
   status: pending
   branch: da-baselines-v2
-  notes: ACON v2 (paper lambdas=1.0) - aki
-- name: acon_sepsis
-  config: configs/baselines/acon_sepsis.json
-  output: experiments/results/acon_sepsis.parquet
-  status: pending
-  branch: da-baselines-v2
-  notes: ACON v2 (paper lambdas=1.0) - sepsis
+  notes: Affine baseline (96 params) - sepsis

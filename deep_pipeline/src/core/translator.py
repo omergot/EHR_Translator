@@ -31,6 +31,38 @@ class IdentityTranslator(Translator):
         return data + (self._dummy * 0.0)
 
 
+class AffineTranslator(nn.Module):
+    """Per-feature learnable affine: y_f = scale_f * x_f + bias_f.
+
+    Simplest possible learned input-space translation (2 params per feature).
+    Same forward() signature as EHRTranslator for drop-in use with
+    TransformerTranslatorTrainer.
+    """
+
+    def __init__(self, num_features: int, static_dim: int = 4):
+        super().__init__()
+        self.num_features = num_features
+        self.scale = nn.Parameter(torch.ones(num_features))
+        self.bias = nn.Parameter(torch.zeros(num_features))
+        logging.info(
+            "[AffineTranslator] num_features=%d, total_params=%d",
+            num_features, 2 * num_features,
+        )
+
+    def forward(
+        self,
+        x_val: torch.Tensor,
+        x_miss: torch.Tensor,
+        t_abs: torch.Tensor,
+        m_pad: torch.Tensor,
+        x_static: torch.Tensor,
+        return_forecast: bool = False,
+    ) -> torch.Tensor:
+        out = self.scale.view(1, 1, -1) * x_val + self.bias.view(1, 1, -1)
+        out = out.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
+        return out
+
+
 class LinearRegressionTranslator(Translator):
     def __init__(
         self,

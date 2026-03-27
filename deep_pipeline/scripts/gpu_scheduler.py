@@ -109,6 +109,7 @@ def _parse_servers(settings: dict) -> dict[str, ServerConfig]:
 
     servers = {}
     for name, cfg in servers_cfg.items():
+        name = str(name)  # YAML may parse numeric keys (e.g. 3090) as int
         servers[name] = ServerConfig(
             name=name,
             host=cfg.get("host"),

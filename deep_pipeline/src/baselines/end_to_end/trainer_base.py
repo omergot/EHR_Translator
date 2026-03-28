@@ -68,7 +68,8 @@ class E2EBaselineTrainer:
         """Compute pos_weight for weighted BCE from label distribution."""
         total_pos = 0
         total_neg = 0
-        for _, labels, _ in loader:
+        for batch in loader:
+            labels = batch[1]  # y is second element
             valid = labels >= 0
             total_pos += (labels[valid] > 0.5).sum().item()
             total_neg += (labels[valid] <= 0.5).sum().item()
@@ -147,33 +148,51 @@ class E2EBaselineTrainer:
         """Implement in subclass. Returns dict of training metrics."""
         raise NotImplementedError
 
-    @torch.no_grad()
-    def _validate(self) -> dict:
-        """Evaluate on source validation set."""
+    def _eval_loop(self, loader: DataLoader) -> dict:
+        """Shared eval loop for validate and test. Handles both per-stay and per-timestep."""
         self.model.eval()
         all_probs = []
         all_labels = []
         total_loss = 0.0
         n_batches = 0
 
-        for x, labels, static in self.source_val_loader:
-            x = x.to(self.device)
-            labels = labels.to(self.device)
-            static = static.to(self.device)
+        with torch.no_grad():
+            for batch in loader:
+                x, labels, static, vmask = batch
+                x = x.to(self.device)
+                labels = labels.to(self.device)
+                static = static.to(self.device)
+                vmask = vmask.to(self.device)
 
-            logits = self.model.predict(x, static)  # (B,)
-            loss = self.classification_loss(logits, labels)
+                if labels.dim() == 1:
+                    # Per-stay: scalar labels (B,)
+                    logits = self.model.predict(x, static)  # (B,)
+                    loss = self.classification_loss(logits, labels)
+                    probs = torch.sigmoid(logits).cpu().numpy()
+                    lbls = labels.cpu().numpy()
+                    valid = lbls >= 0
+                else:
+                    # Per-timestep: (B, L) labels
+                    logits = self.model.predict_per_timestep(x, static)  # (B, L)
+                    # Mask invalid timesteps
+                    valid_mask = vmask & (labels >= 0)
+                    if valid_mask.sum() > 0:
+                        loss = F.binary_cross_entropy_with_logits(
+                            logits[valid_mask], labels[valid_mask],
+                            pos_weight=self._pos_weight,
+                        )
+                    else:
+                        loss = torch.tensor(0.0, device=self.device)
+                    probs = torch.sigmoid(logits).cpu().numpy().ravel()
+                    lbls = labels.cpu().numpy().ravel()
+                    valid_np = (vmask & (labels >= 0)).cpu().numpy().ravel()
+                    valid = valid_np.astype(bool)
 
-            probs = torch.sigmoid(logits).cpu().numpy()
-            lbls = labels.cpu().numpy()
-
-            # Filter valid labels
-            valid = lbls >= 0
-            if valid.sum() > 0:
-                all_probs.append(probs[valid])
-                all_labels.append(lbls[valid])
-            total_loss += loss.item()
-            n_batches += 1
+                if valid.sum() > 0:
+                    all_probs.append(probs[valid] if probs.ndim == 1 else probs[valid])
+                    all_labels.append(lbls[valid] if lbls.ndim == 1 else lbls[valid])
+                total_loss += loss.item()
+                n_batches += 1
 
         if len(all_labels) == 0:
             return {"auroc": 0.0, "aucpr": 0.0, "loss": float("inf")}
@@ -195,54 +214,16 @@ class E2EBaselineTrainer:
             "aucpr": aucpr,
             "loss": total_loss / max(n_batches, 1),
         }
+
+    @torch.no_grad()
+    def _validate(self) -> dict:
+        """Evaluate on source validation set."""
+        return self._eval_loop(self.source_val_loader)
 
     @torch.no_grad()
     def evaluate(self, test_loader: DataLoader) -> dict:
         """Evaluate on test set. Returns dict with auroc, aucpr, loss."""
-        self.model.eval()
-        all_probs = []
-        all_labels = []
-        total_loss = 0.0
-        n_batches = 0
-
-        for x, labels, static in test_loader:
-            x = x.to(self.device)
-            labels = labels.to(self.device)
-            static = static.to(self.device)
-
-            logits = self.model.predict(x, static)
-            loss = self.classification_loss(logits, labels)
-
-            probs = torch.sigmoid(logits).cpu().numpy()
-            lbls = labels.cpu().numpy()
-
-            valid = lbls >= 0
-            if valid.sum() > 0:
-                all_probs.append(probs[valid])
-                all_labels.append(lbls[valid])
-            total_loss += loss.item()
-            n_batches += 1
-
-        if len(all_labels) == 0:
-            return {"auroc": 0.0, "aucpr": 0.0, "loss": float("inf")}
-
-        all_probs = np.concatenate(all_probs)
-        all_labels = np.concatenate(all_labels)
-
-        try:
-            auroc = roc_auc_score(all_labels, all_probs)
-        except ValueError:
-            auroc = 0.5
-        try:
-            aucpr = average_precision_score(all_labels, all_probs)
-        except ValueError:
-            aucpr = 0.0
-
-        return {
-            "auroc": auroc,
-            "aucpr": aucpr,
-            "loss": total_loss / max(n_batches, 1),
-        }
+        return self._eval_loop(test_loader)
 
     def _save_checkpoint(self, filename: str, epoch: int, metrics: dict):
         path = self.run_dir / filename

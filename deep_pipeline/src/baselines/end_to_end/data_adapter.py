@@ -25,8 +25,9 @@ class E2EDataset(Dataset):
 
     Each sample returns:
         x:      (C, L) float32 — 96 channels x seq_len timesteps
-        y:      scalar float32 — label (per-stay: single value; per-timestep: max of window)
+        y:      scalar or (L,) float32 — label (per-stay: scalar; per-timestep: full sequence)
         static: (S,) float32 — static features (age, sex, height, weight)
+        mask:   (L,) bool — True for valid (non-padded) timesteps
     """
 
     def __init__(
@@ -105,11 +106,16 @@ class E2EDataset(Dataset):
         if valid_len == 0:
             # Edge case: all padded — return zeros
             x = torch.zeros(F, self.seq_len, dtype=torch.float32)
-            y = torch.tensor(0.0, dtype=torch.float32)
+            y_scalar = torch.tensor(0.0, dtype=torch.float32)
+            y_seq = torch.full((self.seq_len,), -1.0, dtype=torch.float32)
+            vmask = torch.zeros(self.seq_len, dtype=torch.bool)
             static = torch.zeros(4, dtype=torch.float32)
             if self._static is not None:
                 static = self._static[idx]
-            return x, y, static
+            if self.label_mode == "per_stay":
+                return x, y_scalar, static, vmask
+            else:
+                return x, y_seq, static, vmask
 
         # Extract valid data: take last seq_len timesteps of valid portion
         valid_data = data[valid_mask]  # (valid_len, F)
@@ -134,23 +140,21 @@ class E2EDataset(Dataset):
         # Transpose to (F, seq_len) = (C, L) for Conv1d
         x = window_data.t()  # (F, seq_len)
 
+        # Validity mask for non-padded timesteps
+        vmask = (window_labels >= 0)
+
         # Extract label
         if self.label_mode == "per_stay":
             # Last valid label (mortality: single label per stay)
             valid_lbls = window_labels[window_labels >= 0]
             if len(valid_lbls) > 0:
-                y = valid_lbls[-1]
+                y = valid_lbls[-1].float()
             else:
                 y = torch.tensor(0.0, dtype=torch.float32)
         else:
-            # Per-timestep: max of valid labels in window (presence of AKI/sepsis)
-            valid_lbls = window_labels[window_labels >= 0]
-            if len(valid_lbls) > 0:
-                y = valid_lbls.max()
-            else:
-                y = torch.tensor(0.0, dtype=torch.float32)
-
-        y = y.float()
+            # Per-timestep: return full sequence labels (not aggregated)
+            # Invalid positions have -1, valid have 0 or 1
+            y = window_labels.float()  # (seq_len,)
 
         # Static features
         if self._static is not None:
@@ -158,7 +162,7 @@ class E2EDataset(Dataset):
         else:
             static = torch.zeros(4, dtype=torch.float32)
 
-        return x, y, static
+        return x, y, static, vmask
 
 
 class YAIBToE2EAdapter:

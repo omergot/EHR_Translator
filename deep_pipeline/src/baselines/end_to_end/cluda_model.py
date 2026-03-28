@@ -209,6 +209,18 @@ class CLUDAModel(nn.Module):
         h_cat = torch.cat([h, static], dim=1)
         return self.classifier(h_cat).squeeze(-1)
 
+    def predict_per_timestep(self, x: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
+        """Per-timestep prediction. x: (B, C, L), static: (B, S) -> (B, L)."""
+        h_seq = self.encoder(x)  # (B, H, L) — skip pooling
+        B, H, L = h_seq.shape
+        # Broadcast static to each timestep
+        static_exp = static.unsqueeze(2).expand(-1, -1, L)  # (B, S, L)
+        h_cat = torch.cat([h_seq, static_exp], dim=1)  # (B, H+S, L)
+        # Apply classifier at each timestep
+        h_cat = h_cat.permute(0, 2, 1)  # (B, L, H+S)
+        logits = self.classifier(h_cat)  # (B, L, 1)
+        return logits.squeeze(-1)  # (B, L)
+
     def discriminate(self, h: torch.Tensor) -> torch.Tensor:
         """Domain discrimination with GRL. h: (B, H) -> (B,)."""
         return self.discriminator(self.grl(h)).squeeze(-1)
@@ -333,8 +345,10 @@ class CLUDATrainer(E2EBaselineTrainer):
         }
         n_batches = 0
 
-        for src_x, src_y, src_static in self.source_train_loader:
-            tgt_x, _, tgt_static = self._get_target_batch()
+        for src_batch in self.source_train_loader:
+            src_x, src_y, src_static = src_batch[0], src_batch[1], src_batch[2]
+            tgt_batch = self._get_target_batch()
+            tgt_x = tgt_batch[0]
 
             src_x = src_x.to(self.device)
             src_y = src_y.to(self.device)
@@ -367,7 +381,11 @@ class CLUDATrainer(E2EBaselineTrainer):
                 logits = model.classifier(
                     torch.cat([h_src, src_static], dim=1)
                 ).squeeze(-1)
-                pred_loss = self.classification_loss(logits, src_y)
+                # For per-timestep labels (B, L), aggregate to per-segment for training
+                train_y = src_y
+                if train_y.dim() > 1:
+                    train_y = train_y.clamp(min=0).max(dim=1).values
+                pred_loss = self.classification_loss(logits, train_y)
 
                 # Adversarial loss
                 h_all = torch.cat([h_src, h_tgt], dim=0)

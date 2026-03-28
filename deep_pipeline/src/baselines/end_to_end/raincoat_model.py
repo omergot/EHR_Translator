@@ -232,6 +232,23 @@ class RAINCOATModel(nn.Module):
         combined = torch.cat([t_feat, f_feat, static], dim=1)
         return self.classifier(combined).squeeze(-1)
 
+    def predict_per_timestep(self, x: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
+        """Per-timestep prediction. x: (B, C, L), static: (B, S) -> (B, L)."""
+        B, C, L = x.shape
+        # Get temporal sequence features (B, H, L') where L' = L/4 due to MaxPool
+        _, t_seq = self.temporal_encoder(x)
+        # Get frequency global features (B, H_f)
+        f_feat = self.frequency_encoder(x)
+        # Upsample temporal features back to L
+        t_up = F.interpolate(t_seq, size=L, mode="nearest")  # (B, H_t, L)
+        # Broadcast frequency + static to each timestep
+        f_exp = f_feat.unsqueeze(2).expand(-1, -1, L)  # (B, H_f, L)
+        s_exp = static.unsqueeze(2).expand(-1, -1, L)  # (B, S, L)
+        combined = torch.cat([t_up, f_exp, s_exp], dim=1)  # (B, H_t+H_f+S, L)
+        combined = combined.permute(0, 2, 1)  # (B, L, H_t+H_f+S)
+        logits = self.classifier(combined)  # (B, L, 1)
+        return logits.squeeze(-1)  # (B, L)
+
     def get_alignment_features(self, x: torch.Tensor) -> torch.Tensor:
         """Get concatenated temporal+frequency features for Sinkhorn alignment."""
         t_feat, f_feat, _ = self.encode(x)
@@ -282,8 +299,10 @@ class RAINCOATTrainer(E2EBaselineTrainer):
         }
         n_batches = 0
 
-        for src_x, src_y, src_static in self.source_train_loader:
-            tgt_x, _, tgt_static = self._get_target_batch()
+        for src_batch in self.source_train_loader:
+            src_x, src_y, src_static = src_batch[0], src_batch[1], src_batch[2]
+            tgt_batch = self._get_target_batch()
+            tgt_x = tgt_batch[0]
 
             src_x = src_x.to(self.device)
             src_y = src_y.to(self.device)
@@ -299,7 +318,10 @@ class RAINCOATTrainer(E2EBaselineTrainer):
                 # Classification loss (source only)
                 combined_src = torch.cat([src_t, src_f, src_static], dim=1)
                 logits = model.classifier(combined_src).squeeze(-1)
-                cls_loss = self.classification_loss(logits, src_y)
+                train_y = src_y
+                if train_y.dim() > 1:
+                    train_y = train_y.clamp(min=0).max(dim=1).values
+                cls_loss = self.classification_loss(logits, train_y)
 
                 # Sinkhorn alignment on concatenated temporal+frequency features
                 src_align = torch.cat([src_t, src_f], dim=1).float()

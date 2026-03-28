@@ -51,13 +51,15 @@ class TemporalEncoderCNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.out_dim = hidden_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (B, C, L) -> (B, H)."""
+    def forward(self, x: torch.Tensor, return_seq: bool = False) -> torch.Tensor:
+        """x: (B, C, L) -> (B, H). If return_seq, also return (B, H, L') before pooling."""
         h = self.dropout(F.relu(self.bn1(self.conv1(x))))
         h = F.max_pool1d(h, 2)
         h = self.dropout(F.relu(self.bn2(self.conv2(h))))
         h = F.max_pool1d(h, 2)
         h = self.dropout(F.relu(self.bn3(self.conv3(h))))
+        if return_seq:
+            return self.pool(h).squeeze(-1), h  # (B, H), (B, H, L')
         return self.pool(h).squeeze(-1)
 
 
@@ -217,6 +219,24 @@ class ACONModel(nn.Module):
         # Average logits from both classifiers
         return (t_logits + f_logits) / 2.0
 
+    def predict_per_timestep(self, x: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
+        """Per-timestep prediction. x: (B, C, L), static: (B, S) -> (B, L)."""
+        B, C, L = x.shape
+        # Get temporal sequence features before pooling (B, H, L')
+        _, t_seq = self.temporal_encoder(x, return_seq=True)
+        # Upsample to original L
+        t_up = F.interpolate(t_seq, size=L, mode="nearest")  # (B, H_t, L)
+        # Broadcast static
+        s_exp = static.unsqueeze(2).expand(-1, -1, L)  # (B, S, L)
+        t_cat = torch.cat([t_up, s_exp], dim=1).permute(0, 2, 1)  # (B, L, H_t+S)
+        t_logits = self.temporal_classifier(t_cat).squeeze(-1)  # (B, L)
+        # Frequency: only global features, broadcast to all timesteps
+        f_feat = self.frequency_encoder(x)  # (B, H_f)
+        f_exp = torch.cat([f_feat, static], dim=1)  # (B, H_f+S)
+        f_logit = self.frequency_classifier(f_exp).squeeze(-1)  # (B,)
+        f_logits = f_logit.unsqueeze(1).expand(-1, L)  # (B, L) broadcast
+        return (t_logits + f_logits) / 2.0
+
     def discriminate(self, corr_feat: torch.Tensor) -> torch.Tensor:
         """Domain discrimination on correlation features with GRL."""
         return self.discriminator(self.grl(corr_feat)).squeeze(-1)
@@ -308,8 +328,10 @@ class ACONTrainer(E2EBaselineTrainer):
         }
         n_batches = 0
 
-        for src_x, src_y, src_static in self.source_train_loader:
-            tgt_x, _, tgt_static = self._get_target_batch()
+        for src_batch in self.source_train_loader:
+            src_x, src_y, src_static = src_batch[0], src_batch[1], src_batch[2]
+            tgt_batch = self._get_target_batch()
+            tgt_x = tgt_batch[0]
 
             src_x = src_x.to(self.device)
             src_y = src_y.to(self.device)
@@ -329,9 +351,12 @@ class ACONTrainer(E2EBaselineTrainer):
                 src_f_logits = model.frequency_classifier(
                     torch.cat([src_f, src_static], dim=1)
                 ).squeeze(-1)
+                train_y = src_y
+                if train_y.dim() > 1:
+                    train_y = train_y.clamp(min=0).max(dim=1).values
                 cls_loss = (
-                    self.classification_loss(src_t_logits, src_y) +
-                    self.classification_loss(src_f_logits, src_y)
+                    self.classification_loss(src_t_logits, train_y) +
+                    self.classification_loss(src_f_logits, train_y)
                 ) * 0.5
 
                 # Domain adversarial on correlation subspace

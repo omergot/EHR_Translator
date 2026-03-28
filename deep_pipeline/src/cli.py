@@ -2459,6 +2459,107 @@ def train_and_eval(args):
     translate_and_eval(args)
 
 
+def run_e2e_baseline(args):
+    """Train and evaluate an end-to-end DA baseline (CLUDA, RAINCOAT, ACON)."""
+    config = load_config(Path(args.config))
+    config["_config_path"] = str(args.config)  # for label_mode inference in adapter
+    device = config.get("device", "cuda")
+    training = config.get("training", {})
+    method = config.get("translator", {}).get("type", "e2e_cluda")
+
+    logging.info("=" * 60)
+    logging.info("End-to-end DA baseline: %s", method)
+    logging.info("=" * 60)
+
+    # --- Step 1: Compute no-adaptation baseline (frozen MIMIC LSTM on raw eICU test) ---
+    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on eICU)...")
+    baseline_runtime = _build_runtime_from_config(
+        config, batch_size_override=training.get("batch_size", 64),
+    )
+    baseline_runtime.load_data()
+    baseline_runtime.load_baseline_model()
+    baseline_runtime._model = baseline_runtime._model.to(device)
+    for param in baseline_runtime._model.parameters():
+        param.requires_grad = False
+
+    from .core.eval import TranslatorEvaluator
+    from .core.translator import IdentityTranslator
+
+    test_loader = baseline_runtime.create_dataloader(DataSplit.test, shuffle=False)
+    identity_translator = IdentityTranslator(
+        input_size=test_loader.dataset[0][0].shape[-1]
+    ).to(device)
+    evaluator = TranslatorEvaluator(
+        yaib_runtime=baseline_runtime,
+        translator=identity_translator,
+        device=device,
+    )
+    original_metrics, _, _ = evaluator._evaluate_without_translator(test_loader)
+    logging.info("No-adaptation baseline: %s", original_metrics)
+
+    # --- Step 2: Set up E2E data adapter ---
+    from .baselines.end_to_end.data_adapter import YAIBToE2EAdapter
+
+    adapter = YAIBToE2EAdapter(config)
+    source_train, source_val, source_test, target_train = adapter.get_loaders()
+
+    # Auto-detect number of input channels from data
+    num_channels = adapter.num_channels
+    training["num_input_channels"] = num_channels
+    logging.info("Detected %d input channels", num_channels)
+
+    # --- Step 3: Create model + trainer ---
+    if method == "e2e_cluda":
+        from .baselines.end_to_end.cluda_model import CLUDAModel, CLUDATrainer
+        model = CLUDAModel(config)
+        trainer = CLUDATrainer(model, source_train, target_train, source_val, config, device)
+    elif method == "e2e_raincoat":
+        from .baselines.end_to_end.raincoat_model import RAINCOATModel, RAINCOATTrainer
+        model = RAINCOATModel(config)
+        trainer = RAINCOATTrainer(model, source_train, target_train, source_val, config, device)
+    elif method == "e2e_acon":
+        from .baselines.end_to_end.acon_model import ACONModel, ACONTrainer
+        model = ACONModel(config)
+        trainer = ACONTrainer(model, source_train, target_train, source_val, config, device)
+    else:
+        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, or e2e_acon.")
+
+    # --- Step 4: Train ---
+    trainer.train()
+
+    # --- Step 5: Evaluate E2E model on source test set ---
+    e2e_results = trainer.evaluate(source_test)
+    logging.info("E2E method results: %s", e2e_results)
+
+    # --- Step 6: Report results in the standard format ---
+    # The format must match what collect_result.py / gpu_scheduler parse:
+    #   EVALUATION RESULTS
+    #   Original Test Data: AUCROC, AUCPR, ...
+    #   Translated Test Data: AUCROC, AUCPR, ...
+    #   Difference: AUCROC, AUCPR, ...
+    translated_metrics = {
+        "AUCROC": e2e_results["auroc"],
+        "AUCPR": e2e_results["aucpr"],
+        "loss": e2e_results["loss"],
+    }
+
+    logging.info("=" * 80)
+    logging.info("EVALUATION RESULTS")
+    logging.info("=" * 80)
+    logging.info("Original Test Data:")
+    for metric, value in original_metrics.items():
+        logging.info("  %s: %.4f", metric, value)
+    logging.info("Translated Test Data:")
+    for metric, value in translated_metrics.items():
+        logging.info("  %s: %.4f", metric, value)
+    logging.info("Difference:")
+    for metric in original_metrics.keys():
+        if metric in translated_metrics:
+            diff = translated_metrics[metric] - original_metrics[metric]
+            logging.info("  %s: %+0.4f", metric, diff)
+    logging.info("=" * 80)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Translator Training Pipeline")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -2481,7 +2582,12 @@ def main():
     train_eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
     train_eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     train_eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
+
+    e2e_parser = subparsers.add_parser("run_e2e_baseline", help="Train and evaluate end-to-end DA baseline (CLUDA, RAINCOAT, ACON)")
+    e2e_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
+    e2e_parser.add_argument("--output_parquet", type=str, required=True, help="Output path for results parquet")
+    e2e_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+
     args = parser.parse_args()
 
     # Load config early to get log_file setting
@@ -2500,6 +2606,8 @@ def main():
         translate_and_eval(args)
     elif args.command == "train_and_eval":
         train_and_eval(args)
+    elif args.command == "run_e2e_baseline":
+        run_e2e_baseline(args)
     else:
         parser.print_help()
 

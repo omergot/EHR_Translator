@@ -11,6 +11,7 @@
 #   __OUTPUTPATH__ - path to output parquet on Athena
 #   __ACCOUNT__    - SLURM account (e.g., aran_prj)
 #   __PARTITIONS__ - SLURM partition(s), comma-separated (e.g., rtx6k-shared,l40s-shared)
+#   __COMMAND__    - run.py subcommand (default: train_and_eval)
 #
 # Note: SBATCH directives use relative paths (resolved from submission dir).
 # athena_submit.py submits with: cd $REPO && sbatch script.sh
@@ -57,7 +58,7 @@ echo "Config: __CONFIGPATH__"
 echo "========================"
 
 # Run experiment (checkpoint resume is automatic via latest_checkpoint.pt)
-python run.py train_and_eval \
+python run.py __COMMAND__ \
   --config __CONFIGPATH__ \
   --output_parquet __OUTPUTPATH__
 

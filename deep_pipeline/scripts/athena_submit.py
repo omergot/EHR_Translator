@@ -214,7 +214,8 @@ def select_qos(config_path: str, name: str = "", chain: int = 1) -> tuple[str, s
     epochs = cfg.get("training", {}).get("epochs", 50)
 
     # DA baselines (fast, no pretrain)
-    if ttype in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
+    if ttype in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only",
+                 "e2e_cluda", "e2e_raincoat", "e2e_acon"):
         if epochs <= 30:
             return "12h_4g", QOS_TIERS["12h_4g"]["wall"]
         return "24h_1g", QOS_TIERS["24h_1g"]["wall"]
@@ -243,6 +244,7 @@ def generate_sbatch_script(
     wall_time: str,
     account: str = "",
     partitions: str = "",
+    command: str = "train_and_eval",
 ) -> str:
     """Generate an sbatch script from the template."""
     template = TEMPLATE_PATH.read_text()
@@ -254,6 +256,7 @@ def generate_sbatch_script(
     script = script.replace("__OUTPUTPATH__", output_path_athena)
     script = script.replace("__ACCOUNT__", account or ATHENA_ACCOUNT)
     script = script.replace("__PARTITIONS__", partitions or "l40s-shared")
+    script = script.replace("__COMMAND__", command)
     return script
 
 
@@ -352,6 +355,7 @@ def submit_experiment(
     dry_run: bool = False,
     account: str = "",
     partition: str = "",
+    command: str = "train_and_eval",
 ) -> list[str]:
     """Submit a single experiment to Athena. Returns list of SLURM job IDs."""
 
@@ -412,7 +416,7 @@ def submit_experiment(
 
     # Generate sbatch script
     script = generate_sbatch_script(name, athena_config, athena_output, qos, wall_time,
-                                    account=account, partitions=partitions_str)
+                                    account=account, partitions=partitions_str, command=command)
     ATHENA_SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     local_script = ATHENA_SCRIPTS_DIR / f"{name}.sh"
     local_script.write_text(script)
@@ -654,6 +658,7 @@ def main():
     parser.add_argument("--seeds", help="Comma-separated seeds for multi-seed submission")
     parser.add_argument("--output", help="Output parquet path (default: auto)")
     parser.add_argument("--notes", default="", help="Notes for queue entry")
+    parser.add_argument("--command", default="train_and_eval", help="run.py subcommand (default: train_and_eval)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be submitted")
     parser.add_argument("--status", action="store_true", help="Show Athena job status")
     parser.add_argument("--collect", metavar="NAME", help="Collect results for experiment")
@@ -698,6 +703,7 @@ def main():
             dry_run=args.dry_run,
             account=args.account,
             partition=args.partition,
+            command=args.command,
         )
 
 

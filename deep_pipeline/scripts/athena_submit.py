@@ -215,7 +215,8 @@ def select_qos(config_path: str, name: str = "", chain: int = 1) -> tuple[str, s
 
     # DA baselines (fast, no pretrain)
     if ttype in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only",
-                 "e2e_cluda", "e2e_raincoat", "e2e_acon"):
+                 "e2e_cluda", "e2e_raincoat", "e2e_acon",
+                 "e2e_dann", "e2e_coral", "e2e_codats"):
         if epochs <= 30:
             return "12h_4g", QOS_TIERS["12h_4g"]["wall"]
         return "24h_1g", QOS_TIERS["24h_1g"]["wall"]

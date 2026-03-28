@@ -2556,8 +2556,20 @@ def run_e2e_baseline(args):
         from .baselines.end_to_end.acon_model import ACONModel, ACONTrainer
         model = ACONModel(config)
         trainer = ACONTrainer(model, source_train, target_train, source_val, config, device)
+    elif method == "e2e_dann":
+        from .baselines.end_to_end.dann_e2e_model import DANNModel, DANNTrainer
+        model = DANNModel(config)
+        trainer = DANNTrainer(model, source_train, target_train, source_val, config, device)
+    elif method == "e2e_coral":
+        from .baselines.end_to_end.coral_e2e_model import CORALModel, CORALTrainer
+        model = CORALModel(config)
+        trainer = CORALTrainer(model, source_train, target_train, source_val, config, device)
+    elif method == "e2e_codats":
+        from .baselines.end_to_end.codats_e2e_model import CoDATSModel, CoDATSTrainer
+        model = CoDATSModel(config)
+        trainer = CoDATSTrainer(model, source_train, target_train, source_val, config, device)
     else:
-        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, or e2e_acon.")
+        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, e2e_acon, e2e_dann, e2e_coral, or e2e_codats.")
 
     # --- Step 4: Train ---
     trainer.train()

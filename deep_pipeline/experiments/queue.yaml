@@ -2644,3 +2644,66 @@ experiments:
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: 'ACON mortality v2: static features fix (rerun for consistency)'
+- name: e2e_dann_mortality
+  config: configs/baselines/e2e/e2e_dann_mortality.json
+  output: experiments/results/e2e_dann_mortality.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'DANN E2E mortality: LSTM encoder + GRL discriminator (Ganin et al. 2016)'
+- name: e2e_dann_aki
+  config: configs/baselines/e2e/e2e_dann_aki.json
+  output: experiments/results/e2e_dann_aki.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'DANN E2E AKI: per-timestep LSTM + GRL (Ganin et al. 2016)'
+- name: e2e_dann_sepsis
+  config: configs/baselines/e2e/e2e_dann_sepsis.json
+  output: experiments/results/e2e_dann_sepsis.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'DANN E2E sepsis: per-timestep LSTM + GRL (Ganin et al. 2016)'
+- name: e2e_coral_mortality
+  config: configs/baselines/e2e/e2e_coral_mortality.json
+  output: experiments/results/e2e_coral_mortality.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'Deep CORAL E2E mortality: LSTM + covariance alignment (Sun & Saenko 2016)'
+- name: e2e_coral_aki
+  config: configs/baselines/e2e/e2e_coral_aki.json
+  output: experiments/results/e2e_coral_aki.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'Deep CORAL E2E AKI: per-timestep LSTM + covariance (Sun & Saenko 2016)'
+- name: e2e_coral_sepsis
+  config: configs/baselines/e2e/e2e_coral_sepsis.json
+  output: experiments/results/e2e_coral_sepsis.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'Deep CORAL E2E sepsis: per-timestep LSTM + covariance (Sun & Saenko 2016)'
+- name: e2e_codats_mortality
+  config: configs/baselines/e2e/e2e_codats_mortality.json
+  output: experiments/results/e2e_codats_mortality.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CoDATS E2E mortality: causal CNN + GRL (Wilson et al. 2020)'
+- name: e2e_codats_aki
+  config: configs/baselines/e2e/e2e_codats_aki.json
+  output: experiments/results/e2e_codats_aki.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CoDATS E2E AKI: per-timestep causal CNN + GRL (Wilson et al. 2020)'
+- name: e2e_codats_sepsis
+  config: configs/baselines/e2e/e2e_codats_sepsis.json
+  output: experiments/results/e2e_codats_sepsis.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CoDATS E2E sepsis: per-timestep causal CNN + GRL (Wilson et al. 2020)'

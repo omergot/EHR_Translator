@@ -2175,6 +2175,24 @@ def translate_and_eval(args):
         checkpoint_path = args.translator_checkpoint
         if not checkpoint_path:
             checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+
+        # Step 1: Evaluate with ORIGINAL frozen LSTM (the baseline we compare against)
+        yaib_runtime.load_baseline_model(freeze=True)
+        device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        yaib_runtime._model = yaib_runtime._model.to(device)
+        orig_evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=device,
+            renorm_scale=None,
+            renorm_offset=None,
+            task_type=training_cfg.get("task_type", "classification"),
+        )
+        logging.info("Evaluating with ORIGINAL frozen LSTM (baseline)...")
+        original_metrics, orig_probs, orig_targets = orig_evaluator._evaluate_without_translator(test_loader)
+
+        # Step 2: Load fine-tuned LSTM weights and evaluate
         renorm_scale = None
         renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
@@ -2182,10 +2200,8 @@ def translate_and_eval(args):
             translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
             renorm_scale = checkpoint.get("renorm_scale")
             renorm_offset = checkpoint.get("renorm_offset")
-            # Load the fine-tuned LSTM weights
             model_state = checkpoint.get("model_state_dict")
             if model_state is not None:
-                yaib_runtime.load_baseline_model()
                 yaib_runtime._model.load_state_dict(model_state)
                 logging.info("Loaded fine-tuned LSTM weights from checkpoint")
             else:
@@ -2194,20 +2210,33 @@ def translate_and_eval(args):
         else:
             logging.warning("No finetune_lstm checkpoint found at %s", checkpoint_path)
 
-        evaluator = TransformerTranslatorEvaluator(
+        ft_evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
             schema_resolver=schema_resolver,
-            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            device=device,
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
         )
+        logging.info("Evaluating with FINE-TUNED LSTM...")
         output_path = Path(args.output_parquet)
-        results = evaluator.evaluate_original_vs_translated(
+        translated_metrics, trans_probs, trans_targets = ft_evaluator.translate_and_evaluate(
             test_loader, output_path,
-            export_full_sequence=getattr(args, "export_full_sequence", True),
         )
+
+        if output_path:
+            if trans_probs is not None:
+                from .core.eval import _save_predictions
+                _save_predictions(trans_probs, trans_targets, output_path)
+            if orig_probs is not None:
+                from .core.eval import _save_predictions
+                _save_predictions(orig_probs, orig_targets, output_path, suffix=".original")
+
+        results = {
+            "original": original_metrics,
+            "translated": translated_metrics,
+        }
 
     elif translator_type in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
         translator_cfg = _get_translator_config(config)

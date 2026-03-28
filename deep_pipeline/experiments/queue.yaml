@@ -2357,37 +2357,71 @@ experiments:
 - name: affine_mortality
   config: configs/baselines/affine_mortality.json
   output: experiments/results/affine_mortality.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   notes: Affine baseline (96 params) - mortality
+  server: local
+  gpu: 0
+  pid: 530574
+  started: '2026-03-28 07:34:46'
+  finished: '2026-03-28 08:11:27'
+  results:
+    AUCROC: 0.0005
+    AUCPR: 0.007
+    loss: -0.011
+    brier: -0.0176
+    ece: -0.0227
 - name: affine_aki
   config: configs/baselines/affine_aki.json
   output: experiments/results/affine_aki.parquet
-  status: running
+  status: done
   branch: da-baselines-v2
   notes: Affine baseline (96 params) - aki
   server: local
   gpu: 0
-  pid: 486142
-  started: '2026-03-28 06:00:00'
+  pid: 574381
+  started: '2026-03-28 09:06:32'
+  finished: '2026-03-28 10:38:21'
+  results:
+    AUCROC: 0.0098
+    AUCPR: 0.0344
+    loss: -0.0228
+    brier: -0.004
+    ece: 0.0027
 - name: affine_sepsis
   config: configs/baselines/affine_sepsis.json
   output: experiments/results/affine_sepsis.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   notes: Affine baseline (96 params) - sepsis
+  server: local
+  gpu: 0
+  pid: 551780
+  started: '2026-03-28 08:11:28'
+  finished: '2026-03-28 09:06:31'
+  results:
+    AUCROC: -0.0057
+    AUCPR: -0.0018
+    loss: -0.0172
+    brier: -0.032
+    ece: -0.0377
 - name: finetune_lstm_mortality
   config: configs/baselines/finetune_lstm_mortality.json
   output: experiments/results/finetune_lstm_mortality.parquet
   status: pending
   branch: da-baselines-v2
   notes: 'UPPER BOUND: Fine-tuned LSTM (unfrozen MIMIC LSTM retrained on eICU) - mortality'
+  command: translate_and_eval
 - name: finetune_lstm_aki
   config: configs/baselines/finetune_lstm_aki.json
   output: experiments/results/finetune_lstm_aki.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   notes: 'UPPER BOUND: Fine-tuned LSTM (unfrozen MIMIC LSTM retrained on eICU) - aki'
+  server: local
+  gpu: 0
+  pid: 621652
+  started: '2026-03-28 10:56:40'
 - name: finetune_lstm_sepsis
   config: configs/baselines/finetune_lstm_sepsis.json
   output: experiments/results/finetune_lstm_sepsis.parquet

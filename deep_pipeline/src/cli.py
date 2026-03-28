@@ -2190,7 +2190,7 @@ def translate_and_eval(args):
             task_type=training_cfg.get("task_type", "classification"),
         )
         logging.info("Evaluating with ORIGINAL frozen LSTM (baseline)...")
-        original_metrics, orig_probs, orig_targets = orig_evaluator._evaluate_without_translator(test_loader)
+        original_metrics, orig_probs, orig_targets = orig_evaluator.evaluate_original(test_loader)
 
         # Step 2: Load fine-tuned LSTM weights and evaluate
         renorm_scale = None

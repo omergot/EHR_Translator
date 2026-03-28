@@ -2086,7 +2086,7 @@ experiments:
 - name: aki_neurips_tcr_fjs
   config: configs/neurips/aki_neurips_tcr_fjs.json
   output: runs/aki_neurips_tcr_fjs/eval.parquet
-  status: running
+  status: done
   branch: neurips-tcr-fjs
   notes: NeurIPS TCR+FJS on AKI (11.95% labels, n_cross=3). Must beat +0.0556 AUROC.
   server: a6000
@@ -2094,6 +2094,13 @@ experiments:
   gpu: 3
   pid: 1942256
   started: '2026-03-26 13:18:22'
+  finished: '2026-03-28 14:10:26'
+  results:
+    AUCROC: 0.0425
+    AUCPR: 0.1234
+    loss: -0.079
+    brier: 0.0025
+    ece: 0.0244
 - name: mortality_neurips_tcr_fjs
   config: configs/neurips/mortality_neurips_tcr_fjs.json
   output: runs/mortality_neurips_tcr_fjs/eval.parquet
@@ -2352,8 +2359,8 @@ experiments:
   status: athena_pending
   server: athena
   notes: Athena 12h_4g, chain=1
-  submitted: '2026-03-27 16:18:10'
-  slurm_job_id: '66195'
+  submitted: '2026-03-28 12:14:18'
+  slurm_job_id: '66333'
 - name: affine_mortality
   config: configs/baselines/affine_mortality.json
   output: experiments/results/affine_mortality.parquet
@@ -2408,10 +2415,21 @@ experiments:
 - name: finetune_lstm_mortality
   config: configs/baselines/finetune_lstm_mortality.json
   output: experiments/results/finetune_lstm_mortality.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   notes: 'UPPER BOUND: Fine-tuned LSTM (unfrozen MIMIC LSTM retrained on eICU) - mortality'
   command: translate_and_eval
+  server: local
+  gpu: 0
+  pid: 699823
+  started: '2026-03-28 12:36:30'
+  finished: '2026-03-28 12:38:32'
+  results:
+    AUCROC: 0.0382
+    AUCPR: 0.0467
+    loss: -0.0646
+    brier: -0.0414
+    ece: -0.0564
 - name: finetune_lstm_aki
   config: configs/baselines/finetune_lstm_aki.json
   output: experiments/results/finetune_lstm_aki.parquet
@@ -2432,48 +2450,93 @@ experiments:
 - name: finetune_lstm_sepsis
   config: configs/baselines/finetune_lstm_sepsis.json
   output: experiments/results/finetune_lstm_sepsis.parquet
-  status: running
+  status: done
   branch: da-baselines-v2
   notes: 'UPPER BOUND: Fine-tuned LSTM (unfrozen MIMIC LSTM retrained on eICU) - sepsis'
   server: local
   gpu: 0
-  pid: 672442
-  started: '2026-03-28 11:56:56'
+  pid: 818922
+  started: '2026-03-28 14:02:17'
+  finished: '2026-03-28 14:44:20'
+  results:
+    AUCROC: 0.03
+    AUCPR: 0.0124
+    loss: -0.1023
+    brier: -0.0777
+    ece: -0.0706
 - name: e2e_cluda_mortality
   config: configs/baselines/e2e/cluda_mortality.json
   output: experiments/results/e2e_cluda_mortality.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: CLUDA end-to-end (as published) - mortality
+  server: local
+  gpu: 0
+  pid: 701901
+  started: '2026-03-28 12:38:33'
+  finished: '2026-03-28 12:58:58'
+  results:
+    AUCROC: 0.0153
+    AUCPR: 0.019
+    loss: 0.4212
 - name: e2e_cluda_aki
   config: configs/baselines/e2e/cluda_aki.json
   output: experiments/results/e2e_cluda_aki.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: CLUDA end-to-end (as published) - AKI
+  server: a6000
+  gpu: 3
+  pid: 3507544
+  started: '2026-03-28 16:34:46'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki.json
+  finished: '2026-03-28 17:07:22'
+  results:
+    AUCROC: -0.1735
+    AUCPR: -0.2422
+    loss: 9.7193
 - name: e2e_cluda_sepsis
   config: configs/baselines/e2e/cluda_sepsis.json
   output: experiments/results/e2e_cluda_sepsis.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: CLUDA end-to-end (as published) - sepsis
+  server: local
+  gpu: 0
+  pid: 985106
+  started: '2026-03-28 17:00:15'
 - name: e2e_raincoat_mortality
   config: configs/baselines/e2e/raincoat_mortality.json
   output: experiments/results/e2e_raincoat_mortality.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: RAINCOAT end-to-end (as published) - mortality
+  server: a6000
+  gpu: 3
+  pid: 3302690
+  started: '2026-03-28 14:37:12'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_mortality.json
+  finished: '2026-03-28 15:20:00'
+  results:
+    AUCROC: 0.0293
+    AUCPR: 0.0355
+    loss: 0.4117
 - name: e2e_raincoat_aki
   config: configs/baselines/e2e/raincoat_aki.json
   output: experiments/results/e2e_raincoat_aki.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: RAINCOAT end-to-end (as published) - AKI
+  server: a6000
+  gpu: 3
+  pid: 3580131
+  started: '2026-03-28 17:07:29'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_aki.json
 - name: e2e_raincoat_sepsis
   config: configs/baselines/e2e/raincoat_sepsis.json
   output: experiments/results/e2e_raincoat_sepsis.parquet
@@ -2484,10 +2547,20 @@ experiments:
 - name: e2e_acon_mortality
   config: configs/baselines/e2e/acon_mortality.json
   output: experiments/results/e2e_acon_mortality.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: ACON end-to-end (as published) - mortality
+  server: a6000
+  gpu: 3
+  pid: 3439512
+  started: '2026-03-28 16:01:57'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_mortality.json
+  finished: '2026-03-28 16:11:05'
+  results:
+    AUCROC: 0.012
+    AUCPR: 0.0034
+    loss: 0.4559
 - name: e2e_acon_aki
   config: configs/baselines/e2e/acon_aki.json
   output: experiments/results/e2e_acon_aki.parquet
@@ -2502,3 +2575,10 @@ experiments:
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: ACON end-to-end (as published) - sepsis
+- name: finetune_lstm_aki_eval
+  config: configs/baselines/finetune_lstm_aki.json
+  output: experiments/results/finetune_lstm_aki.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: translate_and_eval
+  notes: Re-eval finetune_lstm_aki with fixed eval (frozen vs fine-tuned comparison)

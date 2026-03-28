@@ -331,7 +331,7 @@ class ACONTrainer(E2EBaselineTrainer):
         for src_batch in self.source_train_loader:
             src_x, src_y, src_static = src_batch[0], src_batch[1], src_batch[2]
             tgt_batch = self._get_target_batch()
-            tgt_x = tgt_batch[0]
+            tgt_x, tgt_static = tgt_batch[0], tgt_batch[2]
 
             src_x = src_x.to(self.device)
             src_y = src_y.to(self.device)

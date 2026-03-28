@@ -41,22 +41,30 @@ class TemporalEncoderCNN(nn.Module):
 
     def __init__(self, num_inputs: int, hidden_dim: int = 64, dropout: float = 0.1):
         super().__init__()
-        self.conv1 = nn.Conv1d(num_inputs, hidden_dim, kernel_size=5, padding=2)
+        # Causal (left-only) padding: pad = kernel_size - 1, then truncate right
+        self.conv1 = nn.Conv1d(num_inputs, hidden_dim, kernel_size=5, padding=0)
+        self.pad1 = 4
         self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim * 2, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim * 2, kernel_size=5, padding=0)
+        self.pad2 = 4
         self.bn2 = nn.BatchNorm1d(hidden_dim * 2)
-        self.conv3 = nn.Conv1d(hidden_dim * 2, hidden_dim, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(hidden_dim * 2, hidden_dim, kernel_size=3, padding=0)
+        self.pad3 = 2
         self.bn3 = nn.BatchNorm1d(hidden_dim)
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.dropout = nn.Dropout(dropout)
         self.out_dim = hidden_dim
 
     def forward(self, x: torch.Tensor, return_seq: bool = False) -> torch.Tensor:
-        """x: (B, C, L) -> (B, H). If return_seq, also return (B, H, L') before pooling."""
-        h = self.dropout(F.relu(self.bn1(self.conv1(x))))
+        """x: (B, C, L) -> (B, H). If return_seq, also return (B, H, L') before pooling.
+        Uses causal (left-only) padding to prevent time-travel."""
+        h = F.pad(x, (self.pad1, 0))
+        h = self.dropout(F.relu(self.bn1(self.conv1(h))))
         h = F.max_pool1d(h, 2)
+        h = F.pad(h, (self.pad2, 0))
         h = self.dropout(F.relu(self.bn2(self.conv2(h))))
         h = F.max_pool1d(h, 2)
+        h = F.pad(h, (self.pad3, 0))
         h = self.dropout(F.relu(self.bn3(self.conv3(h))))
         if return_seq:
             return self.pool(h).squeeze(-1), h  # (B, H), (B, H, L')

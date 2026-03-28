@@ -61,13 +61,18 @@ class E2EDataset(Dataset):
                 file_names = yaib_runtime.file_names
                 group_col = yaib_runtime.vars["GROUP"]
                 static_features = yaib_runtime.vars.get("STATIC", [])
-                self._static = build_static_matrix_for_dataset(
-                    dataset=self._yaib_dataset,
+                static_df = load_static_with_recipe(
                     data_dir=data_dir,
                     file_names=file_names,
                     group_col=group_col,
                     static_features=static_features,
                     recipe_path=static_recipe_path,
+                )
+                self._static = build_static_matrix_for_dataset(
+                    dataset=self._yaib_dataset,
+                    static_df=static_df,
+                    group_col=group_col,
+                    static_features=static_features,
                 )
             except Exception as e:
                 logging.warning("[E2EDataset] Failed to load static features: %s", e)

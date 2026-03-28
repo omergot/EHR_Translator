@@ -2567,46 +2567,80 @@ experiments:
   results:
     AUCROC: 0.0362
     AUCPR: 0.0364
-# ---- Per-timestep training loss fix (v2): honest E2E baselines for AKI/sepsis ----
 - name: e2e_raincoat_aki_v2
   config: configs/baselines/e2e/raincoat_aki.json
   output: experiments/results/e2e_raincoat_aki_v2.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'RAINCOAT AKI v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'RAINCOAT AKI v2: per-timestep BCE + static features fix'
+  server: local
+  gpu: 0
+  pid: 1327413
+  started: '2026-03-29 00:38:44'
 - name: e2e_raincoat_sepsis_v2
   config: configs/baselines/e2e/raincoat_sepsis.json
   output: experiments/results/e2e_raincoat_sepsis_v2.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'RAINCOAT sepsis v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'RAINCOAT sepsis v2: per-timestep BCE + static features fix'
+  server: a6000
+  gpu: 3
+  pid: 3933043
+  started: '2026-03-29 00:38:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_sepsis_v2.json
 - name: e2e_cluda_aki_v2
   config: configs/baselines/e2e/cluda_aki.json
   output: experiments/results/e2e_cluda_aki_v2.parquet
-  status: pending
+  status: running
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CLUDA AKI v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'CLUDA AKI v2: per-timestep BCE + static features fix'
+  server: '3090'
+  gpu: 0
+  pid: 822036
+  started: '2026-03-29 00:38:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki_v2.json
 - name: e2e_cluda_sepsis_v2
   config: configs/baselines/e2e/cluda_sepsis.json
   output: experiments/results/e2e_cluda_sepsis_v2.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CLUDA sepsis v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'CLUDA sepsis v2: per-timestep BCE + static features fix'
 - name: e2e_acon_aki_v2
   config: configs/baselines/e2e/acon_aki.json
   output: experiments/results/e2e_acon_aki_v2.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'ACON AKI v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'ACON AKI v2: per-timestep BCE + static features fix'
 - name: e2e_acon_sepsis_v2
   config: configs/baselines/e2e/acon_sepsis.json
   output: experiments/results/e2e_acon_sepsis_v2.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'ACON sepsis v2: per-timestep training loss (was per-stay, inflated AUROC)'
+  notes: 'ACON sepsis v2: per-timestep BCE + static features fix'
+- name: e2e_cluda_mortality_v2
+  config: configs/baselines/e2e/cluda_mortality.json
+  output: experiments/results/e2e_cluda_mortality_v2.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CLUDA mortality v2: static features fix (rerun for consistency)'
+- name: e2e_raincoat_mortality_v2
+  config: configs/baselines/e2e/raincoat_mortality.json
+  output: experiments/results/e2e_raincoat_mortality_v2.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RAINCOAT mortality v2: static features fix (rerun for consistency)'
+- name: e2e_acon_mortality_v2
+  config: configs/baselines/e2e/acon_mortality.json
+  output: experiments/results/e2e_acon_mortality_v2.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ACON mortality v2: static features fix (rerun for consistency)'

@@ -2471,8 +2471,21 @@ def run_e2e_baseline(args):
     logging.info("End-to-end DA baseline: %s", method)
     logging.info("=" * 60)
 
-    # --- Step 1: Compute no-adaptation baseline (frozen MIMIC LSTM on raw eICU test) ---
-    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on eICU)...")
+    # --- Step 1: Set up E2E data adapter FIRST (needed for fair baseline) ---
+    from .baselines.end_to_end.data_adapter import YAIBToE2EAdapter
+
+    adapter = YAIBToE2EAdapter(config)
+    source_train, source_val, source_test, target_train = adapter.get_loaders()
+
+    # Auto-detect number of input channels from data
+    num_channels = adapter.num_channels
+    training["num_input_channels"] = num_channels
+    logging.info("Detected %d input channels, seq_len=%d", num_channels, training.get("seq_len", 48))
+
+    # --- Step 1b: Compute no-adaptation baseline on the SAME E2E test data ---
+    # CRITICAL: Both "Original" and "Translated" must be evaluated on identical data
+    # for a fair comparison. We run the frozen LSTM on the windowed E2E test set.
+    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on E2E windowed test data)...")
     baseline_runtime = _build_runtime_from_config(
         config, batch_size_override=training.get("batch_size", 64),
     )
@@ -2482,33 +2495,55 @@ def run_e2e_baseline(args):
     for param in baseline_runtime._model.parameters():
         param.requires_grad = False
 
-    from .core.eval import TranslatorEvaluator
-    from .core.translator import IdentityTranslator
+    # Evaluate frozen LSTM on the E2E windowed test data
+    baseline_runtime._model.eval()
+    import numpy as np
+    from sklearn.metrics import roc_auc_score, average_precision_score
+    all_probs = []
+    all_labels = []
+    with torch.no_grad():
+        for batch in source_test:
+            x, labels, static, vmask = batch
+            # x is (B, C, L) in E2E format — transpose to (B, L, C) for LSTM
+            x_lstm = x.transpose(1, 2).to(device)  # (B, L, C)
+            labels = labels.to(device)
+            vmask = vmask.to(device)
 
-    test_loader = baseline_runtime.create_dataloader(DataSplit.test, shuffle=False)
-    identity_translator = IdentityTranslator(
-        input_size=test_loader.dataset[0][0].shape[-1]
-    ).to(device)
-    evaluator = TranslatorEvaluator(
-        yaib_runtime=baseline_runtime,
-        translator=identity_translator,
-        device=device,
-    )
-    original_metrics, _, _ = evaluator._evaluate_without_translator(test_loader)
-    logging.info("No-adaptation baseline: %s", original_metrics)
+            # Run frozen LSTM
+            logits = baseline_runtime._model(x_lstm)  # (B, L, num_classes) or (B, num_classes)
+            if logits.dim() == 3:
+                probs = torch.softmax(logits, dim=-1)[:, :, 1]  # (B, L)
+            else:
+                probs = torch.softmax(logits, dim=-1)[:, 1]  # (B,)
 
-    # --- Step 2: Set up E2E data adapter ---
-    from .baselines.end_to_end.data_adapter import YAIBToE2EAdapter
+            if labels.dim() == 1:
+                # Per-stay
+                valid = labels >= 0
+                if valid.sum() > 0:
+                    all_probs.append(probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
+            else:
+                # Per-timestep
+                valid = vmask & (labels >= 0)
+                if valid.sum() > 0:
+                    all_probs.append(probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
 
-    adapter = YAIBToE2EAdapter(config)
-    source_train, source_val, source_test, target_train = adapter.get_loaders()
+    all_probs_np = np.concatenate(all_probs)
+    all_labels_np = np.concatenate(all_labels)
+    try:
+        orig_auroc = roc_auc_score(all_labels_np, all_probs_np)
+    except ValueError:
+        orig_auroc = 0.5
+    try:
+        orig_aucpr = average_precision_score(all_labels_np, all_probs_np)
+    except ValueError:
+        orig_aucpr = 0.0
+    original_metrics = {"AUCROC": orig_auroc, "AUCPR": orig_aucpr}
+    logging.info("No-adaptation baseline (on E2E windowed data): AUROC=%.4f AUCPR=%.4f",
+                 orig_auroc, orig_aucpr)
 
-    # Auto-detect number of input channels from data
-    num_channels = adapter.num_channels
-    training["num_input_channels"] = num_channels
-    logging.info("Detected %d input channels", num_channels)
-
-    # --- Step 3: Create model + trainer ---
+    # --- Step 2: Create model + trainer ---
     if method == "e2e_cluda":
         from .baselines.end_to_end.cluda_model import CLUDAModel, CLUDATrainer
         model = CLUDAModel(config)

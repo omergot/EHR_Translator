@@ -2236,7 +2236,7 @@ experiments:
 - name: aki_v7_adaptive
   config: configs/v7/aki_v7_adaptive.json
   output: runs/aki_v7_adaptive/eval.parquet
-  status: running
+  status: done
   branch: adaptive-refresh
   notes: 'V7 negative control: AKI V5 best + adaptive refresh. Should match +0.0556.'
   server: '3090'
@@ -2244,6 +2244,13 @@ experiments:
   pid: 643584
   started: '2026-03-27 18:21:25'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v7_adaptive.json
+  finished: '2026-03-28 17:28:53'
+  results:
+    AUCROC: 0.0517
+    AUCPR: 0.1518
+    loss: -0.1018
+    brier: -0.0182
+    ece: -0.0037
 - name: mas_mortality_gru
   config: configs/neurips/mas_mortality_gru.json
   output: runs/mas_mortality_gru/eval.parquet
@@ -2436,17 +2443,18 @@ experiments:
   status: done
   branch: da-baselines-v2
   notes: 'UPPER BOUND: Fine-tuned LSTM (unfrozen MIMIC LSTM retrained on eICU) - aki'
-  server: local
-  gpu: 0
-  pid: 621652
-  started: '2026-03-28 10:56:40'
-  finished: '2026-03-28 11:55:54'
+  server: a6000
+  gpu: 3
+  pid: 3612439
+  started: '2026-03-28 18:13:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/finetune_lstm_aki.json
+  finished: '2026-03-28 18:44:47'
   results:
-    AUCROC: 0.0078
-    AUCPR: 0.0342
-    loss: -0.0303
-    brier: -0.0312
-    ece: -0.0428
+    AUCROC: 0.049
+    AUCPR: 0.1445
+    loss: -0.0982
+    brier: -0.0165
+    ece: 0.0039
 - name: finetune_lstm_sepsis
   config: configs/baselines/finetune_lstm_sepsis.json
   output: experiments/results/finetune_lstm_sepsis.parquet
@@ -2483,31 +2491,17 @@ experiments:
 - name: e2e_cluda_aki
   config: configs/baselines/e2e/cluda_aki.json
   output: experiments/results/e2e_cluda_aki.parquet
-  status: done
+  status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: CLUDA end-to-end (as published) - AKI
-  server: a6000
-  gpu: 3
-  pid: 3507544
-  started: '2026-03-28 16:34:46'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki.json
-  finished: '2026-03-28 17:07:22'
-  results:
-    AUCROC: -0.1735
-    AUCPR: -0.2422
-    loss: 9.7193
 - name: e2e_cluda_sepsis
   config: configs/baselines/e2e/cluda_sepsis.json
   output: experiments/results/e2e_cluda_sepsis.parquet
-  status: running
+  status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: CLUDA end-to-end (as published) - sepsis
-  server: local
-  gpu: 0
-  pid: 985106
-  started: '2026-03-28 17:00:15'
 - name: e2e_raincoat_mortality
   config: configs/baselines/e2e/raincoat_mortality.json
   output: experiments/results/e2e_raincoat_mortality.parquet
@@ -2528,15 +2522,10 @@ experiments:
 - name: e2e_raincoat_aki
   config: configs/baselines/e2e/raincoat_aki.json
   output: experiments/results/e2e_raincoat_aki.parquet
-  status: running
+  status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: RAINCOAT end-to-end (as published) - AKI
-  server: a6000
-  gpu: 3
-  pid: 3580131
-  started: '2026-03-28 17:07:29'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_aki.json
 - name: e2e_raincoat_sepsis
   config: configs/baselines/e2e/raincoat_sepsis.json
   output: experiments/results/e2e_raincoat_sepsis.parquet
@@ -2575,10 +2564,3 @@ experiments:
   branch: da-baselines-v2
   command: run_e2e_baseline
   notes: ACON end-to-end (as published) - sepsis
-- name: finetune_lstm_aki_eval
-  config: configs/baselines/finetune_lstm_aki.json
-  output: experiments/results/finetune_lstm_aki.parquet
-  status: pending
-  branch: da-baselines-v2
-  command: translate_and_eval
-  notes: Re-eval finetune_lstm_aki with fixed eval (frozen vs fine-tuned comparison)

@@ -82,7 +82,7 @@
     "type": "e2e_cluda"
   },
   "training": {
-    "seq_len": 48,
+    "seq_len": 169,
     "num_input_channels": 100,
     "batch_size": 256,
     "lr": 5e-05,

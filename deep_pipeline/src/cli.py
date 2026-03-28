@@ -2356,12 +2356,12 @@ def translate_and_eval(args):
         input_size = data_shape[-1]
         translator = IdentityTranslator(input_size=input_size)
 
-    if translator_type not in {"linear_regression", "transformer", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only", "finetune_lstm"} and args.translator_checkpoint:
+    if translator_type not in {"linear_regression", "transformer", "affine", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only", "finetune_lstm"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
         translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
 
-    if translator_type not in ("transformer", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
+    if translator_type not in ("transformer", "affine", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only", "finetune_lstm"):
         evaluator = TranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,

@@ -324,12 +324,22 @@ class RAINCOATTrainer(E2EBaselineTrainer):
                 tgt_t, tgt_f, tgt_seq = model.encode(tgt_x)
 
                 # Classification loss (source only)
-                combined_src = torch.cat([src_t, src_f, src_static], dim=1)
-                logits = model.classifier(combined_src).squeeze(-1)
-                train_y = src_y
-                if train_y.dim() > 1:
-                    train_y = train_y.clamp(min=0).max(dim=1).values
-                cls_loss = self.classification_loss(logits, train_y)
+                if src_y.dim() > 1:
+                    # Per-timestep classification: predict at every timestep
+                    src_vmask = src_batch[3].to(self.device)
+                    logits_ts = model.predict_per_timestep(src_x, src_static)  # (B, L)
+                    valid = src_vmask & (src_y >= 0)
+                    if valid.sum() > 0:
+                        cls_loss = F.binary_cross_entropy_with_logits(
+                            logits_ts[valid], src_y[valid],
+                            pos_weight=self._pos_weight)
+                    else:
+                        cls_loss = logits_ts.new_tensor(0.0)
+                else:
+                    # Per-stay classification: global pooled features
+                    combined_src = torch.cat([src_t, src_f, src_static], dim=1)
+                    logits = model.classifier(combined_src).squeeze(-1)
+                    cls_loss = self.classification_loss(logits, src_y)
 
                 # Sinkhorn alignment on concatenated temporal+frequency features
                 src_align = torch.cat([src_t, src_f], dim=1).float()

@@ -353,19 +353,29 @@ class ACONTrainer(E2EBaselineTrainer):
                 tgt_t, tgt_f = model.encode(tgt_x)
 
                 # Classification loss (source, both classifiers)
-                src_t_logits = model.temporal_classifier(
-                    torch.cat([src_t, src_static], dim=1)
-                ).squeeze(-1)
-                src_f_logits = model.frequency_classifier(
-                    torch.cat([src_f, src_static], dim=1)
-                ).squeeze(-1)
-                train_y = src_y
-                if train_y.dim() > 1:
-                    train_y = train_y.clamp(min=0).max(dim=1).values
-                cls_loss = (
-                    self.classification_loss(src_t_logits, train_y) +
-                    self.classification_loss(src_f_logits, train_y)
-                ) * 0.5
+                if src_y.dim() > 1:
+                    # Per-timestep classification: predict at every timestep
+                    src_vmask = src_batch[3].to(self.device)
+                    logits_ts = model.predict_per_timestep(src_x, src_static)  # (B, L)
+                    valid = src_vmask & (src_y >= 0)
+                    if valid.sum() > 0:
+                        cls_loss = F.binary_cross_entropy_with_logits(
+                            logits_ts[valid], src_y[valid],
+                            pos_weight=self._pos_weight)
+                    else:
+                        cls_loss = logits_ts.new_tensor(0.0)
+                else:
+                    # Per-stay classification: global pooled features
+                    src_t_logits = model.temporal_classifier(
+                        torch.cat([src_t, src_static], dim=1)
+                    ).squeeze(-1)
+                    src_f_logits = model.frequency_classifier(
+                        torch.cat([src_f, src_static], dim=1)
+                    ).squeeze(-1)
+                    cls_loss = (
+                        self.classification_loss(src_t_logits, src_y) +
+                        self.classification_loss(src_f_logits, src_y)
+                    ) * 0.5
 
                 # Domain adversarial on correlation subspace
                 src_corr = model.correlation_features(src_t, src_f)

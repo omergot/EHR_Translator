@@ -378,14 +378,23 @@ class CLUDATrainer(E2EBaselineTrainer):
                 cross_ctr = model.cross_domain_loss(h_src, h_tgt)
 
                 # Prediction loss (source only)
-                logits = model.classifier(
-                    torch.cat([h_src, src_static], dim=1)
-                ).squeeze(-1)
-                # For per-timestep labels (B, L), aggregate to per-segment for training
-                train_y = src_y
-                if train_y.dim() > 1:
-                    train_y = train_y.clamp(min=0).max(dim=1).values
-                pred_loss = self.classification_loss(logits, train_y)
+                if src_y.dim() > 1:
+                    # Per-timestep classification: predict at every timestep
+                    src_vmask = src_batch[3].to(self.device)
+                    logits_ts = model.predict_per_timestep(src_x, src_static)  # (B, L)
+                    valid = src_vmask & (src_y >= 0)
+                    if valid.sum() > 0:
+                        pred_loss = F.binary_cross_entropy_with_logits(
+                            logits_ts[valid], src_y[valid],
+                            pos_weight=self._pos_weight)
+                    else:
+                        pred_loss = logits_ts.new_tensor(0.0)
+                else:
+                    # Per-stay classification: global pooled features
+                    logits = model.classifier(
+                        torch.cat([h_src, src_static], dim=1)
+                    ).squeeze(-1)
+                    pred_loss = self.classification_loss(logits, src_y)
 
                 # Adversarial loss
                 h_all = torch.cat([h_src, h_tgt], dim=0)

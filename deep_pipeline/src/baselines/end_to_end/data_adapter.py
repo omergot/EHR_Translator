@@ -82,8 +82,9 @@ class E2EDataset(Dataset):
         for idx in range(len(self._yaib_dataset)):
             data, labels, mask = self._yaib_dataset[idx]
             # data: (T, F) where F = num_features (96 for mortality, 100 for AKI/sepsis)
-            # labels: (T,) — for per-stay: last timestep has label, rest are -1
-            # mask: (T,) — True for valid (non-padded) timesteps
+            # labels: (T,) — for per-stay: last timestep has label, rest are -1; padded positions are 0
+            # mask: (T,) — YAIB's "pad_mask": True at labeled timesteps only (NOT a pure validity mask!
+            #   YAIB sets mask=False at both padded AND unlabeled-but-valid timesteps)
             self._cache.append((data, labels, mask))
 
         # Determine number of dynamic features (exclude static if > 96)
@@ -104,8 +105,18 @@ class E2EDataset(Dataset):
         # data is (T, F), mask is (T,) bool
         T, F = data.shape
 
-        # Get valid (non-padded) portion
-        valid_mask = mask.bool()
+        # IMPORTANT: YAIB's mask conflates padding and labeling.
+        # For per-stay tasks (mortality), YAIB sets mask=False at unlabeled
+        # timesteps (where labels were NaN -> -1), not just at padded positions.
+        # This means mask is True at ONLY the labeled timestep, discarding all
+        # other real timesteps.
+        #
+        # To get the actual non-padding mask:
+        # - labels == -1 means real timestep without label (was NaN)
+        # - mask == True means real timestep with label
+        # - labels == 0 AND mask == False in the padding zone means padding
+        # So: valid = (labels < 0) | mask  captures all real timesteps.
+        valid_mask = (labels < 0) | mask.bool()
         valid_len = valid_mask.sum().item()
 
         if valid_len == 0:
@@ -145,8 +156,17 @@ class E2EDataset(Dataset):
         # Transpose to (F, seq_len) = (C, L) for Conv1d
         x = window_data.t()  # (F, seq_len)
 
-        # Validity mask for non-padded timesteps
-        vmask = (window_labels >= 0)
+        # Validity mask: True for non-padded timesteps in the window.
+        # We know exactly how many valid timesteps are in the window from the
+        # extraction logic above: min(valid_len, seq_len) real timesteps at the
+        # right, with left-padding if valid_len < seq_len.
+        if valid_len >= self.seq_len:
+            vmask = torch.ones(self.seq_len, dtype=torch.bool)
+        else:
+            vmask = torch.cat([
+                torch.zeros(self.seq_len - valid_len, dtype=torch.bool),
+                torch.ones(valid_len, dtype=torch.bool),
+            ])
 
         # Extract label
         if self.label_mode == "per_stay":

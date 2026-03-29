@@ -2517,9 +2517,17 @@ def run_e2e_baseline(args):
                 probs = torch.softmax(logits, dim=-1)[:, 1]  # (B,)
 
             if labels.dim() == 1:
-                # Per-stay
+                # Per-stay: probs is (B, L) but we need one prob per stay.
+                # Use the last valid timestep's prediction (matches YAIB eval).
                 valid = labels >= 0
-                if valid.sum() > 0:
+                if valid.sum() > 0 and probs.dim() == 2:
+                    # Find the last valid timestep index for each sample
+                    # vmask is (B, L): True for non-padded timesteps
+                    last_valid_idx = vmask.long().cumsum(dim=1).argmax(dim=1)  # (B,)
+                    per_stay_probs = probs[torch.arange(probs.size(0), device=probs.device), last_valid_idx]
+                    all_probs.append(per_stay_probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
+                elif valid.sum() > 0:
                     all_probs.append(probs[valid].cpu().numpy())
                     all_labels.append(labels[valid].cpu().numpy())
             else:

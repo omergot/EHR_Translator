@@ -98,7 +98,7 @@
     "early_stopping_patience": 15
   },
   "output": {
-    "run_dir": "runs/e2e_raincoat_aki",
-    "log_file": "runs/e2e_raincoat_aki/run.log"
+    "run_dir": "runs/e2e_raincoat_aki_v4",
+    "log_file": "runs/e2e_raincoat_aki_v4/run.log"
   }
 }

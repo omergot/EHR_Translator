@@ -98,7 +98,7 @@
     "early_stopping_patience": 15
   },
   "output": {
-    "run_dir": "runs/e2e_raincoat_mortality",
-    "log_file": "runs/e2e_raincoat_mortality/run.log"
+    "run_dir": "runs/e2e_raincoat_mortality_v4",
+    "log_file": "runs/e2e_raincoat_mortality_v4/run.log"
   }
 }

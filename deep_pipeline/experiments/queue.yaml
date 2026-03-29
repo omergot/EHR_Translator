@@ -2429,450 +2429,391 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: CLUDA end-to-end (as published) - mortality
+  notes: 'CLUDA E2E (TCN, causal) - mortality (data adapter fix: all timesteps)'
   server: local
   gpu: 0
-  pid: 701901
-  started: '2026-03-28 12:38:33'
-  finished: '2026-03-28 12:58:58'
+  pid: 1697081
+  started: '2026-03-29 11:50:24'
+  finished: '2026-03-29 12:04:57'
   results:
-    AUCROC: 0.0153
-    AUCPR: 0.019
-    loss: 0.4212
+    AUCROC: 0.0339
+    AUCPR: 0.0131
 - name: e2e_cluda_aki
   config: configs/baselines/e2e/cluda_aki.json
   output: experiments/results/e2e_cluda_aki.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: CLUDA end-to-end (as published) - AKI
-  server: local
-  gpu: 0
-  pid: 1087160
-  started: '2026-03-28 19:13:44'
-  finished: '2026-03-28 19:51:49'
+  notes: 'CLUDA E2E (TCN, causal) - aki (data adapter fix: all timesteps)'
+  server: a6000
+  gpu: 3
+  pid: 5815
+  started: '2026-03-29 11:50:31'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki.json
+  finished: '2026-03-29 12:30:29'
   results:
-    AUCROC: -0.1916
-    AUCPR: -0.2607
+    AUCROC: 0.0677
+    AUCPR: 0.0838
 - name: e2e_cluda_sepsis
   config: configs/baselines/e2e/cluda_sepsis.json
   output: experiments/results/e2e_cluda_sepsis.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: CLUDA end-to-end (as published) - sepsis
-  server: a6000
-  gpu: 3
-  pid: 3635819
-  started: '2026-03-28 19:13:51'
+  notes: 'CLUDA E2E (TCN, causal) - sepsis (data adapter fix: all timesteps)'
+  server: '3090'
+  gpu: 0
+  pid: 1111613
+  started: '2026-03-29 11:50:39'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_sepsis.json
-  finished: '2026-03-28 19:36:25'
+  finished: '2026-03-29 12:11:02'
   results:
-    AUCROC: -0.0302
-    AUCPR: 0.0006
+    AUCROC: 0.0849
+    AUCPR: 0.0335
 - name: e2e_raincoat_mortality
   config: configs/baselines/e2e/raincoat_mortality.json
   output: experiments/results/e2e_raincoat_mortality.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: RAINCOAT end-to-end (as published) - mortality
-  server: a6000
-  gpu: 3
-  pid: 3302690
-  started: '2026-03-28 14:37:12'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_mortality.json
-  finished: '2026-03-28 15:20:00'
+  notes: 'RAINCOAT E2E (CNN+Spectral, causal) - mortality (data adapter fix: all timesteps)'
+  server: local
+  gpu: 0
+  pid: 1726453
+  started: '2026-03-29 12:04:57'
+  finished: '2026-03-29 12:40:46'
   results:
-    AUCROC: 0.0293
-    AUCPR: 0.0355
-    loss: 0.4117
+    AUCROC: 0.0324
+    AUCPR: 0.0039
 - name: e2e_raincoat_aki
   config: configs/baselines/e2e/raincoat_aki.json
   output: experiments/results/e2e_raincoat_aki.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: RAINCOAT end-to-end (as published) - AKI
+  notes: 'RAINCOAT E2E (CNN+Spectral, causal) - aki (data adapter fix: all timesteps)'
   server: '3090'
   gpu: 0
-  pid: 718756
-  started: '2026-03-28 19:13:59'
+  pid: 1143498
+  started: '2026-03-29 12:11:11'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_aki.json
-  finished: '2026-03-28 19:51:49'
+  finished: '2026-03-29 13:13:08'
   results:
-    AUCROC: 0.0582
-    AUCPR: -0.096
+    AUCROC: 0.169
+    AUCPR: 0.4613
 - name: e2e_raincoat_sepsis
   config: configs/baselines/e2e/raincoat_sepsis.json
   output: experiments/results/e2e_raincoat_sepsis.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: RAINCOAT end-to-end (as published) - sepsis
+  notes: 'RAINCOAT E2E (CNN+Spectral, causal) - sepsis (data adapter fix: all timesteps)'
   server: a6000
   gpu: 3
-  pid: 3663424
-  started: '2026-03-28 19:36:33'
+  pid: 55388
+  started: '2026-03-29 12:30:36'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_sepsis.json
-  finished: '2026-03-28 20:54:01'
+  finished: '2026-03-29 13:31:28'
   results:
-    AUCROC: 0.2116
-    AUCPR: 0.1517
+    AUCROC: 0.2496
+    AUCPR: 0.4333
 - name: e2e_acon_mortality
   config: configs/baselines/e2e/acon_mortality.json
   output: experiments/results/e2e_acon_mortality.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: ACON end-to-end (as published) - mortality
-  server: a6000
-  gpu: 3
-  pid: 3439512
-  started: '2026-03-28 16:01:57'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_mortality.json
-  finished: '2026-03-28 16:11:05'
+  notes: 'ACON E2E (CNN+Freq, causal) - mortality (data adapter fix: all timesteps)'
+  server: local
+  gpu: 0
+  pid: 1750031
+  started: '2026-03-29 12:40:46'
+  finished: '2026-03-29 12:52:55'
   results:
-    AUCROC: 0.012
-    AUCPR: 0.0034
-    loss: 0.4559
+    AUCROC: 0.0129
+    AUCPR: -0.0365
 - name: e2e_acon_aki
   config: configs/baselines/e2e/acon_aki.json
   output: experiments/results/e2e_acon_aki.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: ACON end-to-end (as published) - AKI
+  notes: 'ACON E2E (CNN+Freq, causal) - aki (data adapter fix: all timesteps)'
   server: local
   gpu: 0
-  pid: 1112721
-  started: '2026-03-28 19:51:50'
-  finished: '2026-03-28 20:53:00'
+  pid: 1764748
+  started: '2026-03-29 12:52:55'
+  finished: '2026-03-29 13:41:35'
   results:
-    AUCROC: 0.0218
-    AUCPR: -0.0904
+    AUCROC: 0.0747
+    AUCPR: 0.0973
 - name: e2e_acon_sepsis
   config: configs/baselines/e2e/acon_sepsis.json
   output: experiments/results/e2e_acon_sepsis.parquet
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: ACON end-to-end (as published) - sepsis
+  notes: 'ACON E2E (CNN+Freq, causal) - sepsis (data adapter fix: all timesteps)'
   server: '3090'
   gpu: 0
-  pid: 740374
-  started: '2026-03-28 19:51:58'
+  pid: 1179356
+  started: '2026-03-29 13:13:16'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_sepsis.json
-  finished: '2026-03-28 20:01:07'
+  finished: '2026-03-29 13:23:23'
   results:
-    AUCROC: 0.0362
-    AUCPR: 0.0364
-- name: e2e_raincoat_aki_v2
-  config: configs/baselines/e2e/raincoat_aki.json
-  output: experiments/results/e2e_raincoat_aki_v2.parquet
-  status: failed
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'RAINCOAT AKI v2: per-timestep BCE + static features fix'
-  server: local
-  gpu: 0
-  pid: 1327413
-  started: '2026-03-29 00:38:44'
-  finished: '2026-03-29 03:17:29'
-  error: Process died (detected during monitoring)
-- name: e2e_raincoat_sepsis_v2
-  config: configs/baselines/e2e/raincoat_sepsis.json
-  output: experiments/results/e2e_raincoat_sepsis_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'RAINCOAT sepsis v2: per-timestep BCE + static features fix'
-  server: a6000
-  gpu: 3
-  pid: 3933043
-  started: '2026-03-29 00:38:50'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_sepsis_v2.json
-  finished: '2026-03-29 01:27:15'
-  results:
-    AUCROC: 0.2513
-    AUCPR: 0.4183
-- name: e2e_cluda_aki_v2
-  config: configs/baselines/e2e/cluda_aki.json
-  output: experiments/results/e2e_cluda_aki_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'CLUDA AKI v2: per-timestep BCE + static features fix'
-  server: '3090'
-  gpu: 0
-  pid: 822036
-  started: '2026-03-29 00:38:58'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki_v2.json
-  finished: '2026-03-29 01:04:36'
-  results:
-    AUCROC: 0.0558
-    AUCPR: 0.0418
-- name: e2e_cluda_sepsis_v2
-  config: configs/baselines/e2e/cluda_sepsis.json
-  output: experiments/results/e2e_cluda_sepsis_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'CLUDA sepsis v2: per-timestep BCE + static features fix'
-  server: '3090'
-  gpu: 0
-  pid: 858801
-  started: '2026-03-29 01:04:44'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_sepsis_v2.json
-  finished: '2026-03-29 01:25:05'
-  results:
-    AUCROC: 0.0988
-    AUCPR: 0.0354
-- name: e2e_acon_aki_v2
-  config: configs/baselines/e2e/acon_aki.json
-  output: experiments/results/e2e_acon_aki_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'ACON AKI v2: per-timestep BCE + static features fix'
-  server: '3090'
-  gpu: 0
-  pid: 890183
-  started: '2026-03-29 01:25:13'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_aki_v2.json
-  finished: '2026-03-29 01:40:37'
-  results:
-    AUCROC: 0.1282
-    AUCPR: 0.3029
-- name: e2e_acon_sepsis_v2
-  config: configs/baselines/e2e/acon_sepsis.json
-  output: experiments/results/e2e_acon_sepsis_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'ACON sepsis v2: per-timestep BCE + static features fix'
-  server: a6000
-  gpu: 3
-  pid: 3971612
-  started: '2026-03-29 01:27:22'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_sepsis_v2.json
-  finished: '2026-03-29 01:49:02'
-  results:
-    AUCROC: 0.1951
-    AUCPR: 0.1711
-- name: e2e_cluda_mortality_v2
-  config: configs/baselines/e2e/cluda_mortality.json
-  output: experiments/results/e2e_cluda_mortality_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'CLUDA mortality v2: static features fix (rerun for consistency)'
-  server: '3090'
-  gpu: 0
-  pid: 910941
-  started: '2026-03-29 01:40:46'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_mortality_v2.json
-  finished: '2026-03-29 01:46:52'
-  results:
-    AUCROC: 0.3293
-    AUCPR: 0.3145
-- name: e2e_raincoat_mortality_v2
-  config: configs/baselines/e2e/raincoat_mortality.json
-  output: experiments/results/e2e_raincoat_mortality_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'RAINCOAT mortality v2: static features fix (rerun for consistency)'
-  server: '3090'
-  gpu: 0
-  pid: 944667
-  started: '2026-03-29 01:47:01'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_mortality_v2.json
-  finished: '2026-03-29 02:04:30'
-  results:
-    AUCROC: 0.3293
-    AUCPR: 0.3274
-- name: e2e_acon_mortality_v2
-  config: configs/baselines/e2e/acon_mortality.json
-  output: experiments/results/e2e_acon_mortality_v2.parquet
-  status: done
-  branch: da-baselines-v2
-  command: run_e2e_baseline
-  notes: 'ACON mortality v2: static features fix (rerun for consistency)'
-  server: a6000
-  gpu: 3
-  pid: 3989195
-  started: '2026-03-29 01:49:09'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_mortality_v2.json
-  finished: '2026-03-29 02:00:19'
-  results:
-    AUCROC: 0.3293
-    AUCPR: 0.3123
+    AUCROC: 0.1709
+    AUCPR: 0.0802
 - name: e2e_dann_mortality
   config: configs/baselines/e2e/e2e_dann_mortality.json
   output: experiments/results/e2e_dann_mortality.parquet
   status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'DANN E2E mortality: LSTM encoder + GRL discriminator (Ganin et al. 2016)'
+  notes: 'DANN E2E (LSTM, causal) - mortality (data adapter fix: all timesteps)'
   server: athena
-  slurm_job_id: '66435'
-  submitted: '2026-03-29 00:56:45'
+  slurm_job_id: '66534'
+  submitted: '2026-03-29 11:51:25'
 - name: e2e_dann_aki
   config: configs/baselines/e2e/e2e_dann_aki.json
   output: experiments/results/e2e_dann_aki.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'DANN E2E AKI: per-timestep LSTM + GRL (Ganin et al. 2016)'
-  server: a6000
-  gpu: 3
-  pid: 4007026
-  started: '2026-03-29 02:00:26'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_aki.json
-  finished: '2026-03-29 02:28:11'
-  results:
-    AUCROC: 0.1749
-    AUCPR: 0.4695
+  notes: 'DANN E2E (LSTM, causal) - aki (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66535'
+  submitted: '2026-03-29 11:51:31'
 - name: e2e_dann_sepsis
   config: configs/baselines/e2e/e2e_dann_sepsis.json
   output: experiments/results/e2e_dann_sepsis.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'DANN E2E sepsis: per-timestep LSTM + GRL (Ganin et al. 2016)'
-  server: '3090'
-  gpu: 0
-  pid: 963401
-  started: '2026-03-29 02:04:39'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_sepsis.json
-  finished: '2026-03-29 02:18:53'
-  results:
-    AUCROC: 0.2481
-    AUCPR: 0.2943
+  notes: 'DANN E2E (LSTM, causal) - sepsis (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66536'
+  submitted: '2026-03-29 11:51:37'
 - name: e2e_coral_mortality
   config: configs/baselines/e2e/e2e_coral_mortality.json
   output: experiments/results/e2e_coral_mortality.parquet
   status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'Deep CORAL E2E mortality: LSTM + covariance alignment (Sun & Saenko 2016)'
+  notes: 'Deep CORAL E2E (LSTM, causal) - mortality (data adapter fix: all timesteps)'
   server: athena
-  slurm_job_id: '66436'
-  submitted: '2026-03-29 00:56:53'
+  slurm_job_id: '66537'
+  submitted: '2026-03-29 11:51:44'
 - name: e2e_coral_aki
   config: configs/baselines/e2e/e2e_coral_aki.json
   output: experiments/results/e2e_coral_aki.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'Deep CORAL E2E AKI: per-timestep LSTM + covariance (Sun & Saenko 2016)'
-  server: '3090'
-  gpu: 0
-  pid: 983251
-  started: '2026-03-29 02:19:02'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_aki.json
-  finished: '2026-03-29 02:37:30'
-  results:
-    AUCROC: 0.1759
-    AUCPR: 0.4775
+  notes: 'Deep CORAL E2E (LSTM, causal) - aki (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66538'
+  submitted: '2026-03-29 11:51:50'
 - name: e2e_coral_sepsis
   config: configs/baselines/e2e/e2e_coral_sepsis.json
   output: experiments/results/e2e_coral_sepsis.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'Deep CORAL E2E sepsis: per-timestep LSTM + covariance (Sun & Saenko 2016)'
-  server: a6000
-  gpu: 3
-  pid: 4034973
-  started: '2026-03-29 02:28:18'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_sepsis.json
-  finished: '2026-03-29 02:49:51'
-  results:
-    AUCROC: 0.2469
-    AUCPR: 0.2887
+  notes: 'Deep CORAL E2E (LSTM, causal) - sepsis (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66539'
+  submitted: '2026-03-29 11:51:57'
 - name: e2e_codats_mortality
   config: configs/baselines/e2e/e2e_codats_mortality.json
   output: experiments/results/e2e_codats_mortality.parquet
   status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CoDATS E2E mortality: causal CNN + GRL (Wilson et al. 2020)'
+  notes: 'CoDATS E2E (CNN, causal) - mortality (data adapter fix: all timesteps)'
   server: athena
-  slurm_job_id: '66437'
-  submitted: '2026-03-29 00:57:01'
+  slurm_job_id: '66540'
+  submitted: '2026-03-29 11:52:03'
 - name: e2e_codats_aki
   config: configs/baselines/e2e/e2e_codats_aki.json
   output: experiments/results/e2e_codats_aki.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CoDATS E2E AKI: per-timestep causal CNN + GRL (Wilson et al. 2020)'
-  server: '3090'
-  gpu: 0
-  pid: 1008875
-  started: '2026-03-29 02:37:38'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_aki.json
-  finished: '2026-03-29 02:57:06'
-  results:
-    AUCROC: 0.071
-    AUCPR: 0.1954
+  notes: 'CoDATS E2E (CNN, causal) - aki (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66541'
+  submitted: '2026-03-29 11:52:10'
 - name: e2e_codats_sepsis
   config: configs/baselines/e2e/e2e_codats_sepsis.json
   output: experiments/results/e2e_codats_sepsis.parquet
-  status: done
+  status: athena_pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CoDATS E2E sepsis: per-timestep causal CNN + GRL (Wilson et al. 2020)'
-  server: a6000
-  gpu: 3
-  pid: 4058504
-  started: '2026-03-29 02:49:58'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_sepsis.json
-  finished: '2026-03-29 03:12:22'
-  results:
-    AUCROC: 0.044
-    AUCPR: 0.0211
-- name: e2e_cluda_mortality_v3
+  notes: 'CoDATS E2E (CNN, causal) - sepsis (data adapter fix: all timesteps)'
+  server: athena
+  slurm_job_id: '66542'
+  submitted: '2026-03-29 11:52:16'
+
+# ============================================================
+# E2E DA Baselines V4: Fixed source/target swap + causality fix
+# Source=MIMIC (labeled), Target=eICU (eval). Standard DA protocol.
+# ============================================================
+
+# --- CLUDA (local queue) ---
+- name: e2e_cluda_mortality_v4
   config: configs/baselines/e2e/cluda_mortality.json
-  output: experiments/results/e2e_cluda_mortality_v3.parquet
+  output: experiments/results/e2e_cluda_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CLUDA mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
-- name: e2e_raincoat_mortality_v3
+  notes: 'CLUDA v4: train on MIMIC, eval on eICU (proper DA protocol)'
+
+- name: e2e_cluda_aki_v4
+  config: configs/baselines/e2e/cluda_aki.json
+  output: experiments/results/e2e_cluda_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CLUDA v4: train on MIMIC, eval on eICU (proper DA protocol)'
+
+- name: e2e_cluda_sepsis_v4
+  config: configs/baselines/e2e/cluda_sepsis.json
+  output: experiments/results/e2e_cluda_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CLUDA v4: train on MIMIC, eval on eICU (proper DA protocol)'
+
+# --- RAINCOAT (local queue) ---
+- name: e2e_raincoat_mortality_v4
   config: configs/baselines/e2e/raincoat_mortality.json
-  output: experiments/results/e2e_raincoat_mortality_v3.parquet
+  output: experiments/results/e2e_raincoat_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'RAINCOAT mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
-- name: e2e_acon_mortality_v3
+  notes: 'RAINCOAT v4: train MIMIC, eval eICU + causal freq fix'
+
+- name: e2e_raincoat_aki_v4
+  config: configs/baselines/e2e/raincoat_aki.json
+  output: experiments/results/e2e_raincoat_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RAINCOAT v4: train MIMIC, eval eICU + causal freq fix'
+
+- name: e2e_raincoat_sepsis_v4
+  config: configs/baselines/e2e/raincoat_sepsis.json
+  output: experiments/results/e2e_raincoat_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RAINCOAT v4: train MIMIC, eval eICU + causal freq fix'
+
+# --- ACON (local queue) ---
+- name: e2e_acon_mortality_v4
   config: configs/baselines/e2e/acon_mortality.json
-  output: experiments/results/e2e_acon_mortality_v3.parquet
+  output: experiments/results/e2e_acon_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'ACON mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
-- name: e2e_dann_mortality_v3
+  notes: 'ACON v4: train MIMIC, eval eICU + causal freq fix'
+
+- name: e2e_acon_aki_v4
+  config: configs/baselines/e2e/acon_aki.json
+  output: experiments/results/e2e_acon_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ACON v4: train MIMIC, eval eICU + causal freq fix'
+
+- name: e2e_acon_sepsis_v4
+  config: configs/baselines/e2e/acon_sepsis.json
+  output: experiments/results/e2e_acon_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ACON v4: train MIMIC, eval eICU + causal freq fix'
+
+# --- DANN (Athena) ---
+- name: e2e_dann_mortality_v4
   config: configs/baselines/e2e/e2e_dann_mortality.json
-  output: experiments/results/e2e_dann_mortality_v3.parquet
+  output: experiments/results/e2e_dann_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'DANN mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
-- name: e2e_coral_mortality_v3
+  server: athena
+  notes: 'DANN v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_dann_aki_v4
+  config: configs/baselines/e2e/e2e_dann_aki.json
+  output: experiments/results/e2e_dann_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'DANN v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_dann_sepsis_v4
+  config: configs/baselines/e2e/e2e_dann_sepsis.json
+  output: experiments/results/e2e_dann_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'DANN v4: train MIMIC, eval eICU (proper DA protocol)'
+
+# --- CORAL (Athena) ---
+- name: e2e_coral_mortality_v4
   config: configs/baselines/e2e/e2e_coral_mortality.json
-  output: experiments/results/e2e_coral_mortality_v3.parquet
+  output: experiments/results/e2e_coral_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'Deep CORAL mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
-- name: e2e_codats_mortality_v3
+  server: athena
+  notes: 'CORAL v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_coral_aki_v4
+  config: configs/baselines/e2e/e2e_coral_aki.json
+  output: experiments/results/e2e_coral_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'CORAL v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_coral_sepsis_v4
+  config: configs/baselines/e2e/e2e_coral_sepsis.json
+  output: experiments/results/e2e_coral_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'CORAL v4: train MIMIC, eval eICU (proper DA protocol)'
+
+# --- CoDATS (Athena) ---
+- name: e2e_codats_mortality_v4
   config: configs/baselines/e2e/e2e_codats_mortality.json
-  output: experiments/results/e2e_codats_mortality_v3.parquet
+  output: experiments/results/e2e_codats_mortality_v4.parquet
   status: pending
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CoDATS mortality v3: fix per-stay baseline AUROC (last-timestep extraction)'
+  server: athena
+  notes: 'CoDATS v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_codats_aki_v4
+  config: configs/baselines/e2e/e2e_codats_aki.json
+  output: experiments/results/e2e_codats_aki_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'CoDATS v4: train MIMIC, eval eICU (proper DA protocol)'
+
+- name: e2e_codats_sepsis_v4
+  config: configs/baselines/e2e/e2e_codats_sepsis.json
+  output: experiments/results/e2e_codats_sepsis_v4.parquet
+  status: pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  server: athena
+  notes: 'CoDATS v4: train MIMIC, eval eICU (proper DA protocol)'

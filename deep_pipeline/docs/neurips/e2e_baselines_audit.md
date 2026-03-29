@@ -14,7 +14,11 @@ last_valid_idx = vmask.long().cumsum(dim=1).argmax(dim=1)  # (B,)
 per_stay_probs = probs[torch.arange(B), last_valid_idx]     # (B,)
 ```
 
-**Impact**: ALL mortality v2 deltas were reporting +0.329 against a random-chance baseline. The E2E methods' absolute AUROC is correct (0.82-0.84) -- only the "Original" baseline was broken. Expected correct baseline: ~0.80 (matching our frozen LSTM's standard YAIB eval of 0.8079). Six mortality experiments requeued as v3.
+**Impact**: ALL mortality v2 deltas were reporting +0.329 against a random-chance baseline. The E2E methods' absolute AUROC is correct (0.82-0.84) -- only the "Original" baseline was broken. Six mortality experiments requeued as v3.
+
+**Verified correct v3 baseline**: 0.7655 AUROC (confirmed from first v3 run). This is lower than the full YAIB baseline (0.8079) because the E2E windowed data truncates to 25 timesteps -- the frozen LSTM has less context. This is the correct "no-adaptation" comparison since both the baseline and the E2E methods operate on the same windowed data.
+
+**Note on v1 vs v2 baseline approach**: v1 ran the baseline through the full YAIB eval pipeline (0.8079), making the delta an unfair comparison (different data). v2 correctly computes the baseline on the same E2E windowed data, giving a fair apples-to-apples comparison.
 
 ## Issue 2: LSTM-Based Methods Show Near-Perfect AKI AUROC (ARCHITECTURAL)
 
@@ -70,15 +74,15 @@ ACON mortality v2 went NaN at epoch 10 (adv_loss diverged first). Best model fro
 | CLUDA | Causal TCN | 0.8067 | 0.0632 | +0.0988 | +0.0354 |
 | CoDATS | Causal CNN | 0.7520 | 0.0488 | +0.0440 | +0.0211 |
 
-### Mortality (per-stay, baseline PENDING after fix)
-| Method | Arch | Test AUROC | Expected baseline | Notes |
-|--------|------|-----------|------------------|-------|
-| CLUDA | Causal TCN | 0.8293 | ~0.80 | v3 requeued |
-| RAINCOAT | CNN | 0.8293 | ~0.80 | v3 requeued |
-| ACON | CNN | 0.8293 | ~0.80 | v3 requeued, NaN at ep10 |
-| DANN | LSTM | pending | ~0.80 | v3 requeued |
-| CORAL | LSTM | pending | ~0.80 | v3 requeued |
-| CoDATS | Causal CNN | pending | ~0.80 | v3 requeued |
+### Mortality (per-stay, baseline 0.7655 on windowed data)
+| Method | Arch | Test AUROC | Delta AUROC | Notes |
+|--------|------|-----------|------------|-------|
+| CLUDA | Causal TCN | 0.8293 | +0.0638 | v3 running |
+| RAINCOAT | CNN | 0.8293 | +0.0638 | v3 running |
+| ACON | CNN | 0.8293 | +0.0638 | v3 running, NaN at ep10 in v2 |
+| DANN | LSTM | pending | pending | v3 queued |
+| CORAL | LSTM | pending | pending | v3 queued |
+| CoDATS | Causal CNN | pending | pending | v3 queued |
 
 ## Honesty Assessment
 

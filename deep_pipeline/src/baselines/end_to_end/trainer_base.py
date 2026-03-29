@@ -33,11 +33,13 @@ class E2EBaselineTrainer:
         source_val_loader: DataLoader,
         config: dict,
         device: str = "cuda",
+        target_val_loader: DataLoader | None = None,
     ):
         self.model = model.to(device)
         self.source_train_loader = source_train_loader
         self.target_train_loader = target_train_loader
         self.source_val_loader = source_val_loader
+        self.target_val_loader = target_val_loader
         self.device = device
         self.config = config
 
@@ -217,8 +219,12 @@ class E2EBaselineTrainer:
 
     @torch.no_grad()
     def _validate(self) -> dict:
-        """Evaluate on source validation set."""
-        return self._eval_loop(self.source_val_loader)
+        """Evaluate on target validation set (eICU) for early stopping.
+
+        Falls back to source val if target_val_loader is not provided.
+        """
+        loader = self.target_val_loader if self.target_val_loader is not None else self.source_val_loader
+        return self._eval_loop(loader)
 
     @torch.no_grad()
     def evaluate(self, test_loader: DataLoader) -> dict:

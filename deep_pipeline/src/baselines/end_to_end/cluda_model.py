@@ -293,9 +293,9 @@ class CLUDATrainer(E2EBaselineTrainer):
     """Trainer for CLUDA end-to-end baseline."""
 
     def __init__(self, model: CLUDAModel, source_train_loader, target_train_loader,
-                 source_val_loader, config, device="cuda"):
+                 source_val_loader, config, device="cuda", target_val_loader=None):
         super().__init__(model, source_train_loader, target_train_loader,
-                         source_val_loader, config, device)
+                         source_val_loader, config, device, target_val_loader=target_val_loader)
 
         training = config.get("training", {})
         self.lambda_contrastive = training.get("lambda_contrastive", 0.5)

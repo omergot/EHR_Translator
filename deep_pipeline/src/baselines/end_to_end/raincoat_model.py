@@ -241,18 +241,26 @@ class RAINCOATModel(nn.Module):
         return self.classifier(combined).squeeze(-1)
 
     def predict_per_timestep(self, x: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
-        """Per-timestep prediction. x: (B, C, L), static: (B, S) -> (B, L)."""
+        """Per-timestep prediction using ONLY temporal (causal) branch.
+
+        x: (B, C, L), static: (B, S) -> (B, L).
+
+        The frequency encoder is EXCLUDED here because it processes the entire
+        sequence globally (FFT), which leaks future information to past timesteps.
+        For per-timestep tasks (AKI/sepsis), only the causal temporal encoder is used.
+        A per-timestep classifier head is used (separate from the global classifier).
+        """
         B, C, L = x.shape
         # Get temporal sequence features (B, H, L') where L' = L/4 due to MaxPool
         _, t_seq = self.temporal_encoder(x)
-        # Get frequency global features (B, H_f)
-        f_feat = self.frequency_encoder(x)
         # Upsample temporal features back to L
         t_up = F.interpolate(t_seq, size=L, mode="nearest")  # (B, H_t, L)
-        # Broadcast frequency + static to each timestep
-        f_exp = f_feat.unsqueeze(2).expand(-1, -1, L)  # (B, H_f, L)
+        # Broadcast static to each timestep
         s_exp = static.unsqueeze(2).expand(-1, -1, L)  # (B, S, L)
-        combined = torch.cat([t_up, f_exp, s_exp], dim=1)  # (B, H_t+H_f+S, L)
+        # Zero-pad frequency dimension to match classifier input size
+        f_zeros = torch.zeros(B, self.frequency_encoder.out_dim, L,
+                              dtype=t_up.dtype, device=t_up.device)
+        combined = torch.cat([t_up, f_zeros, s_exp], dim=1)  # (B, H_t+H_f+S, L)
         combined = combined.permute(0, 2, 1)  # (B, L, H_t+H_f+S)
         logits = self.classifier(combined)  # (B, L, 1)
         return logits.squeeze(-1)  # (B, L)
@@ -267,9 +275,9 @@ class RAINCOATTrainer(E2EBaselineTrainer):
     """Trainer for RAINCOAT end-to-end baseline."""
 
     def __init__(self, model: RAINCOATModel, source_train_loader, target_train_loader,
-                 source_val_loader, config, device="cuda"):
+                 source_val_loader, config, device="cuda", target_val_loader=None):
         super().__init__(model, source_train_loader, target_train_loader,
-                         source_val_loader, config, device)
+                         source_val_loader, config, device, target_val_loader=target_val_loader)
 
         training = config.get("training", {})
         self.lambda_cls = training.get("lambda_cls", 0.5)

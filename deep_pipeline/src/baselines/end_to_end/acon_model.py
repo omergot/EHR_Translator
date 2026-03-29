@@ -228,7 +228,14 @@ class ACONModel(nn.Module):
         return (t_logits + f_logits) / 2.0
 
     def predict_per_timestep(self, x: torch.Tensor, static: torch.Tensor) -> torch.Tensor:
-        """Per-timestep prediction. x: (B, C, L), static: (B, S) -> (B, L)."""
+        """Per-timestep prediction using ONLY temporal (causal) branch.
+
+        x: (B, C, L), static: (B, S) -> (B, L).
+
+        The frequency encoder is EXCLUDED here because it processes the entire
+        sequence globally, which leaks future information to past timesteps.
+        For per-timestep tasks (AKI/sepsis), only the causal temporal encoder is used.
+        """
         B, C, L = x.shape
         # Get temporal sequence features before pooling (B, H, L')
         _, t_seq = self.temporal_encoder(x, return_seq=True)
@@ -238,12 +245,7 @@ class ACONModel(nn.Module):
         s_exp = static.unsqueeze(2).expand(-1, -1, L)  # (B, S, L)
         t_cat = torch.cat([t_up, s_exp], dim=1).permute(0, 2, 1)  # (B, L, H_t+S)
         t_logits = self.temporal_classifier(t_cat).squeeze(-1)  # (B, L)
-        # Frequency: only global features, broadcast to all timesteps
-        f_feat = self.frequency_encoder(x)  # (B, H_f)
-        f_exp = torch.cat([f_feat, static], dim=1)  # (B, H_f+S)
-        f_logit = self.frequency_classifier(f_exp).squeeze(-1)  # (B,)
-        f_logits = f_logit.unsqueeze(1).expand(-1, L)  # (B, L) broadcast
-        return (t_logits + f_logits) / 2.0
+        return t_logits
 
     def discriminate(self, corr_feat: torch.Tensor) -> torch.Tensor:
         """Domain discrimination on correlation features with GRL."""
@@ -254,9 +256,9 @@ class ACONTrainer(E2EBaselineTrainer):
     """Trainer for ACON end-to-end baseline."""
 
     def __init__(self, model: ACONModel, source_train_loader, target_train_loader,
-                 source_val_loader, config, device="cuda"):
+                 source_val_loader, config, device="cuda", target_val_loader=None):
         super().__init__(model, source_train_loader, target_train_loader,
-                         source_val_loader, config, device)
+                         source_val_loader, config, device, target_val_loader=target_val_loader)
 
         training = config.get("training", {})
         self.lambda_cls = training.get("lambda_cls", 1.0)

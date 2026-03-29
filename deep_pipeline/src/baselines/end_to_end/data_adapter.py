@@ -5,6 +5,12 @@ zero-padded on the left for shorter stays.  Channels = 48 dynamic features +
 48 missingness indicators = 96.  Static features (4) are provided separately.
 
 Uses the same YAIB data splits (seed 2222) as all other experiments for fair comparison.
+
+**Source/target convention (CRITICAL):**
+E2E DA baselines train on MIMIC labels (source) and align with eICU (target).
+Evaluation is on eICU test (target domain) — the model has never seen eICU labels.
+This matches the standard DA protocol and makes comparison fair with our translator
+approach (which also evaluates on eICU test through the frozen MIMIC LSTM).
 """
 
 import logging
@@ -213,9 +219,11 @@ class YAIBToE2EAdapter:
         # Determine label mode from task
         self.label_mode = self._infer_label_mode(config)
 
-        # Create runtimes for source (eICU) and target (MIMIC)
-        self._source_runtime = self._build_runtime(config["data_dir"])
-        self._target_runtime = self._build_runtime(config["target_data_dir"])
+        # E2E DA convention: train on MIMIC labels (source), align with eICU (target).
+        # Config: data_dir = eICU, target_data_dir = MIMIC (same as translator configs).
+        # We SWAP them here so source=MIMIC (labeled) and target=eICU (eval domain).
+        self._source_runtime = self._build_runtime(config["target_data_dir"])  # MIMIC = source
+        self._target_runtime = self._build_runtime(config["data_dir"])         # eICU = target
 
     def _infer_label_mode(self, config: dict) -> str:
         """Infer label mode from config path or task config."""
@@ -253,14 +261,18 @@ class YAIBToE2EAdapter:
         )
 
     def get_loaders(self) -> tuple:
-        """Return (source_train_loader, source_val_loader, source_test_loader, target_train_loader).
+        """Return (source_train, source_val, source_test, target_train, target_val, target_test).
 
+        Source = MIMIC (labeled, for training classifier).
+        Target = eICU (for DA alignment and evaluation).
         All use the same YAIB splits (seed 2222).
         """
         source_train_ds = self._make_dataset(self._source_runtime, DataSplit.train)
         source_val_ds = self._make_dataset(self._source_runtime, DataSplit.val)
         source_test_ds = self._make_dataset(self._source_runtime, DataSplit.test)
         target_train_ds = self._make_dataset(self._target_runtime, DataSplit.train)
+        target_val_ds = self._make_dataset(self._target_runtime, DataSplit.val)
+        target_test_ds = self._make_dataset(self._target_runtime, DataSplit.test)
 
         source_train_loader = DataLoader(
             source_train_ds, batch_size=self.batch_size, shuffle=True,
@@ -278,14 +290,23 @@ class YAIBToE2EAdapter:
             target_train_ds, batch_size=self.batch_size, shuffle=True,
             num_workers=4, drop_last=True, pin_memory=True,
         )
-
-        logging.info(
-            "[E2EAdapter] Source train=%d val=%d test=%d  Target train=%d  batch_size=%d",
-            len(source_train_ds), len(source_val_ds), len(source_test_ds),
-            len(target_train_ds), self.batch_size,
+        target_val_loader = DataLoader(
+            target_val_ds, batch_size=self.batch_size, shuffle=False,
+            num_workers=4, drop_last=False, pin_memory=True,
+        )
+        target_test_loader = DataLoader(
+            target_test_ds, batch_size=self.batch_size, shuffle=False,
+            num_workers=4, drop_last=False, pin_memory=True,
         )
 
-        return source_train_loader, source_val_loader, source_test_loader, target_train_loader
+        logging.info(
+            "[E2EAdapter] Source(MIMIC) train=%d val=%d test=%d  Target(eICU) train=%d val=%d test=%d  batch_size=%d",
+            len(source_train_ds), len(source_val_ds), len(source_test_ds),
+            len(target_train_ds), len(target_val_ds), len(target_test_ds), self.batch_size,
+        )
+
+        return (source_train_loader, source_val_loader, source_test_loader,
+                target_train_loader, target_val_loader, target_test_loader)
 
     def get_no_adapt_runtime(self) -> YAIBRuntime:
         """Return the source runtime for computing no-adaptation baseline

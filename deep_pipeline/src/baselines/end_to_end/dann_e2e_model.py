@@ -163,9 +163,9 @@ class DANNTrainer(E2EBaselineTrainer):
     """Trainer for DANN end-to-end baseline."""
 
     def __init__(self, model: DANNModel, source_train_loader, target_train_loader,
-                 source_val_loader, config, device="cuda"):
+                 source_val_loader, config, device="cuda", target_val_loader=None):
         super().__init__(model, source_train_loader, target_train_loader,
-                         source_val_loader, config, device)
+                         source_val_loader, config, device, target_val_loader=target_val_loader)
 
         training = config.get("training", {})
         self.lambda_adversarial = training.get("lambda_adversarial", 1.0)

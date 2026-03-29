@@ -2472,20 +2472,22 @@ def run_e2e_baseline(args):
     logging.info("=" * 60)
 
     # --- Step 1: Set up E2E data adapter FIRST (needed for fair baseline) ---
+    # NOTE: After the source/target swap in the adapter, source=MIMIC, target=eICU.
+    # We train on MIMIC labels (source), align with eICU (target), eval on eICU test.
     from .baselines.end_to_end.data_adapter import YAIBToE2EAdapter
 
     adapter = YAIBToE2EAdapter(config)
-    source_train, source_val, source_test, target_train = adapter.get_loaders()
+    source_train, source_val, source_test, target_train, target_val, target_test = adapter.get_loaders()
 
     # Auto-detect number of input channels from data
     num_channels = adapter.num_channels
     training["num_input_channels"] = num_channels
     logging.info("Detected %d input channels, seq_len=%d", num_channels, training.get("seq_len", 48))
 
-    # --- Step 1b: Compute no-adaptation baseline on the SAME E2E test data ---
+    # --- Step 1b: Compute no-adaptation baseline on the TARGET (eICU) test data ---
     # CRITICAL: Both "Original" and "Translated" must be evaluated on identical data
-    # for a fair comparison. We run the frozen LSTM on the windowed E2E test set.
-    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on E2E windowed test data)...")
+    # for a fair comparison. We run the frozen MIMIC LSTM on windowed eICU test data.
+    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on E2E windowed eICU test data)...")
     baseline_runtime = _build_runtime_from_config(
         config, batch_size_override=training.get("batch_size", 64),
     )
@@ -2495,14 +2497,14 @@ def run_e2e_baseline(args):
     for param in baseline_runtime._model.parameters():
         param.requires_grad = False
 
-    # Evaluate frozen LSTM on the E2E windowed test data
+    # Evaluate frozen LSTM on the E2E windowed eICU test data (target_test)
     baseline_runtime._model.eval()
     import numpy as np
     from sklearn.metrics import roc_auc_score, average_precision_score
     all_probs = []
     all_labels = []
     with torch.no_grad():
-        for batch in source_test:
+        for batch in target_test:
             x, labels, static, vmask = batch
             # x is (B, C, L) in E2E format — transpose to (B, L, C) for LSTM
             x_lstm = x.transpose(1, 2).to(device)  # (B, L, C)
@@ -2548,43 +2550,50 @@ def run_e2e_baseline(args):
     except ValueError:
         orig_aucpr = 0.0
     original_metrics = {"AUCROC": orig_auroc, "AUCPR": orig_aucpr}
-    logging.info("No-adaptation baseline (on E2E windowed data): AUROC=%.4f AUCPR=%.4f",
+    logging.info("No-adaptation baseline (frozen MIMIC LSTM on eICU test): AUROC=%.4f AUCPR=%.4f",
                  orig_auroc, orig_aucpr)
 
     # --- Step 2: Create model + trainer ---
+    # Source=MIMIC (labeled), target=eICU (alignment + eval). target_val for early stopping.
     if method == "e2e_cluda":
         from .baselines.end_to_end.cluda_model import CLUDAModel, CLUDATrainer
         model = CLUDAModel(config)
-        trainer = CLUDATrainer(model, source_train, target_train, source_val, config, device)
+        trainer = CLUDATrainer(model, source_train, target_train, source_val, config, device,
+                               target_val_loader=target_val)
     elif method == "e2e_raincoat":
         from .baselines.end_to_end.raincoat_model import RAINCOATModel, RAINCOATTrainer
         model = RAINCOATModel(config)
-        trainer = RAINCOATTrainer(model, source_train, target_train, source_val, config, device)
+        trainer = RAINCOATTrainer(model, source_train, target_train, source_val, config, device,
+                                  target_val_loader=target_val)
     elif method == "e2e_acon":
         from .baselines.end_to_end.acon_model import ACONModel, ACONTrainer
         model = ACONModel(config)
-        trainer = ACONTrainer(model, source_train, target_train, source_val, config, device)
+        trainer = ACONTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=target_val)
     elif method == "e2e_dann":
         from .baselines.end_to_end.dann_e2e_model import DANNModel, DANNTrainer
         model = DANNModel(config)
-        trainer = DANNTrainer(model, source_train, target_train, source_val, config, device)
+        trainer = DANNTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=target_val)
     elif method == "e2e_coral":
         from .baselines.end_to_end.coral_e2e_model import CORALModel, CORALTrainer
         model = CORALModel(config)
-        trainer = CORALTrainer(model, source_train, target_train, source_val, config, device)
+        trainer = CORALTrainer(model, source_train, target_train, source_val, config, device,
+                               target_val_loader=target_val)
     elif method == "e2e_codats":
         from .baselines.end_to_end.codats_e2e_model import CoDATSModel, CoDATSTrainer
         model = CoDATSModel(config)
-        trainer = CoDATSTrainer(model, source_train, target_train, source_val, config, device)
+        trainer = CoDATSTrainer(model, source_train, target_train, source_val, config, device,
+                                target_val_loader=target_val)
     else:
         raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, e2e_acon, e2e_dann, e2e_coral, or e2e_codats.")
 
     # --- Step 4: Train ---
     trainer.train()
 
-    # --- Step 5: Evaluate E2E model on source test set ---
-    e2e_results = trainer.evaluate(source_test)
-    logging.info("E2E method results: %s", e2e_results)
+    # --- Step 5: Evaluate E2E model on TARGET (eICU) test set ---
+    e2e_results = trainer.evaluate(target_test)
+    logging.info("E2E method results (on eICU test): %s", e2e_results)
 
     # --- Step 6: Report results in the standard format ---
     # The format must match what collect_result.py / gpu_scheduler parse:

@@ -1,7 +1,7 @@
 {
-  "data_dir": "/bigdata/omerg/Thesis/cohort_data/aki/eicu",
-  "target_data_dir": "/bigdata/omerg/Thesis/cohort_data/aki/miiv",
-  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/AKI/LSTM/repetition_0/fold_0",
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu",
+  "target_data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/miiv",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/LSTM/repetition_0/fold_0",
   "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
   "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
   "model_name": "LSTM",
@@ -79,26 +79,26 @@
   "device": "cuda",
   "debug": false,
   "translator": {
-    "type": "e2e_acon"
+    "type": "e2e_raincoat"
   },
   "training": {
-    "seq_len": 169,
-    "num_input_channels": 100,
+    "seq_len": 25,
+    "num_input_channels": 96,
     "batch_size": 64,
     "lr": 0.0005,
     "weight_decay": 0.0001,
     "epochs": 50,
     "hidden_dim": 64,
-    "freq_hidden_dim": 64,
+    "freq_modes": 16,
     "lambda_cls": 1.0,
-    "lambda_adversarial": 1.0,
-    "lambda_entropy": 0.01,
-    "lambda_t_align": 0.1,
-    "lambda_f_align": 0.1,
+    "lambda_align": 0.1,
+    "lambda_recon": 0.01,
+    "sinkhorn_eps": 0.1,
+    "sinkhorn_iters": 50,
     "early_stopping_patience": 15
   },
   "output": {
-    "run_dir": "runs/e2e_acon_aki_lr5e4",
-    "log_file": "runs/e2e_acon_aki_lr5e4/run.log"
+    "run_dir": "runs/e2e_raincoat_mortality_hp3",
+    "log_file": "runs/e2e_raincoat_mortality_hp3/run.log"
   }
 }

@@ -42,12 +42,17 @@ class CORALModel(nn.Module):
         num_layers = training.get("num_lstm_layers", 2)
         dropout = training.get("dropout", 0.2)
 
+        use_layer_norm = training.get("use_layer_norm", True)
+        use_static_proj = training.get("use_static_proj", True)
+
         # Same encoder architecture as DANN
         self.encoder = DANNEncoder(
             input_size=self.num_inputs,
             hidden_size=self.hidden_size,
             num_layers=num_layers,
             dropout=dropout,
+            use_layer_norm=use_layer_norm,
+            use_static_proj=use_static_proj,
         )
 
         # Task classifier: Linear(H, 1)
@@ -56,8 +61,8 @@ class CORALModel(nn.Module):
         )
 
         logging.info(
-            "[CORAL-E2E] inputs=%d hidden=%d lstm_layers=%d dropout=%.2f",
-            self.num_inputs, self.hidden_size, num_layers, dropout,
+            "[CORAL-E2E] inputs=%d hidden=%d lstm_layers=%d dropout=%.2f ln=%s static_proj=%s",
+            self.num_inputs, self.hidden_size, num_layers, dropout, use_layer_norm, use_static_proj,
         )
 
     def encode(self, x: torch.Tensor, static: torch.Tensor,

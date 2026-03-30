@@ -43,6 +43,7 @@ class E2EDataset(Dataset):
         seq_len: int = 48,
         static_recipe_path: Optional[Path] = None,
         label_mode: str = "per_stay",
+        pad_side: str = "left",
     ):
         """
         Args:
@@ -55,6 +56,7 @@ class E2EDataset(Dataset):
         """
         self.seq_len = seq_len
         self.label_mode = label_mode
+        self.pad_side = pad_side
 
         # Create YAIB dataset to iterate over stays
         self._yaib_dataset = yaib_runtime.create_dataset(split, ram_cache=True)
@@ -148,31 +150,29 @@ class E2EDataset(Dataset):
             window_data = valid_data[-self.seq_len:]  # (seq_len, F)
             window_labels = valid_labels[-self.seq_len:]
         else:
-            # Pad on the left with zeros
             pad_len = self.seq_len - valid_len
-            window_data = torch.cat([
-                torch.zeros(pad_len, F, dtype=data.dtype),
-                valid_data,
-            ], dim=0)
-            window_labels = torch.cat([
-                torch.full((pad_len,), -1.0, dtype=labels.dtype),
-                valid_labels,
-            ], dim=0)
+            pad_data = torch.zeros(pad_len, F, dtype=data.dtype)
+            pad_labels = torch.full((pad_len,), -1.0, dtype=labels.dtype)
+            if self.pad_side == "right":
+                window_data = torch.cat([valid_data, pad_data], dim=0)
+                window_labels = torch.cat([valid_labels, pad_labels], dim=0)
+            else:
+                window_data = torch.cat([pad_data, valid_data], dim=0)
+                window_labels = torch.cat([pad_labels, valid_labels], dim=0)
 
         # Transpose to (F, seq_len) = (C, L) for Conv1d
         x = window_data.t()  # (F, seq_len)
 
         # Validity mask: True for non-padded timesteps in the window.
-        # We know exactly how many valid timesteps are in the window from the
-        # extraction logic above: min(valid_len, seq_len) real timesteps at the
-        # right, with left-padding if valid_len < seq_len.
         if valid_len >= self.seq_len:
             vmask = torch.ones(self.seq_len, dtype=torch.bool)
         else:
-            vmask = torch.cat([
-                torch.zeros(self.seq_len - valid_len, dtype=torch.bool),
-                torch.ones(valid_len, dtype=torch.bool),
-            ])
+            pad_false = torch.zeros(self.seq_len - valid_len, dtype=torch.bool)
+            real_true = torch.ones(valid_len, dtype=torch.bool)
+            if self.pad_side == "right":
+                vmask = torch.cat([real_true, pad_false])
+            else:
+                vmask = torch.cat([pad_false, real_true])
 
         # Extract label
         if self.label_mode == "per_stay":
@@ -211,6 +211,7 @@ class YAIBToE2EAdapter:
         training = config.get("training", {})
         self.batch_size = training.get("batch_size", 64)
         self.seq_len = training.get("seq_len", 48)
+        self.pad_side = training.get("pad_side", "left")
         self.static_recipe_path = Path(config.get("paths", {}).get(
             "static_recipe",
             "/bigdata/omerg/Thesis/cohort_data/sepsis/eicu/preproc/static_recipe",
@@ -258,6 +259,7 @@ class YAIBToE2EAdapter:
             seq_len=self.seq_len,
             static_recipe_path=self.static_recipe_path,
             label_mode=self.label_mode,
+            pad_side=self.pad_side,
         )
 
     def get_loaders(self) -> tuple:

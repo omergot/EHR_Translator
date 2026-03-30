@@ -183,10 +183,18 @@ class DANNTrainer(E2EBaselineTrainer):
         self.lambda_adversarial = training.get("lambda_adversarial", 1.0)
         self.lambda_cls = training.get("lambda_cls", 1.0)
 
-        # Single optimizer for all parameters (Ganin et al. standard)
-        self.optimizer = AdamW(
-            model.parameters(), lr=self.lr, weight_decay=self.weight_decay,
-        )
+        # Optimizer: AdamW (default) or Adam (for YAIB-matching ablation)
+        optimizer_type = training.get("optimizer", "adamw").lower()
+        if optimizer_type == "adam":
+            from torch.optim import Adam
+            self.optimizer = Adam(
+                model.parameters(), lr=self.lr, weight_decay=self.weight_decay,
+            )
+        else:
+            self.optimizer = AdamW(
+                model.parameters(), lr=self.lr, weight_decay=self.weight_decay,
+            )
+        logging.info("[DANNTrainer] optimizer=%s lr=%.6f wd=%.6f", optimizer_type, self.lr, self.weight_decay)
 
         self._target_iter = iter(target_train_loader)
 

@@ -35,13 +35,17 @@ class DANNEncoder(nn.Module):
     """
 
     def __init__(self, input_size: int, hidden_size: int = 128, num_layers: int = 2,
-                 dropout: float = 0.2, num_static: int = 4):
+                 dropout: float = 0.2, num_static: int = 4,
+                 use_layer_norm: bool = True, use_static_proj: bool = True):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_static = num_static
+        self.use_layer_norm = use_layer_norm
+        self.use_static_proj = use_static_proj
 
         # Project static features to broadcast per-timestep
-        self.static_proj = nn.Linear(num_static, hidden_size)
+        if use_static_proj:
+            self.static_proj = nn.Linear(num_static, hidden_size)
 
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -53,7 +57,8 @@ class DANNEncoder(nn.Module):
         )
 
         # Layer norm on LSTM output for stability
-        self.layer_norm = nn.LayerNorm(hidden_size)
+        if use_layer_norm:
+            self.layer_norm = nn.LayerNorm(hidden_size)
 
     def forward(self, x: torch.Tensor, static: torch.Tensor,
                 return_sequence: bool = True) -> torch.Tensor:
@@ -73,11 +78,13 @@ class DANNEncoder(nn.Module):
 
         # Run LSTM
         h_seq, _ = self.lstm(x_seq)  # (B, L, H)
-        h_seq = self.layer_norm(h_seq)
+        if self.use_layer_norm:
+            h_seq = self.layer_norm(h_seq)
 
         # Add static context: project static and add to each timestep
-        static_emb = self.static_proj(static)  # (B, H)
-        h_seq = h_seq + static_emb.unsqueeze(1)  # (B, L, H) broadcast
+        if self.use_static_proj:
+            static_emb = self.static_proj(static)  # (B, H)
+            h_seq = h_seq + static_emb.unsqueeze(1)  # (B, L, H) broadcast
 
         if return_sequence:
             return h_seq  # (B, L, H)
@@ -103,12 +110,17 @@ class DANNModel(nn.Module):
         num_layers = training.get("num_lstm_layers", 2)
         dropout = training.get("dropout", 0.2)
 
+        use_layer_norm = training.get("use_layer_norm", True)
+        use_static_proj = training.get("use_static_proj", True)
+
         # Encoder
         self.encoder = DANNEncoder(
             input_size=self.num_inputs,
             hidden_size=self.hidden_size,
             num_layers=num_layers,
             dropout=dropout,
+            use_layer_norm=use_layer_norm,
+            use_static_proj=use_static_proj,
         )
 
         # Task classifier: Linear(H, 1)
@@ -126,8 +138,8 @@ class DANNModel(nn.Module):
         )
 
         logging.info(
-            "[DANN-E2E] inputs=%d hidden=%d lstm_layers=%d dropout=%.2f",
-            self.num_inputs, self.hidden_size, num_layers, dropout,
+            "[DANN-E2E] inputs=%d hidden=%d lstm_layers=%d dropout=%.2f ln=%s static_proj=%s",
+            self.num_inputs, self.hidden_size, num_layers, dropout, use_layer_norm, use_static_proj,
         )
 
     def encode(self, x: torch.Tensor, static: torch.Tensor,

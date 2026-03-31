@@ -195,6 +195,13 @@ def _get_training_config(config: dict) -> dict:
         "lambda_acon_freq": training.get("lambda_acon_freq", 0.0),
         "lambda_acon_cross": training.get("lambda_acon_cross", 0.0),
         "acon_freq_hidden_dim": training.get("acon_freq_hidden_dim", 128),
+        # V8: Class-Conditional Retrieval (CCR)
+        "ccr_alpha": training.get("ccr_alpha", 0.0),
+        # V8: Adaptive Fidelity Scheduling (AFS)
+        "fidelity_schedule": training.get("fidelity_schedule", None),
+        "fidelity_decay_start_epoch": training.get("fidelity_decay_start_epoch", 5),
+        "fidelity_decay_end_epoch": training.get("fidelity_decay_end_epoch", 40),
+        "fidelity_min_ratio": training.get("fidelity_min_ratio", 0.1),
     }
 
 
@@ -2589,8 +2596,13 @@ def run_e2e_baseline(args):
         model = CoDATSModel(config)
         trainer = CoDATSTrainer(model, source_train, target_train, source_val, config, device,
                                 target_val_loader=val_loader_for_es)
+    elif method == "e2e_cdan":
+        from .baselines.end_to_end.cdan_model import CDANModel, CDANTrainer
+        model = CDANModel(config)
+        trainer = CDANTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=val_loader_for_es)
     else:
-        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, e2e_acon, e2e_dann, e2e_coral, or e2e_codats.")
+        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, e2e_acon, e2e_dann, e2e_coral, e2e_codats, or e2e_cdan.")
 
     # --- Step 4: Train ---
     trainer.train()

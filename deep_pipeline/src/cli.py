@@ -202,6 +202,8 @@ def _get_training_config(config: dict) -> dict:
         "fidelity_decay_start_epoch": training.get("fidelity_decay_start_epoch", 5),
         "fidelity_decay_end_epoch": training.get("fidelity_decay_end_epoch", 40),
         "fidelity_min_ratio": training.get("fidelity_min_ratio", 0.1),
+        # Validation frequency: validate every N epochs (1=every epoch, default)
+        "val_every_n_epochs": training.get("val_every_n_epochs", 1),
     }
 
 
@@ -1457,6 +1459,7 @@ def train_translator(args):
             epochs=training_cfg["epochs"],
             train_loader=train_loader,
             val_loader=val_loader,
+            val_every_n_epochs=training_cfg.get("val_every_n_epochs", 1),
         )
         return
 

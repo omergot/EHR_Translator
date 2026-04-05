@@ -1,0 +1,74 @@
+\documentclass{article}
+
+% NeurIPS 2026 — Main Track, double-blind submission
+\usepackage{neurips_2026}
+
+% --- Packages ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{multirow}
+% \usepackage{algorithm}    % uncomment if texlive-science is installed
+% \usepackage{algorithmic}  % or use algpseudocode from algorithmicx
+\usepackage{wrapfig}
+
+% --- Custom commands ---
+\newcommand{\ours}{EHR-Translator}
+\newcommand{\retr}{\textsc{RetrTranslator}}
+\newcommand{\eicu}{eICU}
+\newcommand{\mimic}{MIMIC-IV}
+\newcommand{\hirid}{HiRID}
+\newcommand{\aucroc}{AUROC}
+\newcommand{\aucpr}{AUCPR}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% --- Title ---
+\title{Input-Space Domain Adaptation via Retrieval-Guided Translation\\for Clinical Time Series}
+
+% Anonymous for submission
+\author{Anonymous Authors}
+
+\begin{document}
+
+\maketitle
+
+% --- Abstract ---
+\input{abstract}
+
+% --- Main sections (9 pages total) ---
+\input{introduction}        % ~1.25 pages
+\input{related_work}        % ~0.75 pages
+\input{problem}             % ~0.75 pages
+\input{method}              % ~2.5 pages
+\input{experiments}         % ~2.5 pages
+\input{discussion}          % ~1 page
+\input{conclusion}          % ~0.25 pages
+
+% --- Acknowledgments (hidden in submission) ---
+\begin{ack}
+% Will be filled for camera-ready
+\end{ack}
+
+% --- References ---
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% --- Appendix ---
+\appendix
+\input{appendix}
+
+% --- Checklist (mandatory) ---
+\newpage
+\input{checklist}
+
+\end{document}

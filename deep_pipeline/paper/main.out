@@ -1,0 +1,22 @@
+\BOOKMARK [1][-]{section.1}{Introduction}{}% 1
+\BOOKMARK [1][-]{section.2}{Related Work}{}% 2
+\BOOKMARK [1][-]{section.3}{Problem Formulation}{}% 3
+\BOOKMARK [1][-]{section.4}{Method}{}% 4
+\BOOKMARK [2][-]{subsection.4.1}{Overview}{section.4}% 5
+\BOOKMARK [2][-]{subsection.4.2}{Shared Encoder and Memory Bank}{section.4}% 6
+\BOOKMARK [2][-]{subsection.4.3}{Cross-Attention Translation}{section.4}% 7
+\BOOKMARK [2][-]{subsection.4.4}{Training Procedure}{section.4}% 8
+\BOOKMARK [2][-]{subsection.4.5}{Design Choices}{section.4}% 9
+\BOOKMARK [1][-]{section.5}{Experiments}{}% 10
+\BOOKMARK [2][-]{subsection.5.1}{Setup}{section.5}% 11
+\BOOKMARK [2][-]{subsection.5.2}{Main Results}{section.5}% 12
+\BOOKMARK [2][-]{subsection.5.3}{Multi-Source Generalization}{section.5}% 13
+\BOOKMARK [2][-]{subsection.5.4}{Architecture-Agnostic Transfer}{section.5}% 14
+\BOOKMARK [2][-]{subsection.5.5}{Ablation Studies}{section.5}% 15
+\BOOKMARK [1][-]{section.6}{Discussion}{}% 16
+\BOOKMARK [1][-]{section.7}{Conclusion}{}% 17
+\BOOKMARK [1][-]{appendix.A}{Implementation Details}{}% 18
+\BOOKMARK [1][-]{appendix.B}{Additional Results}{}% 19
+\BOOKMARK [1][-]{appendix.C}{Dataset Details}{}% 20
+\BOOKMARK [1][-]{appendix.D}{E2E Baseline Details}{}% 21
+\BOOKMARK [1][-]{appendix.E}{Negative Results}{}% 22

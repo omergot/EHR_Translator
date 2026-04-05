@@ -1,0 +1,73 @@
+{
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/sepsis/hirid",
+  "target_data_dir": "/bigdata/omerg/Thesis/cohort_data/sepsis/miiv",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Sepsis/LSTM/repetition_0/fold_0",
+  "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "model_name": "LSTM",
+  "vars": {
+    "GROUP": "stay_id",
+    "LABEL": "label",
+    "SEQUENCE": "time",
+    "DYNAMIC": [
+      "alb", "alp", "alt", "ast", "be", "bicar", "bili", "bili_dir",
+      "bnd", "bun", "ca", "cai", "ck", "ckmb", "cl", "crea", "crp",
+      "dbp", "fgn", "fio2", "glu", "hgb", "hr", "inr_pt", "k", "lact",
+      "lymph", "map", "mch", "mchc", "mcv", "methb", "mg", "na", "neut",
+      "o2sat", "pco2", "ph", "phos", "plt", "po2", "ptt", "resp", "sbp",
+      "temp", "tnt", "urine", "wbc"
+    ],
+    "STATIC": ["age", "sex", "height", "weight"]
+  },
+  "file_names": {
+    "DYNAMIC": "dyn.parquet",
+    "OUTCOME": "outc.parquet",
+    "STATIC": "sta.parquet"
+  },
+  "paths": {
+    "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_hirid.csv",
+    "static_recipe": "/bigdata/omerg/Thesis/cohort_data/sepsis/hirid/preproc/static_recipe"
+  },
+  "seed": 2222,
+  "device": "cuda",
+  "debug": false,
+  "translator": {
+    "type": "retrieval",
+    "d_latent": 128,
+    "d_model": 128,
+    "n_enc_layers": 4,
+    "n_dec_layers": 2,
+    "temporal_attention_mode": "causal",
+    "temporal_attention_window": 25
+  },
+  "training": {
+    "lr": 0.0001,
+    "epochs": 30,
+    "batch_size": 16,
+    "lambda_recon": 0.1,
+    "lambda_range": 0.5,
+    "lambda_smooth": 0.0,
+    "lambda_align": 0.5,
+    "lambda_target_task": 0.5,
+    "lambda_importance_reg": 0.0,
+    "lambda_label_pred": 0.1,
+    "pretrain_epochs": 15,
+    "k_neighbors": 16,
+    "retrieval_window": 6,
+    "n_cross_layers": 2,
+    "output_mode": "absolute",
+    "memory_refresh_epochs": 3,
+    "feature_gate": true,
+    "use_target_normalization": true,
+    "variable_length_batching": true,
+    "shuffle": true,
+    "early_stopping_patience": 15,
+    "best_metric": "val_task",
+    "phase1_self_retrieval": true,
+    "phase1_memory_refresh_epochs": 3
+  },
+  "output": {
+    "run_dir": "runs/sepsis_hirid_sr",
+    "log_file": "runs/sepsis_hirid_sr/run.log"
+  }
+}

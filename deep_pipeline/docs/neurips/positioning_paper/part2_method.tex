@@ -1,0 +1,211 @@
+%% Part 2: Problem Formulation + Method
+%% Sections 3–4 of the NeurIPS 2026 positioning paper
+
+% ============================================================
+\section{Problem Formulation}
+\label{sec:formulation}
+% ============================================================
+
+\paragraph{Frozen-Model Translation Setting.}
+Let $\mathcal{X}_S \sim P_S$ denote source-domain clinical time series (eICU) and $\mathcal{X}_T \sim P_T$ denote the target domain (MIMIC-IV).
+A target-domain predictor $f_T : \mathbb{R}^{T \times F} \to \mathbb{R}^{T \times C}$ has been trained on $\mathcal{X}_T$ and is \emph{entirely frozen}: all parameters satisfy $\nabla_\phi f_T = 0$ and are never updated.
+We learn a translator $g_\theta : \mathbb{R}^{T \times F} \to \mathbb{R}^{T \times F}$ that maps source inputs into the target input space so that the composite system $f_T \circ g_\theta$ performs well on source labels $y_S$.
+The composite training objective is:
+\begin{equation}
+\label{eq:composite}
+\mathcal{L}(\theta) \;=\; \mathcal{L}_{\mathrm{task}}\!\bigl(f_T(g_\theta(x_S)),\, y_S\bigr) \;+\; \lambda_{\mathrm{fid}}\,\mathcal{L}_{\mathrm{fid}}\!\bigl(g_\theta(x_S),\, x_S\bigr) \;+\; \lambda_{\mathrm{range}}\,\mathcal{L}_{\mathrm{range}}\!\bigl(g_\theta(x_S)\bigr),
+\end{equation}
+where $\mathcal{L}_{\mathrm{task}}$ is cross-entropy (classification) or MSE (regression) evaluated through the frozen predictor, $\mathcal{L}_{\mathrm{fid}}$ is an MSE fidelity penalty that regularises the translator toward identity, and $\mathcal{L}_{\mathrm{range}}$ penalises outputs outside the physiological range observed in $\mathcal{X}_T$.
+
+The frozen constraint is motivated by regulatory and deployment considerations.
+Under the FDA Software-as-a-Medical-Device (SaMD) ``locked algorithm'' pathway, the downstream predictor is a validated, auditable artifact whose parameters must not change post-deployment~\cite{fdaaiml2021}.
+By learning only the input mapping $g_\theta$, clinical sites can adapt a certified predictor to local data distributions without re-validation of $f_T$.
+This setting is strictly more constrained than test-time adaptation methods that update batch-normalisation statistics~\cite{wang2021tent} (which modify running mean and variance, altering the predictor's output for identical inputs) or partial model parameters~\cite{liang2020shot} (which retrain the feature extractor while freezing only the classifier head), and distinct from adapter-based approaches~\cite{houlsby2019adapters} that insert learnable modules into the predictor's computation graph. In our setting, the predictor is treated as a fixed, deterministic function---no internal parameter, statistic, or architectural element is modified.
+
+\paragraph{Gradient Alignment Condition.}
+A central difficulty of frozen-model translation is that the task gradient must flow \emph{through} the frozen predictor before reaching $\theta$.
+Decomposing the gradient of Eq.~\ref{eq:composite}:
+\begin{equation}
+\label{eq:grad_decomp}
+\nabla_\theta \mathcal{L} \;=\; \nabla_\theta \mathcal{L}_{\mathrm{task}} \;+\; \lambda_{\mathrm{fid}}\,\nabla_\theta \mathcal{L}_{\mathrm{fid}},
+\end{equation}
+we define the \emph{gradient alignment coefficient}:
+\begin{equation}
+\label{eq:alpha}
+\alpha(\theta) \;=\; \cos\!\bigl(\nabla_\theta \mathcal{L}_{\mathrm{task}},\;\nabla_\theta \mathcal{L}_{\mathrm{fid}}\bigr).
+\end{equation}
+
+\begin{proposition}[Gradient Alignment Condition, informal]
+\label{prop:alignment}
+Stable frozen-model translation requires $\mathbb{E}[\alpha(\theta)] \geq 0$ during training.
+When $\alpha < 0$, the fidelity and task gradients exhibit destructive interference: reducing $\mathcal{L}_{\mathrm{fid}}$ (moving the translation closer to identity) increases $\mathcal{L}_{\mathrm{task}}$, while reducing $\mathcal{L}_{\mathrm{task}}$ (improving predictions) increases domain divergence---violating the $\mathcal{H}\Delta\mathcal{H}$-divergence bound of \citet{bendavid2010}.
+\end{proposition}
+
+We verify this empirically across five clinical tasks.
+Table~\ref{tab:alpha} reports gradient diagnostics measured at the translator parameters during the first epoch of training.\footnote{The full paper will extend these diagnostics across all three translator architectures and additional hyperparameter configurations, including per-epoch trajectories of $\alpha(\theta)$.}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Gradient alignment diagnostics across tasks. $\|\nabla_\theta \mathcal{L}_{\mathrm{fid}}\| / \|\nabla_\theta \mathcal{L}_{\mathrm{task}}\|$ is the fidelity-to-task gradient magnitude ratio; $\alpha$ is the cosine alignment (Eq.~\ref{eq:alpha}). Positive label rate is per-timestep for AKI/Sepsis and per-stay for Mortality.}
+\label{tab:alpha}
+\begin{tabular}{lcccl}
+\toprule
+\textbf{Task} & \textbf{Label rate} & $\|\nabla \mathcal{L}_{\mathrm{fid}}\| / \|\nabla \mathcal{L}_{\mathrm{task}}\|$ & $\alpha$ & \textbf{Outcome} \\
+\midrule
+Mortality & 5.5\% (per-stay) & 2.8$\times$ & $+0.84$ & $+0.048$ AUROC \\
+AKI & 11.95\% (per-ts) & moderate & $>0$ & $+0.056$ AUROC \\
+Sepsis & 1.13\% (per-ts) & 5.7$\times$ & $-0.21$ & $+0.006$ AUROC (delta) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Across the three classification tasks, the alignment coefficient is the strongest predictor of translation success: mortality ($\alpha = +0.84$) and AKI ($\alpha > 0$) succeed because fidelity acts as a step-size regulariser along the task gradient direction, whereas sepsis ($\alpha = -0.21$) suffers destructive interference.
+Removing fidelity entirely ($\lambda_{\mathrm{fid}} = 0$) causes catastrophic divergence ($-0.101$ AUROC, from $0.719$ to $0.618$), confirming that the task gradient alone is too noisy to guide the translator---the fidelity term is necessary but, when misaligned, actively harmful.
+This tension motivates the progression from delta-based translation (Section~\ref{sec:delta}) through shared-latent alignment (Section~\ref{sec:sl}) to retrieval-guided translation (Section~\ref{sec:retrieval}), where the retrieval mechanism provides an alternative information pathway that sidesteps the gradient alignment problem entirely.
+
+% ============================================================
+\section{Method}
+\label{sec:method}
+% ============================================================
+
+We present three translator architectures of increasing capability. Each addresses a specific limitation of its predecessor, producing a clear ablation path: delta (limited by gradient alignment) $\to$ shared latent (limited by reconstruction bottleneck) $\to$ retrieval-guided (resolves both).
+
+\paragraph{4.1\quad Delta Translator.}
+\label{sec:delta}
+The delta translator produces additive corrections:
+\begin{equation}
+\label{eq:delta}
+g_\theta^{\delta}(x) \;=\; x + \Delta_\theta(x),
+\end{equation}
+where $\Delta_\theta$ is parameterised by a stack of \emph{AxialBlocks}---factored attention that alternates variable-wise attention (each timestep's $F$ features attend to one another) and temporal attention (each feature's $T$ timesteps attend across time).
+This factorisation reduces the attention cost from $\mathcal{O}((TF)^2)$ to $\mathcal{O}(T \cdot F^2 + F \cdot T^2)$ while preserving full expressivity~\cite{ho2019axial}.
+Static demographics (age, sex, height, weight) condition each block via FiLM layers~\cite{perez2018film}: $h \mapsto \gamma \odot h + \beta$ with $(\gamma, \beta)$ predicted from the static features.
+Temporal attention is \emph{causal} (masked to prevent future information leakage) for per-timestep tasks (AKI, Sepsis, LoS) and \emph{bidirectional} for per-stay tasks (Mortality, KidneyFunction).
+
+The residual formulation ensures $g_\theta$ begins near identity---early training produces small perturbations, avoiding the divergence observed with $\lambda_{\mathrm{fid}} = 0$.
+However, the delta translator is fundamentally limited by Proposition~\ref{prop:alignment}: when $\alpha < 0$ (sepsis), the task and fidelity gradients create destructive interference that caps performance at $+0.006$ AUROC despite extensive hyperparameter search (13 approaches $\times$ 2 tasks; detailed in the full paper).
+
+\paragraph{4.2\quad Shared Latent Translator.}
+\label{sec:sl}
+To address gradient misalignment, the shared latent (SL) translator replaces the direct input-to-input mapping with an encoder--decoder architecture that passes through a shared bottleneck $z \in \mathbb{R}^{T \times d_{\mathrm{latent}}}$.
+Training proceeds in two phases.
+\textbf{Phase~1} (autoencoder pretrain): the encoder--decoder is trained on MIMIC data only, with reconstruction and optional label prediction losses.
+\textbf{Phase~2} (translation): the full loss combines task, reconstruction, distributional alignment, and label prediction:
+\begin{equation}
+\label{eq:sl_loss}
+\mathcal{L}_{\mathrm{SL}} = \mathcal{L}_{\mathrm{task}} + \lambda_{\mathrm{recon}}\,\mathcal{L}_{\mathrm{recon}} + \lambda_{\mathrm{align}}\,\mathrm{MMD}(z_S, z_T) + \lambda_{\mathrm{label}}\,\mathcal{L}_{\mathrm{label\_pred}},
+\end{equation}
+where $\mathrm{MMD}$ is the maximum mean discrepancy with a multi-scale Gaussian kernel~\cite{gretton2012kernel} and $\mathcal{L}_{\mathrm{label\_pred}}$ provides a direct label supervision signal that bypasses the frozen predictor.
+The MMD term provides distributional alignment at the latent level, replacing the input-space fidelity whose gradient opposes the task signal.
+
+SL succeeds on tasks with sufficient label density: $+0.048$ AUROC ($+0.055$ AUCPR) on mortality (5.5\% per-stay labels), $+0.054$ AUROC ($+0.133$ AUCPR) on AKI (11.95\% per-timestep labels).
+However, it fails on sepsis ($-0.017$ to $-0.043$ AUROC), exposing a \emph{reconstruction bottleneck}: the encoder--decoder must reconstruct all $T \times F$ features (e.g., $169 \times 48$) through the latent space.
+At sepsis's 1.13\% positive rate, each training sequence contains ${\sim}1$ informative task gradient versus ${\sim}8{,}000$ reconstruction gradients---reconstruction dominates and the task signal cannot steer the latent representations.
+Crucially, this is not a per-timestep or causality issue: AKI is also per-timestep and causal, yet SL succeeds because its 11.95\% label density provides $10\times$ more task gradient per sequence.
+This controlled comparison isolates \emph{label density} as the root cause and motivates an architecture that does not rely on dense reconstruction to produce accurate translations.
+
+
+\paragraph{4.3\quad Retrieval-Guided Translator.}
+\label{sec:retrieval}
+The retrieval-guided translator is our primary contribution.
+Instead of global distributional alignment (SL's MMD) or direct input perturbation (delta), it performs \emph{instance-level retrieval}: each source timestep finds its nearest target-domain neighbours and selectively borrows feature-level information via cross-attention.
+This opens a different information pathway: the model need not ``invent'' correct target-domain feature values from noisy task gradients, but can instead attend to actual target-domain exemplars.
+
+\vspace{0.3em}
+\noindent\textit{Memory Bank.}\quad
+All target-domain (MIMIC) training data is encoded through the shared encoder and segmented into temporal windows of size $W$ (default $W{=}6$) with configurable stride $s$ for overlapping coverage.
+Each window is mean-pooled to produce a compact descriptor:
+\begin{equation}
+\label{eq:memory}
+M_j \;=\; \frac{1}{|W_j|} \sum_{t \in W_j} \mathrm{Enc}(x_T^{(i)})_t \;\in\; \mathbb{R}^{d_{\mathrm{latent}}},
+\end{equation}
+yielding a memory bank $M \in \mathbb{R}^{N_{\mathrm{windows}} \times d_{\mathrm{latent}}}$ that resides on GPU for fast retrieval.
+The memory bank is rebuilt every $R$ epochs (default $R{=}3$), since the encoder evolves during training and a stale bank degrades retrieval quality.
+Overlapping windows (stride $s{=}3$, yielding ${\sim}2\times$ more windows) improve performance on AKI ($+0.003$ AUROC, $+0.010$ AUCPR), but excessive overlap (stride $s{=}1$, ${\sim}2.4$M windows) degrades results ($-0.002$ AUROC), suggesting a coverage--redundancy tradeoff where moderate overlap improves recall of relevant exemplars but excessive redundancy dilutes the nearest-neighbour signal.
+
+\vspace{0.3em}
+\noindent\textit{Per-Timestep k-NN Retrieval.}\quad
+For each source timestep $t$, we form a backward-looking query by mean-pooling source latents from $[\max(0, t{-}W{+}1),\; t{+}1)$, ensuring causal consistency.
+Learned importance weights $\sigma(\mathbf{w}) \in [0,1]^{d_{\mathrm{latent}}}$ (sigmoid-gated, per latent dimension) modulate the distance metric:
+\begin{equation}
+\label{eq:retrieval_dist}
+d(q_t, M_j) \;=\; \bigl\|\sqrt{\sigma(\mathbf{w})} \odot (q_t - M_j)\bigr\|_2,
+\end{equation}
+and the $K$ nearest windows per timestep are retrieved (default $K{=}16$).
+Full timestep-level latents from each retrieved window are gathered to form the context tensor $C \in \mathbb{R}^{B \times T \times KW \times d_{\mathrm{latent}}}$.
+Retrieval is per-timestep rather than per-sequence: we find that local temporal matching (window $W{=}6$) significantly outperforms wider windows ($W{=}12$: $+0.046$ vs.\ $+0.056$ AUROC on AKI), consistent with clinical time series where local physiological states are more informative than global trajectory similarity.
+
+\vspace{0.3em}
+\noindent\textit{Cross-Attention Fusion.}\quad
+Retrieved context is integrated through $L$ stacked cross-attention blocks.
+Each block performs three stages:
+\begin{equation}
+\label{eq:cross_attn}
+\begin{aligned}
+h_t' &= \mathrm{CrossAttn}(Q{=}h_t,\; K{=}C_t,\; V{=}C_t) + h_t, \\
+\tilde{h} &= \mathrm{CausalSelfAttn}(h') + h', \\
+\hat{h} &= \mathrm{FFN}(\tilde{h}) + \tilde{h},
+\end{aligned}
+\end{equation}
+where $h_t$ is the source latent at timestep $t$, $C_t$ contains the $KW$ retrieved target latents for that timestep, and all sub-layers use pre-LayerNorm residual connections.
+Stage~1 (per-timestep cross-attention) performs selective, feature-level borrowing from target exemplars---critically, this is \emph{learned}, not interpolated.
+Compared to the $k$NN-MT approach of \citet{khandelwal2021knnmt}, which interpolates uniformly across all dimensions, cross-attention allows the model to attend selectively to different features from different neighbours.
+Stage~2 (global causal self-attention) enforces temporal coherence across the translated sequence.
+
+The number of cross-attention blocks $L$ is task-dependent and interacts with label density.
+On AKI (11.95\% positive rate), increasing from $L{=}2$ to $L{=}3$ yields $+0.009$ AUROC---the additional capacity integrates richer target context from the dense supervision signal.
+On sepsis (1.13\% positive rate), $L{=}3$ \emph{hurts} by $-0.006$ AUROC: extra parameters overfit when gradient signal is sparse.
+This interaction provides a clean ablation of how architectural capacity must be matched to task supervision density.
+
+\vspace{0.3em}
+\noindent\textit{Why Retrieval Resolves Gradient Alignment.}\quad
+The fundamental limitation of delta and SL translators is that the task gradient must specify both \emph{which features} to correct and \emph{what values} to produce---all by backpropagating through the frozen model's opaque hidden states.
+Retrieval decouples these two problems by introducing an orthogonal information channel.
+The memory bank supplies actual target-domain feature values; the model need only learn a soft \emph{selection} over them via cross-attention weights.
+This constrains the output space to weighted combinations of real target exemplars, yielding a better-conditioned optimisation problem: the task gradient specifies \emph{which} neighbours are useful (a selection problem over $K$ candidates), while the neighbours themselves supply the \emph{content} (correct feature values from the target distribution).
+Because the fidelity objective is now computed against outputs that are already grounded in the target domain, its gradient no longer opposes the task gradient---both objectives benefit from selecting more relevant target exemplars.
+
+A critical design choice is detaching the source latent before querying the memory bank: $q_t = \mathrm{Enc}(x_S)_t.\mathrm{detach}()$.
+Since $k$-NN retrieval involves a non-differentiable $\operatorname{argmin}$, gradients cannot propagate through the retrieval step; detaching prevents spurious gradient signals from the bank lookup.
+The encoder is still updated through the downstream cross-attention and decoding losses.
+
+The empirical results confirm this analysis.
+On sepsis, where $\alpha = -0.21$ renders delta translation ineffective ($+0.006$ AUROC) and SL collapses ($-0.017$ to $-0.043$), retrieval achieves $+0.051$ AUROC---compared to $+0.006$ for the best delta configuration and negative results for the shared latent translator, establishing retrieval as the only architecture that produces clinically meaningful improvement on this task.
+On AKI, retrieval ($+0.056$ AUROC, $+0.161$ AUCPR) surpasses both delta and SL, reaching an absolute AUROC of $91.14$ and AUCPR of $72.9$---above even the in-domain MIMIC-native LSTM ($89.7$ AUROC, $66.5$ AUCPR)~\cite{vandewater2024yaib}.
+The AUCPR improvement ($+16.1$ points) is nearly $3\times$ larger than the AUROC gain ($+5.6$), indicating that the translator disproportionately improves precision at high recall---the regime most relevant for clinical deployment where false alarms carry real cost.
+
+\vspace{0.3em}
+\noindent\textit{FeatureGate.}\quad
+We introduce a \emph{FeatureGate} module, applicable across all three paradigms: learnable per-feature sigmoid weights $\sigma(w_f) \in [0,1]$ that modulate the reconstruction loss:
+\begin{equation}
+\label{eq:feature_gate}
+\mathcal{L}_{\mathrm{recon}}^{\mathrm{gated}} = \sum_{f=1}^{F} \sigma(w_f) \cdot \bigl(x_{\mathrm{out}}^f - x_{\mathrm{target}}^f\bigr)^2.
+\end{equation}
+This automatically down-weights reconstruction error on features irrelevant to the downstream task (e.g., features the frozen model ignores), focusing capacity on task-critical dimensions.
+FeatureGate provides consistent gains: on mortality, SL+FG achieves $+0.048$ AUROC ($+0.055$ AUCPR) vs.\ plain SL $+0.044$ AUROC ($+0.048$ AUCPR).
+
+\paragraph{4.4\quad Training Procedure.}
+\label{sec:training}
+Training follows a two-phase protocol common to SL and retrieval translators.
+\textbf{Phase~1} (autoencoder pretrain, 15 epochs on MIMIC): the encoder--decoder is trained with reconstruction and label prediction losses.
+For retrieval, we introduce \emph{self-retrieval pretraining}: during Phase~1, a memory bank
+is built from the encoder's own MIMIC representations and refreshed periodically.
+This provides non-degenerate context to cross-attention blocks from the start of training;
+without self-retrieval, cross-attention receives zero tensors during Phase~1, collapsing
+to a trivial pass-through that wastes the pretraining phase for the cross-attention parameters.
+\textbf{Phase~2} (retrieval-guided translation, 50 epochs): the full loss is:
+\begin{equation}
+\label{eq:full_loss}
+\mathcal{L} = \mathcal{L}_{\mathrm{task}} + \lambda_{\mathrm{recon}}\,\mathcal{L}_{\mathrm{recon}} + \lambda_{\mathrm{range}}\,\mathcal{L}_{\mathrm{range}} + \lambda_{\mathrm{align}}\,\mathrm{MMD} + \lambda_{\mathrm{target}}\,\mathcal{L}_{\mathrm{task}}^{\mathrm{MIMIC}} + \lambda_{\mathrm{label}}\,\mathcal{L}_{\mathrm{label\_pred}},
+\end{equation}
+where $\mathcal{L}_{\mathrm{task}}^{\mathrm{MIMIC}}$ applies the same task loss to MIMIC data through the frozen predictor, preventing representational drift.
+The memory bank is rebuilt every 3 epochs; learning rate follows cosine annealing~\cite{loshchilov2017sgdr}; gradient norms are clipped to $1.0$; early stopping with patience 15 monitors the primary metric.
+
+All data follows the YAIB preprocessing pipeline~\cite{vandewater2024yaib}: standardized variable selection (48 physiological features common to both databases), forward-fill imputation with missing indicators, per-feature normalization, and consistent patient-level train/validation/test splits.
+This ensures that distributional differences between eICU and MIMIC-IV reflect institutional variation rather than preprocessing artifacts.
+On top of YAIB's per-database normalization, we apply \emph{cross-domain normalisation}: an affine transform that matches source per-feature mean and variance to target statistics prior to translation.
+This is computed once from training data and stored in the checkpoint, ensuring consistent normalisation at inference.
+
+Phase~1 checkpoints are reusable: because pretraining depends only on the target data and model architecture (not Phase~2 hyperparameters), a single pretrain checkpoint serves all downstream experiments for a given task.
+We verify this empirically: across 9 AKI configurations varying $K$, $W$, $L$, and loss weights, the Phase~1 label prediction loss converges to $0.462$--$0.466$, confirming Phase~2 independence.

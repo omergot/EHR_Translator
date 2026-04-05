@@ -1,0 +1,117 @@
+\documentclass[10pt]{article}
+
+% ============================================================
+% NeurIPS-style formatting (compact, single column)
+% ============================================================
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{times}
+\usepackage[margin=0.75in,top=0.7in,bottom=0.7in]{geometry}
+\usepackage{microtype}
+
+% Math
+\usepackage{amsmath,amssymb,amsthm}
+\newtheorem{proposition}{Proposition}
+
+% Tables and figures
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{caption}
+\captionsetup{font=small,skip=4pt}
+
+% Lists
+\usepackage{enumitem}
+\setlist{nosep,leftmargin=*}
+
+% Hyperlinks
+\usepackage[colorlinks=true,citecolor=blue,linkcolor=blue,urlcolor=blue]{hyperref}
+
+% Citations (compact)
+\usepackage{natbib}
+\bibliographystyle{abbrvnat}
+\setlength{\bibsep}{1pt plus 0.5pt}
+
+% Compact spacing
+\usepackage{setspace}
+\setstretch{0.94}
+\usepackage{titlesec}
+\titlespacing*{\section}{0pt}{6pt plus 2pt minus 2pt}{3pt plus 1pt minus 1pt}
+\titlespacing*{\subsection}{0pt}{5pt plus 2pt minus 1pt}{2pt plus 1pt minus 1pt}
+\titlespacing*{\paragraph}{0pt}{3pt plus 1pt minus 1pt}{0.5em}
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{0.5em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.5em}{}
+
+% Reduce spacing around equations
+\AtBeginDocument{
+  \abovedisplayskip=4pt plus 2pt minus 2pt
+  \belowdisplayskip=4pt plus 2pt minus 2pt
+  \abovedisplayshortskip=2pt plus 1pt
+  \belowdisplayshortskip=2pt plus 1pt
+}
+
+% Table cell vertical padding
+\renewcommand{\arraystretch}{1.05}
+
+% Checkmark and cross symbols
+\usepackage{pifont}
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+
+% Reduce float spacing
+\setlength{\textfloatsep}{6pt plus 2pt minus 2pt}
+\setlength{\floatsep}{4pt plus 2pt minus 2pt}
+\setlength{\intextsep}{4pt plus 2pt minus 2pt}
+
+% ============================================================
+% Title
+% ============================================================
+\title{\Large\bfseries Retrieval-Augmented Input-Space Translation for Frozen Clinical Predictors}
+
+\author{
+  \textit{NeurIPS 2026 --- Positioning Document}
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-10pt}
+
+\begin{abstract}
+\noindent\small
+Clinical prediction models validated at one hospital degrade when deployed at another due to distributional shift in electronic health records (EHR).
+Standard domain adaptation methods require modifying the target model---incompatible with regulatory frameworks that mandate locked clinical algorithms.
+We propose \emph{input-space translation} for frozen clinical predictors: learning a neural translator that maps source EHR time series into the target input distribution while the predictor remains \emph{entirely untouched}.
+We develop three architectures of increasing capability---delta-based residual, shared latent encoding, and retrieval-augmented cross-attention grounded in a target-domain memory bank---and introduce the \emph{gradient alignment condition} $\alpha(\theta) = \cos(\nabla\mathcal{L}_{\text{task}}, \nabla\mathcal{L}_{\text{fid}})$, a diagnostic measurable in the first training epoch that predicts when frozen-model translation will succeed or fail.
+Across five clinical tasks on eICU$\to$MIMIC-IV, the retrieval translator achieves universal improvements of up to $+5.6$ AUROC and $+16.1$ AUCPR over the frozen baseline: on AKI, it surpasses even the \emph{in-domain} MIMIC-native LSTM in both AUROC (91.14 vs.\ 89.7) and AUCPR (72.9 vs.\ 66.5), all three classification tasks exceed the eICU-native LSTM on both metrics, and length-of-stay regression matches the eICU-native model---all with zero modification to the frozen predictor.
+To the best of our knowledge, this is the first work to achieve cross-hospital domain adaptation for clinical time series while keeping the target predictor entirely frozen, enabled by instance-level retrieval from the target domain and a gradient alignment theory that predicts when frozen-model translation succeeds.
+\end{abstract}
+
+\vspace{-6pt}
+
+% ============================================================
+% Part 1: Related Work
+% ============================================================
+\input{part1_related_work}
+
+% ============================================================
+% Part 2: Problem Formulation + Method
+% ============================================================
+\input{part2_method}
+
+% ============================================================
+% Part 3: Comparative Analysis and Contributions
+% ============================================================
+\input{part3_differentiation}
+
+% ============================================================
+% Bibliography
+% ============================================================
+{\small
+\bibliography{references}
+}
+
+\end{document}

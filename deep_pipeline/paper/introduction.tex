@@ -1,0 +1,33 @@
+\section{Introduction}
+\label{sec:introduction}
+
+% TARGET: ~1.25 pages
+% Structure: (1) Motivation/problem, (2) Existing approaches and their limitations,
+%            (3) Our approach, (4) Contributions (bulleted)
+
+% PLACEHOLDER — to be written
+
+% Paragraph 1: Clinical ML models fail across hospital systems (domain shift)
+% - EHR data varies across institutions (equipment, protocols, coding)
+% - Models trained on one system degrade on another
+% - Cite: YAIB benchmark showing cross-domain degradation
+
+% Paragraph 2: Existing DA approaches and their limitations
+% - Feature-space methods (DANN, CORAL) modify internal representations
+% - Require retraining or access to model internals
+% - Don't preserve clinical interpretability of input features
+
+% Paragraph 3: Our approach — input-space translation
+% - Key insight: translate INPUT data, not features
+% - Frozen target model = practical deployment scenario
+% - Retrieval-guided: leverage target domain examples for instance-level adaptation
+
+% Paragraph 4: Contributions (bulleted)
+\paragraph{Contributions.}
+\begin{itemize}
+    \item We formulate \textbf{input-space domain adaptation} for clinical time series, where a frozen target-trained model is adapted by transforming source inputs rather than modifying model internals.
+    \item We propose \retr{}, a retrieval-guided translation architecture that uses a shared encoder, target-domain memory bank, and cross-attention to produce instance-level adapted inputs.
+    \item We demonstrate state-of-the-art results across \textbf{5 clinical tasks} (mortality, AKI, sepsis, length of stay, kidney function), surpassing 8 DA baselines and matching or exceeding native-domain performance.
+    \item We show the translator is \textbf{architecture-agnostic}: translations trained for an LSTM transfer to GRU and TCN models without retraining, preserving 47--86\% of the improvement.
+    \item We validate \textbf{multi-source generalization}: a second source domain (HiRID$\to$MIMIC) yields even larger gains, confirming the method is not source-specific.
+\end{itemize}

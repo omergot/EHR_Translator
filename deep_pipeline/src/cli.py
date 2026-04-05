@@ -250,7 +250,8 @@ def _augment_loader_with_static(
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -268,7 +269,8 @@ def _augment_loader_with_zero_static(
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -349,7 +351,8 @@ def _apply_negative_subsampling(loader, n_keep_negative, seed=42):
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -737,7 +740,8 @@ def train_translator(args):
                     shuffle=True,
                     num_workers=train_loader.num_workers,
                     drop_last=train_loader.drop_last,
-                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    pin_memory=True,
+                    persistent_workers=train_loader.num_workers > 0,
                     collate_fn=train_loader.collate_fn,
                 )
                 logging.info("Training with shuffle=True (config)")
@@ -995,7 +999,8 @@ def train_translator(args):
                     shuffle=True,
                     num_workers=train_loader.num_workers,
                     drop_last=train_loader.drop_last,
-                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    pin_memory=True,
+                    persistent_workers=train_loader.num_workers > 0,
                     collate_fn=train_loader.collate_fn,
                 )
 
@@ -1187,7 +1192,8 @@ def train_translator(args):
                     shuffle=True,
                     num_workers=train_loader.num_workers,
                     drop_last=train_loader.drop_last,
-                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    pin_memory=True,
+                    persistent_workers=train_loader.num_workers > 0,
                     collate_fn=train_loader.collate_fn,
                 )
                 logging.info("Training with shuffle=True (config)")
@@ -1390,7 +1396,8 @@ def train_translator(args):
                     shuffle=True,
                     num_workers=train_loader.num_workers,
                     drop_last=train_loader.drop_last,
-                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    pin_memory=True,
+                    persistent_workers=train_loader.num_workers > 0,
                     collate_fn=train_loader.collate_fn,
                 )
                 logging.info("Training with shuffle=True (config)")
@@ -1605,7 +1612,8 @@ def train_translator(args):
                     train_loader.dataset, batch_size=train_loader.batch_size,
                     shuffle=True, num_workers=train_loader.num_workers,
                     drop_last=train_loader.drop_last,
-                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    pin_memory=True,
+                    persistent_workers=train_loader.num_workers > 0,
                     collate_fn=train_loader.collate_fn,
                 )
 

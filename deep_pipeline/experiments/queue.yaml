@@ -12,8 +12,9 @@ settings:
       host: null
       gpu_priority:
       - 0
-      day_max_gpus: 1
-      night_max_gpus: 1
+      - 1
+      day_max_gpus: 2
+      night_max_gpus: 2
     a6000:
       host: omerg@132.68.39.40
       gpu_priority:
@@ -3140,6 +3141,1210 @@ experiments:
   results:
     AUCROC: 0.017
     AUCPR: 0.0118
+- name: e2e_source_only_sepsis_matched
+  config: configs/baselines/e2e/e2e_source_only_sepsis_matched.json
+  output: experiments/results/e2e_source_only_sepsis_matched.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'MATCHED ABLATION: 1-layer h=161 (same as frozen YAIB LSTM), no DA, target val ES. Isolates effect of target-val
+    early stopping from architecture.'
+  server: local
+  gpu: 0
+  pid: 2258157
+  started: '2026-03-30 10:44:34'
+  finished: '2026-03-30 11:24:25'
+  results:
+    AUCROC: 0.0697
+    AUCPR: 0.0158
+- name: e2e_source_only_aki_matched
+  config: configs/baselines/e2e/e2e_source_only_aki_matched.json
+  output: experiments/results/e2e_source_only_aki_matched.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'MATCHED ABLATION: 1-layer h=161 (same as frozen YAIB LSTM), no DA, target val ES. Isolates target-val early stopping.'
+  server: '3090'
+  gpu: 0
+  pid: 1424135
+  started: '2026-03-30 10:51:47'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_source_only_aki_matched.json
+  finished: '2026-03-30 11:14:03'
+  results:
+    AUCROC: 0.1619
+    AUCPR: 0.3966
+- name: e2e_source_only_sepsis_srcval_INVALID
+  config: configs/baselines/e2e/e2e_source_only_sepsis_srcval.json
+  output: experiments/results/e2e_source_only_sepsis_srcval.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'INVALID: code fix was not committed — ran with eICU val ES instead of MIMIC val ES. Re-queued below.'
+  server: a6000
+  gpu: 3
+  pid: 1448818
+  started: '2026-03-30 11:18:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_source_only_sepsis_srcval.json
+  finished: '2026-03-30 11:44:40'
+  results:
+    AUCROC: 0.2037
+    AUCPR: 0.1508
+- name: e2e_source_only_aki_srcval_INVALID
+  config: configs/baselines/e2e/e2e_source_only_aki_srcval.json
+  output: experiments/results/e2e_source_only_aki_srcval.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'INVALID: code fix was not committed — ran with eICU val ES instead of MIMIC val ES. Re-queued below.'
+  server: '3090'
+  gpu: 0
+  pid: 1442148
+  started: '2026-03-30 11:18:21'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_source_only_aki_srcval.json
+  finished: '2026-03-30 11:33:32'
+  results:
+    AUCROC: 0.0584
+    AUCPR: 0.1314
+- name: e2e_true_matched_sepsis
+  config: configs/baselines/e2e/e2e_true_matched_sepsis.json
+  output: experiments/results/e2e_true_matched_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'TRUE MATCHED: 1L h=161, NO LayerNorm, NO static_proj (exact frozen YAIB arch). eICU val ES. BCE/AdamW/left-pad.
+    Isolates training procedure only.'
+  server: local
+  gpu: 0
+  pid: 2325531
+  started: '2026-03-30 14:35:15'
+  finished: '2026-03-30 15:19:25'
+  results:
+    AUCROC: 0.2101
+    AUCPR: 0.1559
+- name: e2e_true_matched_aki
+  config: configs/baselines/e2e/e2e_true_matched_aki.json
+  output: experiments/results/e2e_true_matched_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'TRUE MATCHED: 1L h=161, NO LayerNorm, NO static_proj. eICU val ES. Isolates training procedure only.'
+  server: a6000
+  gpu: 3
+  pid: 1640490
+  started: '2026-03-30 14:35:21'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_true_matched_aki.json
+  finished: '2026-03-30 15:08:01'
+  results:
+    AUCROC: 0.1646
+    AUCPR: 0.4103
+- name: e2e_srcval_sepsis_v2
+  config: configs/baselines/e2e/e2e_source_only_sepsis_srcval.json
+  output: experiments/results/e2e_srcval_sepsis_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'SRCVAL v2: 1L h=161, no DA, MIMIC val ES. Code fix committed (8e16d37). Isolates target-val ES effect.'
+  server: '3090'
+  gpu: 0
+  pid: 1453850
+  started: '2026-03-30 14:35:30'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srcval_sepsis_v2.json
+  finished: '2026-03-30 14:52:42'
+  results:
+    AUCROC: 0.1925
+    AUCPR: 0.1424
+- name: e2e_srcval_aki_v2
+  config: configs/baselines/e2e/e2e_source_only_aki_srcval.json
+  output: experiments/results/e2e_srcval_aki_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'SRCVAL v2: 1L h=161, no DA, MIMIC val ES. Code fix committed (8e16d37). Isolates target-val ES effect.'
+  server: '3090'
+  gpu: 0
+  pid: 1467803
+  started: '2026-03-30 14:52:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srcval_aki_v2.json
+  finished: '2026-03-30 15:18:15'
+  results:
+    AUCROC: 0.1546
+    AUCPR: 0.3518
+- name: e2e_dann_rp_aki_v2
+  config: configs/baselines/e2e/e2e_dann_rp_aki.json
+  output: experiments/results/e2e_dann_rp_aki_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: DANN RP paper-HPs (λ=1, lr=1e-3) AKI. Essential for paper table.
+  server: local
+  gpu: 0
+  pid: 2582779
+  started: '2026-03-30 20:34:14'
+  finished: '2026-03-30 21:16:32'
+  results:
+    AUCROC: 0.0124
+    AUCPR: 0.0054
+- name: e2e_dann_rp_mortality_v2
+  config: configs/baselines/e2e/e2e_dann_rp_mortality.json
+  output: experiments/results/e2e_dann_rp_mortality_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: DANN RP paper-HPs (λ=1, lr=1e-3) Mortality. Essential for paper table.
+  server: a6000
+  gpu: 3
+  pid: 2089227
+  started: '2026-03-30 20:34:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_mortality_v2.json
+  finished: '2026-03-30 20:41:33'
+  results:
+    AUCROC: 0.0194
+    AUCPR: 0.0164
+- name: e2e_coral_rp_lam01_sepsis_v2
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_sepsis.json
+  output: experiments/results/e2e_coral_rp_lam01_sepsis_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL RP λ=0.1 Sepsis. HP variant for paper.
+  server: '3090'
+  gpu: 0
+  pid: 1666192
+  started: '2026-03-30 20:34:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_rp_lam01_sepsis_v2.json
+  finished: '2026-03-30 20:43:41'
+  results:
+    AUCROC: 0.0182
+    AUCPR: 0.0104
+- name: e2e_coral_rp_lam01_aki_v2
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_aki.json
+  output: experiments/results/e2e_coral_rp_lam01_aki_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL RP λ=0.1 AKI. HP variant for paper.
+  server: a6000
+  gpu: 3
+  pid: 2105565
+  started: '2026-03-30 20:41:40'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_rp_lam01_aki_v2.json
+  finished: '2026-03-30 21:01:08'
+  results:
+    AUCROC: 0.0136
+    AUCPR: 0.0362
+- name: e2e_coral_rp_lam01_mortality_v2
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_mortality.json
+  output: experiments/results/e2e_coral_rp_lam01_mortality_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL RP λ=0.1 Mortality. HP variant for paper.
+  server: '3090'
+  gpu: 0
+  pid: 1676464
+  started: '2026-03-30 20:43:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_rp_lam01_mortality_v2.json
+  finished: '2026-03-30 20:46:52'
+  results:
+    AUCROC: 0.0199
+    AUCPR: 0.0131
+- name: e2e_cdan_rp_lam01_sepsis
+  config: configs/baselines/e2e/e2e_cdan_rp_lam01_sepsis.json
+  output: experiments/results/e2e_cdan_rp_lam01_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN RP λ=0.1. Second HP variant.
+  server: a6000
+  gpu: 3
+  pid: 3339745
+  started: '2026-03-31 17:44:42'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_lam01_sepsis.json
+  finished: '2026-03-31 18:02:21'
+  results:
+    AUCROC: 0.0142
+    AUCPR: 0.0084
+- name: e2e_cdan_rp_lam01_aki
+  config: configs/baselines/e2e/e2e_cdan_rp_lam01_aki.json
+  output: experiments/results/e2e_cdan_rp_lam01_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN RP λ=0.1. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1740757
+  started: '2026-03-31 17:44:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_lam01_aki.json
+  finished: '2026-03-31 17:54:59'
+  results:
+    AUCROC: 0.0038
+    AUCPR: 0.0137
+- name: e2e_cdan_rp_lam01_mortality
+  config: configs/baselines/e2e/e2e_cdan_rp_lam01_mortality.json
+  output: experiments/results/e2e_cdan_rp_lam01_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN RP λ=0.1. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1750003
+  started: '2026-03-31 17:55:07'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_lam01_mortality.json
+  finished: '2026-03-31 17:58:09'
+  results:
+    AUCROC: 0.0141
+    AUCPR: 0.0152
+- name: e2e_codats_rp_lr5e4_sepsis
+  config: configs/baselines/e2e/e2e_codats_rp_lr5e4_sepsis.json
+  output: experiments/results/e2e_codats_rp_lr5e4_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS RP lr=5e-4. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1760228
+  started: '2026-03-31 17:58:18'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_lr5e4_sepsis.json
+  finished: '2026-03-31 18:09:34'
+  results:
+    AUCROC: -0.0143
+    AUCPR: 0.0005
+- name: e2e_codats_rp_lr5e4_aki
+  config: configs/baselines/e2e/e2e_codats_rp_lr5e4_aki.json
+  output: experiments/results/e2e_codats_rp_lr5e4_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS RP lr=5e-4. Second HP variant.
+  server: a6000
+  gpu: 3
+  pid: 3365381
+  started: '2026-03-31 18:02:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_lr5e4_aki.json
+  finished: '2026-03-31 18:26:12'
+  results:
+    AUCROC: -0.0209
+    AUCPR: -0.0851
+- name: e2e_codats_rp_lr5e4_mortality
+  config: configs/baselines/e2e/e2e_codats_rp_lr5e4_mortality.json
+  output: experiments/results/e2e_codats_rp_lr5e4_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS RP lr=5e-4. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1777246
+  started: '2026-03-31 18:09:42'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_lr5e4_mortality.json
+  finished: '2026-03-31 18:12:45'
+  results:
+    AUCROC: 0.0079
+    AUCPR: -0.0257
+- name: e2e_cluda_rp_lr1e3_sepsis
+  config: configs/baselines/e2e/e2e_cluda_rp_lr1e3_sepsis.json
+  output: experiments/results/e2e_cluda_rp_lr1e3_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA RP lr=1e-3. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1788860
+  started: '2026-03-31 18:12:53'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_rp_lr1e3_sepsis.json
+  finished: '2026-03-31 18:23:01'
+  results:
+    AUCROC: -0.008
+    AUCPR: -0.0
+- name: e2e_cluda_rp_lr1e3_aki
+  config: configs/baselines/e2e/e2e_cluda_rp_lr1e3_aki.json
+  output: experiments/results/e2e_cluda_rp_lr1e3_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA RP lr=1e-3. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1798269
+  started: '2026-03-31 18:23:10'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_rp_lr1e3_aki.json
+  finished: '2026-03-31 18:37:35'
+  results:
+    AUCROC: -0.02
+    AUCPR: -0.0311
+- name: e2e_cluda_rp_lr1e3_mortality
+  config: configs/baselines/e2e/e2e_cluda_rp_lr1e3_mortality.json
+  output: experiments/results/e2e_cluda_rp_lr1e3_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA RP lr=1e-3. Second HP variant.
+  server: a6000
+  gpu: 3
+  pid: 3401654
+  started: '2026-03-31 18:26:19'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_rp_lr1e3_mortality.json
+  finished: '2026-03-31 18:32:24'
+  results:
+    AUCROC: 0.0097
+    AUCPR: -0.0047
+- name: e2e_raincoat_rp_align1_sepsis
+  config: configs/baselines/e2e/e2e_raincoat_rp_align1_sepsis.json
+  output: experiments/results/e2e_raincoat_rp_align1_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT RP align=1.0. Second HP variant.
+  server: a6000
+  gpu: 3
+  pid: 3416302
+  started: '2026-03-31 18:32:31'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_rp_align1_sepsis.json
+  finished: '2026-03-31 19:06:15'
+  results:
+    AUCROC: 0.0193
+    AUCPR: 0.012
+- name: e2e_raincoat_rp_align1_aki
+  config: configs/baselines/e2e/e2e_raincoat_rp_align1_aki.json
+  output: experiments/results/e2e_raincoat_rp_align1_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT RP align=1.0. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1816064
+  started: '2026-03-31 18:37:43'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_rp_align1_aki.json
+  finished: '2026-03-31 19:03:05'
+  results:
+    AUCROC: 0.0159
+    AUCPR: 0.0486
+- name: e2e_raincoat_rp_align1_mortality
+  config: configs/baselines/e2e/e2e_raincoat_rp_align1_mortality.json
+  output: experiments/results/e2e_raincoat_rp_align1_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT RP align=1.0. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1831438
+  started: '2026-03-31 19:03:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_rp_align1_mortality.json
+  finished: '2026-03-31 19:11:26'
+  results:
+    AUCROC: -0.0006
+    AUCPR: -0.0507
+- name: e2e_acon_rp_lr1e3_sepsis
+  config: configs/baselines/e2e/e2e_acon_rp_lr1e3_sepsis.json
+  output: experiments/results/e2e_acon_rp_lr1e3_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
+  server: a6000
+  gpu: 3
+  pid: 3453702
+  started: '2026-03-31 19:06:22'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_rp_lr1e3_sepsis.json
+  finished: '2026-03-31 19:22:52'
+  results:
+    AUCROC: 0.0019
+    AUCPR: 0.0007
+- name: e2e_acon_rp_lr1e3_aki
+  config: configs/baselines/e2e/e2e_acon_rp_lr1e3_aki.json
+  output: experiments/results/e2e_acon_rp_lr1e3_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1840467
+  started: '2026-03-31 19:11:35'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_rp_lr1e3_aki.json
+  finished: '2026-03-31 19:21:43'
+  results:
+    AUCROC: -0.1616
+    AUCPR: -0.3382
+- name: e2e_acon_rp_lr1e3_mortality
+  config: configs/baselines/e2e/e2e_acon_rp_lr1e3_mortality.json
+  output: experiments/results/e2e_acon_rp_lr1e3_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
+  server: '3090'
+  gpu: 0
+  pid: 1849168
+  started: '2026-03-31 19:21:52'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_rp_lr1e3_mortality.json
+  finished: '2026-03-31 19:25:00'
+  results:
+    AUCROC: 0.02
+    AUCPR: -0.0011
+- name: e2e_cdan_rp_sepsis
+  config: configs/baselines/e2e/e2e_cdan_rp_sepsis.json
+  output: experiments/results/e2e_cdan_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN E2E right-padded. Conditional adversarial (Long et al. NeurIPS 2018). λ=1, lr=1e-3.
+  server: a6000
+  gpu: 3
+  pid: 3293926
+  started: '2026-03-31 17:11:54'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_sepsis.json
+  finished: '2026-03-31 17:28:16'
+  results:
+    AUCROC: 0.0182
+    AUCPR: 0.0088
+- name: e2e_cdan_rp_aki
+  config: configs/baselines/e2e/e2e_cdan_rp_aki.json
+  output: experiments/results/e2e_cdan_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN E2E right-padded. Conditional adversarial. λ=1, lr=1e-3.
+  server: '3090'
+  gpu: 0
+  pid: 1728536
+  started: '2026-03-31 17:26:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_aki.json
+  finished: '2026-03-31 17:38:31'
+  results:
+    AUCROC: 0.0097
+    AUCPR: -0.004
+- name: e2e_cdan_rp_mortality
+  config: configs/baselines/e2e/e2e_cdan_rp_mortality.json
+  output: experiments/results/e2e_cdan_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CDAN E2E right-padded. Conditional adversarial. λ=1, lr=1e-3.
+  server: a6000
+  gpu: 3
+  pid: 3317602
+  started: '2026-03-31 17:28:22'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cdan_rp_mortality.json
+  finished: '2026-03-31 17:34:27'
+  results:
+    AUCROC: 0.0093
+    AUCPR: 0.0022
+- name: e2e_codats_rp_sepsis
+  config: configs/baselines/e2e/e2e_codats_rp_sepsis.json
+  output: experiments/results/e2e_codats_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS E2E right-padded. Causal CNN backbone.
+  server: a6000
+  gpu: 3
+  pid: 2949241
+  started: '2026-03-31 13:11:25'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_sepsis.json
+  finished: '2026-03-31 13:30:40'
+  results:
+    AUCROC: -0.0071
+    AUCPR: 0.001
+- name: e2e_codats_rp_aki
+  config: configs/baselines/e2e/e2e_codats_rp_aki.json
+  output: experiments/results/e2e_codats_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS E2E right-padded. Causal CNN backbone.
+  server: a6000
+  gpu: 3
+  pid: 2979471
+  started: '2026-03-31 13:30:47'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_aki.json
+  finished: '2026-03-31 13:56:07'
+  results:
+    AUCROC: -0.0178
+    AUCPR: -0.076
+- name: e2e_codats_rp_mortality
+  config: configs/baselines/e2e/e2e_codats_rp_mortality.json
+  output: experiments/results/e2e_codats_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CoDATS E2E right-padded. Causal CNN backbone.
+  server: a6000
+  gpu: 3
+  pid: 3022722
+  started: '2026-03-31 13:56:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_codats_rp_mortality.json
+  finished: '2026-03-31 14:03:20'
+  results:
+    AUCROC: 0.0104
+    AUCPR: -0.0126
+- name: e2e_cluda_lr5e4_rp_sepsis
+  config: configs/baselines/e2e/e2e_cluda_lr5e4_rp_sepsis.json
+  output: experiments/results/e2e_cluda_lr5e4_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA E2E right-padded lr=5e-4. TCN backbone.
+  server: a6000
+  gpu: 3
+  pid: 3040387
+  started: '2026-03-31 14:03:26'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_lr5e4_rp_sepsis.json
+  finished: '2026-03-31 14:19:39'
+  results:
+    AUCROC: -0.0182
+    AUCPR: -0.0021
+- name: e2e_cluda_lr5e4_rp_aki
+  config: configs/baselines/e2e/e2e_cluda_lr5e4_rp_aki.json
+  output: experiments/results/e2e_cluda_lr5e4_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA E2E right-padded lr=5e-4. TCN backbone.
+  server: a6000
+  gpu: 3
+  pid: 3062033
+  started: '2026-03-31 14:19:46'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_lr5e4_rp_aki.json
+  finished: '2026-03-31 14:46:07'
+  results:
+    AUCROC: -0.0081
+    AUCPR: 0.003
+- name: e2e_cluda_lr5e4_rp_mortality
+  config: configs/baselines/e2e/e2e_cluda_lr5e4_rp_mortality.json
+  output: experiments/results/e2e_cluda_lr5e4_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CLUDA E2E right-padded lr=5e-4. TCN backbone.
+  server: a6000
+  gpu: 3
+  pid: 3106289
+  started: '2026-03-31 14:46:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_lr5e4_rp_mortality.json
+  finished: '2026-03-31 14:53:20'
+  results:
+    AUCROC: 0.0087
+    AUCPR: -0.0134
+- name: e2e_raincoat_rp_sepsis
+  config: configs/baselines/e2e/e2e_raincoat_rp_sepsis.json
+  output: experiments/results/e2e_raincoat_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT E2E right-padded. CNN+Spectral backbone.
+  server: a6000
+  gpu: 3
+  pid: 3124855
+  started: '2026-03-31 14:53:26'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_rp_sepsis.json
+  finished: '2026-03-31 15:42:06'
+  results:
+    AUCROC: 0.0208
+    AUCPR: 0.029
+- name: e2e_raincoat_rp_aki
+  config: configs/baselines/e2e/e2e_raincoat_rp_aki.json
+  output: experiments/results/e2e_raincoat_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT E2E right-padded. CNN+Spectral backbone.
+  server: local
+  gpu: 1
+  pid: 3812213
+  started: '2026-03-31 14:57:30'
+  finished: '2026-03-31 16:53:33'
+  results:
+    AUCROC: 0.0193
+    AUCPR: 0.0587
+- name: e2e_raincoat_rp_mortality
+  config: configs/baselines/e2e/e2e_raincoat_rp_mortality.json
+  output: experiments/results/e2e_raincoat_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: RAINCOAT E2E right-padded. CNN+Spectral backbone.
+  server: a6000
+  gpu: 3
+  pid: 3178858
+  started: '2026-03-31 15:42:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_rp_mortality.json
+  finished: '2026-03-31 16:00:28'
+  results:
+    AUCROC: 0.0049
+    AUCPR: -0.0317
+- name: e2e_acon_lr5e4_rp_sepsis
+  config: configs/baselines/e2e/e2e_acon_lr5e4_rp_sepsis.json
+  output: experiments/results/e2e_acon_lr5e4_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON E2E right-padded lr=5e-4. CNN temporal backbone.
+  server: a6000
+  gpu: 3
+  pid: 3202354
+  started: '2026-03-31 16:00:35'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_lr5e4_rp_sepsis.json
+  finished: '2026-03-31 16:18:50'
+  results:
+    AUCROC: 0.0151
+    AUCPR: 0.0065
+- name: e2e_acon_lr5e4_rp_aki
+  config: configs/baselines/e2e/e2e_acon_lr5e4_rp_aki.json
+  output: experiments/results/e2e_acon_lr5e4_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON E2E right-padded lr=5e-4. CNN temporal backbone.
+  server: a6000
+  gpu: 3
+  pid: 3226942
+  started: '2026-03-31 16:18:57'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_lr5e4_rp_aki.json
+  finished: '2026-03-31 16:38:13'
+  results:
+    AUCROC: -0.114
+    AUCPR: -0.2157
+- name: e2e_acon_lr5e4_rp_mortality
+  config: configs/baselines/e2e/e2e_acon_lr5e4_rp_mortality.json
+  output: experiments/results/e2e_acon_lr5e4_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: ACON E2E right-padded lr=5e-4. CNN temporal backbone.
+  server: a6000
+  gpu: 3
+  pid: 3251410
+  started: '2026-03-31 16:38:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_lr5e4_rp_mortality.json
+  finished: '2026-03-31 16:48:28'
+  results:
+    AUCROC: 0.0182
+    AUCPR: -0.0102
+- name: e2e_srcval_fixed_sepsis
+  config: configs/baselines/e2e/e2e_srcval_fixed_sepsis.json
+  output: experiments/results/e2e_srcval_fixed_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'FIXED BASELINE: 1L h=161, LN=false, SP=false, MIMIC val ES, left-pad. Clean sepsis baseline.'
+  server: a6000
+  gpu: 3
+  pid: 1849301
+  started: '2026-03-30 17:26:05'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srcval_fixed_sepsis.json
+  finished: '2026-03-30 17:51:40'
+  results:
+    AUCROC: 0.216
+    AUCPR: 0.1637
+- name: e2e_ablation_rightpad_sepsis_v2
+  config: configs/baselines/e2e/e2e_ablation_rightpad_sepsis_v2.json
+  output: experiments/results/e2e_ablation_rightpad_sepsis_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CLEAN ABLATION: right-pad only change from srcval_fixed_sepsis. Single-variable test.'
+  server: '3090'
+  gpu: 0
+  pid: 1551007
+  started: '2026-03-30 17:35:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_rightpad_sepsis_v2.json
+  finished: '2026-03-30 17:49:30'
+  results:
+    AUCROC: 0.0068
+    AUCPR: 0.002
+- name: e2e_ablation_lr_sepsis_v2
+  config: configs/baselines/e2e/e2e_ablation_lr_sepsis_v2.json
+  output: experiments/results/e2e_ablation_lr_sepsis_v2.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'CLEAN ABLATION: lr=2.46e-4 only change from srcval_fixed_sepsis. Single-variable test.'
+  server: '3090'
+  gpu: 0
+  pid: 1562159
+  started: '2026-03-30 17:49:39'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_lr_sepsis_v2.json
+  finished: '2026-03-30 18:14:10'
+  results:
+    AUCROC: 0.1715
+    AUCPR: 0.1152
+- name: e2e_srcval_fixed_aki
+  config: configs/baselines/e2e/e2e_srcval_fixed_aki.json
+  output: experiments/results/e2e_srcval_fixed_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'FIXED BASELINE: 1L h=161, LN=false, SP=false, MIMIC val ES. Clean baseline for ablation.'
+  server: local
+  gpu: 0
+  pid: 2412326
+  started: '2026-03-30 17:19:40'
+  finished: '2026-03-30 18:12:08'
+  results:
+    AUCROC: 0.1625
+    AUCPR: 0.3964
+- name: e2e_srcval_fixed_mortality
+  config: configs/baselines/e2e/e2e_srcval_fixed_mortality.json
+  output: experiments/results/e2e_srcval_fixed_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'FIXED BASELINE: 1L h=161, LN=false, SP=false, MIMIC val ES. Clean baseline for ablation.'
+  server: a6000
+  gpu: 3
+  pid: 1833741
+  started: '2026-03-30 17:19:46'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srcval_fixed_mortality.json
+  finished: '2026-03-30 17:25:58'
+  results:
+    AUCROC: 0.0231
+    AUCPR: 0.0182
+- name: e2e_ablation_rightpad_aki
+  config: configs/baselines/e2e/e2e_ablation_rightpad_aki.json
+  output: experiments/results/e2e_ablation_rightpad_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: right-pad (YAIB) vs left-pad. KEY TEST: does padding explain AKI gap too?'
+  server: '3090'
+  gpu: 0
+  pid: 1539645
+  started: '2026-03-30 17:19:54'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_rightpad_aki.json
+  finished: '2026-03-30 17:35:11'
+  results:
+    AUCROC: 0.0004
+    AUCPR: 0.0094
+- name: e2e_ablation_rightpad_mortality
+  config: configs/baselines/e2e/e2e_ablation_rightpad_mortality.json
+  output: experiments/results/e2e_ablation_rightpad_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: right-pad (YAIB) vs left-pad. Mortality is per-stay (control).'
+  server: a6000
+  gpu: 3
+  pid: 1883644
+  started: '2026-03-30 17:51:47'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_rightpad_mortality.json
+  finished: '2026-03-30 17:57:51'
+  results:
+    AUCROC: 0.0275
+    AUCPR: 0.031
+- name: e2e_ablation_lr_aki
+  config: configs/baselines/e2e/e2e_ablation_lr_aki.json
+  output: experiments/results/e2e_ablation_lr_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: lr=2.46e-4 (YAIB) vs 1e-3. Secondary factor.'
+  server: a6000
+  gpu: 3
+  pid: 1898232
+  started: '2026-03-30 17:57:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_lr_aki.json
+  finished: '2026-03-30 18:27:20'
+  results:
+    AUCROC: 0.0444
+    AUCPR: 0.0986
+- name: e2e_ablation_lr_mortality
+  config: configs/baselines/e2e/e2e_ablation_lr_mortality.json
+  output: experiments/results/e2e_ablation_lr_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: lr=2.46e-4 (YAIB) vs 1e-3. Secondary factor.'
+  server: local
+  gpu: 0
+  pid: 2445916
+  started: '2026-03-30 18:12:09'
+  finished: '2026-03-30 18:20:15'
+  results:
+    AUCROC: 0.0146
+    AUCPR: 0.0057
+- name: e2e_ablation_lr_sepsis
+  config: configs/baselines/e2e/e2e_ablation_lr_sepsis.json
+  output: experiments/results/e2e_ablation_lr_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: lr=2.46e-4 (YAIB) vs 1e-3 (ours). All else = srcval v2 baseline.'
+  server: local
+  gpu: 0
+  pid: 2371744
+  started: '2026-03-30 16:05:05'
+  finished: '2026-03-30 17:00:08'
+  results:
+    AUCROC: 0.1415
+    AUCPR: 0.0991
+- name: e2e_ablation_wd_sepsis
+  config: configs/baselines/e2e/e2e_ablation_wd_sepsis.json
+  output: experiments/results/e2e_ablation_wd_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: wd=1e-6 (YAIB) vs 1e-4 (ours). All else = srcval v2 baseline.'
+  server: a6000
+  gpu: 3
+  pid: 1755331
+  started: '2026-03-30 16:05:11'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_wd_sepsis.json
+  finished: '2026-03-30 16:32:48'
+  results:
+    AUCROC: 0.2163
+    AUCPR: 0.1627
+- name: e2e_ablation_adam_sepsis
+  config: configs/baselines/e2e/e2e_ablation_adam_sepsis.json
+  output: experiments/results/e2e_ablation_adam_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: Adam (YAIB) vs AdamW (ours). All else = srcval v2 baseline.'
+  server: '3090'
+  gpu: 0
+  pid: 1512229
+  started: '2026-03-30 16:05:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_adam_sepsis.json
+  finished: '2026-03-30 16:23:33'
+  results:
+    AUCROC: 0.2185
+    AUCPR: 0.1678
+- name: e2e_ablation_rightpad_sepsis
+  config: configs/baselines/e2e/e2e_ablation_rightpad_sepsis.json
+  output: experiments/results/e2e_ablation_rightpad_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'ABLATION: right-pad (YAIB) vs left-pad (ours). All else = srcval v2 baseline.'
+  server: '3090'
+  gpu: 0
+  pid: 1527598
+  started: '2026-03-30 16:23:41'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_ablation_rightpad_sepsis.json
+  finished: '2026-03-30 16:38:53'
+  results:
+    AUCROC: 0.0032
+    AUCPR: 0.0012
+- name: e2e_coral_sepsis_v4_local
+  config: configs/baselines/e2e/e2e_coral_sepsis.json
+  output: experiments/results/e2e_coral_sepsis_v4_local.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL E2E v4 local run. Need results for paper. 2L h=128, lambda_coral=1.0.
+  server: a6000
+  gpu: 3
+  pid: 1685880
+  started: '2026-03-30 15:08:08'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_sepsis_v4_local.json
+  finished: '2026-03-30 15:31:33'
+  results:
+    AUCROC: 0.1686
+    AUCPR: 0.153
+- name: e2e_coral_aki_v4_local
+  config: configs/baselines/e2e/e2e_coral_aki.json
+  output: experiments/results/e2e_coral_aki_v4_local.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL E2E v4 local run. Need results for paper. 2L h=128, lambda_coral=1.0.
+  server: '3090'
+  gpu: 0
+  pid: 1490821
+  started: '2026-03-30 15:18:24'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_aki_v4_local.json
+  finished: '2026-03-30 15:33:35'
+  results:
+    AUCROC: 0.1691
+    AUCPR: 0.44
+- name: e2e_coral_mortality_v4_local
+  config: configs/baselines/e2e/e2e_coral_mortality.json
+  output: experiments/results/e2e_coral_mortality_v4_local.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: CORAL E2E v4 local run. Need results for paper. 2L h=128.
+  server: local
+  gpu: 0
+  pid: 2353498
+  started: '2026-03-30 15:19:25'
+  finished: '2026-03-30 15:27:30'
+  results:
+    AUCROC: 0.0174
+    AUCPR: 0.0151
+- name: e2e_srconly_rp_sepsis
+  config: configs/baselines/e2e/e2e_srconly_rp_sepsis.json
+  output: experiments/results/e2e_srconly_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD SOURCE-ONLY: 2L h=128, no DA. Fair baseline for paper.'
+  server: athena
+  gpu: 0
+  pid: 2484301
+  started: '2026-03-30 18:44:04'
+  slurm_job_id: '67064'
+  submitted: '2026-03-30 19:01:17'
+  results:
+    AUCROC: 0.0058
+    AUCPR: 0.0072
+- name: e2e_srconly_rp_aki
+  config: configs/baselines/e2e/e2e_srconly_rp_aki.json
+  output: experiments/results/e2e_srconly_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD SOURCE-ONLY: 2L h=128, no DA. Fair baseline for paper.'
+  server: athena
+  gpu: 3
+  pid: 1951813
+  started: '2026-03-30 18:44:10'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srconly_rp_aki.json
+  slurm_job_id: '67065'
+  submitted: '2026-03-30 19:01:22'
+  results:
+    AUCROC: 0.0128
+    AUCPR: 0.022
+- name: e2e_srconly_rp_mortality
+  config: configs/baselines/e2e/e2e_srconly_rp_mortality.json
+  output: experiments/results/e2e_srconly_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD SOURCE-ONLY: 2L h=128, no DA. Fair baseline for paper.'
+  server: athena
+  gpu: 0
+  pid: 1587033
+  started: '2026-03-30 18:44:18'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_srconly_rp_mortality.json
+  finished: '2026-03-30 18:47:20'
+  results:
+    AUCROC: 0.0171
+    AUCPR: 0.0182
+  slurm_job_id: '67066'
+  submitted: '2026-03-30 19:01:28'
+- name: e2e_dann_rp_sepsis
+  config: configs/baselines/e2e/e2e_dann_rp_sepsis.json
+  output: experiments/results/e2e_dann_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: athena
+  gpu: 0
+  pid: 1596388
+  started: '2026-03-30 18:47:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_sepsis.json
+  finished: '2026-03-30 18:57:36'
+  results:
+    AUCROC: 0.0225
+    AUCPR: 0.0098
+  slurm_job_id: '67067'
+  submitted: '2026-03-30 19:01:33'
+- name: e2e_dann_rp_aki
+  config: configs/baselines/e2e/e2e_dann_rp_aki.json
+  output: experiments/results/e2e_dann_rp_aki.parquet
+  status: athena_pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: athena
+  gpu: 0
+  pid: 1606661
+  started: '2026-03-30 18:57:45'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_aki.json
+  slurm_job_id: '67068'
+  submitted: '2026-03-30 19:01:39'
+- name: e2e_dann_rp_mortality
+  config: configs/baselines/e2e/e2e_dann_rp_mortality.json
+  output: experiments/results/e2e_dann_rp_mortality.parquet
+  status: athena_pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: athena
+  slurm_job_id: '67069'
+  submitted: '2026-03-30 19:01:44'
+- name: e2e_dann_rp_lr5e4_sepsis
+  config: configs/baselines/e2e/e2e_dann_rp_lr5e4_sepsis.json
+  output: experiments/results/e2e_dann_rp_lr5e4_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lr=5e-4 variant.'
+  server: local
+  gpu: 0
+  pid: 2492808
+  started: '2026-03-30 19:01:48'
+  finished: '2026-03-30 19:36:02'
+  error: Process died (detected during monitoring)
+  results:
+    AUCROC: 0.0086
+    AUCPR: 0.004
+- name: e2e_dann_rp_lr5e4_aki
+  config: configs/baselines/e2e/e2e_dann_rp_lr5e4_aki.json
+  output: experiments/results/e2e_dann_rp_lr5e4_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lr=5e-4 variant.'
+  server: a6000
+  gpu: 3
+  pid: 1974729
+  started: '2026-03-30 19:01:54'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_lr5e4_aki.json
+  finished: '2026-03-30 19:24:31'
+  results:
+    AUCROC: 0.0009
+    AUCPR: -0.0048
+- name: e2e_dann_rp_lr5e4_mortality
+  config: configs/baselines/e2e/e2e_dann_rp_lr5e4_mortality.json
+  output: experiments/results/e2e_dann_rp_lr5e4_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lr=5e-4 variant.'
+  server: '3090'
+  gpu: 0
+  pid: 1606866
+  started: '2026-03-30 19:02:02'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_lr5e4_mortality.json
+  finished: '2026-03-30 19:05:04'
+  results:
+    AUCROC: 0.0149
+    AUCPR: 0.0113
+- name: e2e_dann_rp_lam01_sepsis
+  config: configs/baselines/e2e/e2e_dann_rp_lam01_sepsis.json
+  output: experiments/results/e2e_dann_rp_lam01_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lambda=0.1 (conservative alignment).'
+  server: '3090'
+  gpu: 0
+  pid: 1619181
+  started: '2026-03-30 19:05:12'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_lam01_sepsis.json
+  finished: '2026-03-30 19:17:18'
+  results:
+    AUCROC: 0.0145
+    AUCPR: 0.0085
+- name: e2e_dann_rp_lam01_aki
+  config: configs/baselines/e2e/e2e_dann_rp_lam01_aki.json
+  output: experiments/results/e2e_dann_rp_lam01_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lambda=0.1 (conservative alignment).'
+  server: '3090'
+  gpu: 0
+  pid: 1640341
+  started: '2026-03-30 19:17:26'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_lam01_aki.json
+  finished: '2026-03-30 19:30:43'
+  results:
+    AUCROC: 0.0107
+    AUCPR: 0.0424
+- name: e2e_dann_rp_lam01_mortality
+  config: configs/baselines/e2e/e2e_dann_rp_lam01_mortality.json
+  output: experiments/results/e2e_dann_rp_lam01_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD DANN: lambda=0.1 (conservative alignment).'
+  server: a6000
+  gpu: 3
+  pid: 2010604
+  started: '2026-03-30 19:24:38'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_dann_rp_lam01_mortality.json
+  finished: '2026-03-30 19:30:43'
+  results:
+    AUCROC: 0.0178
+    AUCPR: 0.0028
+- name: e2e_coral_rp_sepsis
+  config: configs/baselines/e2e/e2e_coral_rp_sepsis.json
+  output: experiments/results/e2e_coral_rp_sepsis.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: a6000
+  gpu: 3
+  pid: 2024623
+  started: '2026-03-30 19:30:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_rp_sepsis.json
+  finished: '2026-03-30 19:49:13'
+  results:
+    AUCROC: 0.0084
+    AUCPR: 0.0063
+- name: e2e_coral_rp_aki
+  config: configs/baselines/e2e/e2e_coral_rp_aki.json
+  output: experiments/results/e2e_coral_rp_aki.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: '3090'
+  gpu: 0
+  pid: 1655162
+  started: '2026-03-30 19:30:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_coral_rp_aki.json
+  finished: '2026-03-30 19:42:07'
+  results:
+    AUCROC: 0.0126
+    AUCPR: 0.0269
+- name: e2e_coral_rp_mortality
+  config: configs/baselines/e2e/e2e_coral_rp_mortality.json
+  output: experiments/results/e2e_coral_rp_mortality.parquet
+  status: done
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: paper HPs (lambda=1.0, lr=1e-3). Fair E2E comparison.'
+  server: local
+  gpu: 0
+  pid: 2563480
+  started: '2026-03-30 19:36:02'
+  finished: '2026-03-30 19:44:09'
+  results:
+    AUCROC: 0.0155
+    AUCPR: 0.0135
+- name: e2e_coral_rp_lam01_sepsis
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_sepsis.json
+  output: experiments/results/e2e_coral_rp_lam01_sepsis.parquet
+  status: athena_pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: lambda=0.1 (conservative alignment).'
+  server: athena
+  slurm_job_id: '67073'
+  submitted: '2026-03-30 19:02:06'
+- name: e2e_coral_rp_lam01_aki
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_aki.json
+  output: experiments/results/e2e_coral_rp_lam01_aki.parquet
+  status: athena_pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: lambda=0.1 (conservative alignment).'
+  server: athena
+  slurm_job_id: '67074'
+  submitted: '2026-03-30 19:02:12'
+- name: e2e_coral_rp_lam01_mortality
+  config: configs/baselines/e2e/e2e_coral_rp_lam01_mortality.json
+  output: experiments/results/e2e_coral_rp_lam01_mortality.parquet
+  status: athena_pending
+  branch: da-baselines-v2
+  command: run_e2e_baseline
+  notes: 'RIGHT-PAD CORAL: lambda=0.1 (conservative alignment).'
+  server: athena
+  slurm_job_id: '67075'
+  submitted: '2026-03-30 19:02:17'
 - name: e2e_raincoat_sepsis_hp2
   config: configs/baselines/e2e/raincoat_sepsis_hp2.json
   output: experiments/results/e2e_raincoat_sepsis_hp2.parquet
@@ -3219,47 +4424,930 @@ experiments:
   results:
     AUCROC: -0.0379
     AUCPR: -0.0011
-
-# --- Extend winning sepsis configs to AKI + mortality ---
 - name: e2e_raincoat_mortality_hp3
   config: configs/baselines/e2e/raincoat_mortality_hp3.json
   output: experiments/results/e2e_raincoat_mortality_hp3.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'RAINCOAT hp3 on mortality (same HPs as sepsis where we win)'
+  notes: RAINCOAT hp3 on mortality (same HPs as sepsis where we win)
+  server: local
+  gpu: 0
+  pid: 2240437
+  started: '2026-03-30 10:17:36'
+  finished: '2026-03-30 10:44:34'
+  results:
+    AUCROC: 0.0039
+    AUCPR: -0.0227
 - name: e2e_raincoat_aki_hp3
   config: configs/baselines/e2e/raincoat_aki_hp3.json
   output: experiments/results/e2e_raincoat_aki_hp3.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'RAINCOAT hp3 on aki (same HPs as sepsis where we win)'
+  notes: RAINCOAT hp3 on aki (same HPs as sepsis where we win)
+  server: a6000
+  gpu: 3
+  pid: 1377946
+  started: '2026-03-30 10:17:42'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_raincoat_aki_hp3.json
+  finished: '2026-03-30 11:17:05'
+  results:
+    AUCROC: 0.0827
+    AUCPR: 0.2458
 - name: e2e_acon_mortality_lr5e4
   config: configs/baselines/e2e/acon_mortality_lr5e4.json
   output: experiments/results/e2e_acon_mortality_lr5e4.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'ACON lr5e4 on mortality (same HPs as sepsis where we win)'
+  notes: ACON lr5e4 on mortality (same HPs as sepsis where we win)
+  server: '3090'
+  gpu: 0
+  pid: 1372046
+  started: '2026-03-30 10:17:51'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_mortality_lr5e4.json
+  finished: '2026-03-30 10:20:52'
+  results:
+    AUCROC: 0.0143
+    AUCPR: -0.0117
 - name: e2e_acon_aki_lr5e4
   config: configs/baselines/e2e/acon_aki_lr5e4.json
   output: experiments/results/e2e_acon_aki_lr5e4.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'ACON lr5e4 on aki (same HPs as sepsis where we win)'
+  notes: ACON lr5e4 on aki (same HPs as sepsis where we win)
+  server: '3090'
+  gpu: 0
+  pid: 1381400
+  started: '2026-03-30 10:21:01'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_acon_aki_lr5e4.json
+  finished: '2026-03-30 10:31:08'
+  results:
+    AUCROC: -0.1049
+    AUCPR: -0.1743
 - name: e2e_cluda_mortality_hp2
   config: configs/baselines/e2e/cluda_mortality_hp2.json
   output: experiments/results/e2e_cluda_mortality_hp2.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CLUDA hp2 on mortality (same HPs as sepsis where we win)'
+  notes: CLUDA hp2 on mortality (same HPs as sepsis where we win)
+  server: '3090'
+  gpu: 0
+  pid: 1390634
+  started: '2026-03-30 10:31:16'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_mortality_hp2.json
+  finished: '2026-03-30 10:34:18'
+  results:
+    AUCROC: 0.003
+    AUCPR: -0.0305
 - name: e2e_cluda_aki_hp2
   config: configs/baselines/e2e/cluda_aki_hp2.json
   output: experiments/results/e2e_cluda_aki_hp2.parquet
-  status: pending
+  status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'CLUDA hp2 on aki (same HPs as sepsis where we win)'
+  notes: CLUDA hp2 on aki (same HPs as sepsis where we win)
+  server: '3090'
+  gpu: 0
+  pid: 1401388
+  started: '2026-03-30 10:34:27'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/e2e_cluda_aki_hp2.json
+  finished: '2026-03-30 10:51:39'
+  results:
+    AUCROC: 0.0226
+    AUCPR: -0.0036
+- name: debug_ccr_afs_sepsis
+  config: configs/debug_ccr_afs_sepsis.json
+  output: runs/debug_ccr_afs_sepsis/eval.parquet
+  status: done
+  notes: 'DEBUG: smoke test CCR+AFS (1 pretrain + 2 phase2 epochs, debug=true)'
+  server: '3090'
+  gpu: 0
+  pid: 1686332
+  started: '2026-03-30 20:46:57'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/debug_ccr_afs_sepsis.json
+  finished: '2026-03-30 21:06:18'
+  results:
+    AUCROC: -0.0408
+    AUCPR: -0.0092
+    loss: 0.0058
+    brier: -0.0714
+    ece: -0.0829
+- name: ccr_sepsis
+  config: configs/ccr_sepsis.json
+  output: runs/ccr_sepsis/eval.parquet
+  status: done
+  notes: 'CCR only (alpha=0.5): class-conditional retrieval for sepsis (1.1% pos rate). Base: RetrV4+MMD.'
+  server: a6000
+  gpu: 3
+  pid: 2132508
+  started: '2026-03-30 21:01:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/ccr_sepsis.json
+  finished: '2026-03-31 13:11:18'
+  results:
+    AUCROC: 0.0483
+    AUCPR: 0.0186
+    loss: -0.104
+    brier: -0.0775
+    ece: -0.0926
+- name: ccr_aki
+  config: configs/ccr_aki.json
+  output: runs/ccr_aki/eval.parquet
+  status: done
+  notes: 'CCR only (alpha=0.5): class-conditional retrieval for AKI. Base: RetrV5 cross3.'
+  server: '3090'
+  gpu: 0
+  pid: 1689256
+  started: '2026-03-30 21:06:24'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/ccr_aki.json
+  finished: '2026-03-31 17:26:05'
+  results:
+    AUCROC: 0.0517
+    AUCPR: 0.1486
+    loss: -0.1006
+    brier: -0.0115
+    ece: 0.0057
+- name: afs_sepsis
+  config: configs/afs_sepsis.json
+  output: runs/afs_sepsis/eval.parquet
+  status: done
+  notes: 'AFS only (linear decay 0.1->0.01 over ep5-25): adaptive fidelity scheduling for sepsis. Base: RetrV4+MMD.'
+  server: local
+  gpu: 0
+  pid: 2606362
+  started: '2026-03-30 21:16:32'
+  finished: '2026-03-31 19:25:00'
+  results:
+    AUCROC: 0.0606
+    AUCPR: 0.0205
+    loss: -0.1209
+    brier: -0.078
+    ece: -0.0882
+- name: afs_aki
+  config: configs/afs_aki.json
+  output: runs/afs_aki/eval.parquet
+  status: athena_pending
+  notes: 'AFS only (linear decay 0.1->0.01 over ep5-40): adaptive fidelity scheduling for AKI. Base: RetrV5 cross3.'
+  server: athena
+  slurm_job_id: '67238'
+  submitted: '2026-03-31 09:43:02'
+- name: ccr_afs_sepsis
+  config: configs/ccr_afs_sepsis.json
+  output: runs/ccr_afs_sepsis/eval.parquet
+  status: athena_pending
+  notes: 'CCR+AFS combined: class-conditional retrieval + fidelity scheduling for sepsis. Base: RetrV4+MMD.'
+  server: athena
+  slurm_job_id: '67395'
+  submitted: '2026-03-31 16:47:47'
+- name: ccr_afs_mortality
+  config: configs/ccr_afs_mortality.json
+  output: runs/ccr_afs_mortality/eval.parquet
+  status: athena_pending
+  notes: 'CCR+AFS combined: class-conditional retrieval + fidelity scheduling for mortality. Bidirectional, no VLB. Base:
+    RetrV4+MMD.'
+  server: athena
+  slurm_job_id: '67239'
+  submitted: '2026-03-31 09:43:12'
+- name: sepsis_v7_adaptive
+  config: configs/v7/sepsis_v7_adaptive.json
+  output: runs/sepsis_v7_adaptive/eval.parquet
+  status: done
+  server: local
+  notes: V7 adaptive refresh for sepsis. Same config as sepsis_retr_v4_mmd + adaptive_refresh. Run on local for fair comparison
+    with best sepsis result.
+  gpu: 1
+  pid: 3889900
+  started: '2026-03-31 16:53:33'
+  finished: '2026-04-01 02:33:31'
+  results:
+    AUCROC: 0.0575
+    AUCPR: 0.025
+    loss: -0.1255
+    brier: -0.076
+    ece: -0.0738
+- name: ccr_afs_sepsis_seed2
+  config: configs/ccr_afs_sepsis_seed2.json
+  output: runs/ccr_afs_sepsis_seed2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: CCR+AFS sepsis, training_seed=7777 (multi-seed validation)
+  submitted: '2026-03-31 17:53:08'
+  slurm_job_id: '67441'
+- name: ccr_afs_mortality_seed2
+  config: configs/ccr_afs_mortality_seed2.json
+  output: runs/ccr_afs_mortality_seed2/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: CCR+AFS mortality, training_seed=7777 (multi-seed validation)
+  submitted: '2026-03-31 17:53:13'
+  slurm_job_id: '67442'
+- name: ccr_sepsis_seed2
+  config: configs/ccr_sepsis_seed2.json
+  output: runs/ccr_sepsis_seed2/eval.parquet
+  status: done
+  notes: CCR sepsis, training_seed=7777 (multi-seed validation)
+  server: a6000
+  gpu: 3
+  pid: 3475333
+  started: '2026-03-31 19:22:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/ccr_sepsis_seed2.json
+  finished: '2026-04-01 09:56:01'
+  results:
+    AUCROC: 0.0516
+    AUCPR: 0.0185
+    loss: -0.1192
+    brier: -0.0703
+    ece: -0.0634
+- name: ccr_mortality_seed2
+  config: configs/ccr_mortality.json
+  output: runs/ccr_mortality_seed2/eval.parquet
+  status: done
+  notes: CCR mortality, training_seed=7777 (multi-seed validation)
+  server: local
+  gpu: 0
+  pid: 4076646
+  started: '2026-03-31 19:25:00'
+  finished: '2026-04-01 02:59:55'
+  results:
+    AUCROC: 0.0438
+    AUCPR: 0.0427
+    loss: -0.0696
+    brier: -0.0362
+    ece: -0.05
+- name: ccr_afs_sepsis_seed2
+  config: configs/ccr_afs_sepsis_seed2.json
+  output: runs/ccr_afs_sepsis_seed2/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: CCR+AFS sepsis, training_seed=7777 (multi-seed validation)
+- name: ccr_afs_mortality_seed2
+  config: configs/ccr_afs_mortality_seed2.json
+  output: runs/ccr_afs_mortality_seed2/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: CCR+AFS mortality, training_seed=7777 (multi-seed validation)
+- name: ccr_afs_sepsis_eval
+  config: configs/ccr_afs_sepsis.json
+  output: runs/ccr_afs_sepsis/eval.parquet
+  status: done
+  command: translate_and_eval
+  notes: Re-eval ccr_afs_sepsis from best checkpoint (Athena segfaulted during eval)
+  server: '3090'
+  gpu: 0
+  pid: 1861215
+  started: '2026-04-01 01:01:03'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/ccr_afs_sepsis_eval.json
+  finished: '2026-04-01 01:25:25'
+  results:
+    AUCROC: -0.0407
+    AUCPR: -0.0087
+    loss: 0.0028
+    brier: -0.058
+    ece: -0.0673
+- name: afs_mortality
+  config: configs/afs_mortality.json
+  output: runs/afs_mortality/eval.parquet
+  status: done
+  notes: 'AFS only (linear decay 0.1->0.01 over ep5-40): adaptive fidelity scheduling for mortality. Bidirectional, no VLB.
+    Base: RetrV4+MMD.'
+  server: '3090'
+  gpu: 0
+  pid: 1862297
+  started: '2026-04-01 01:25:30'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/afs_mortality.json
+  finished: '2026-04-01 06:40:08'
+  results:
+    AUCROC: 0.0407
+    AUCPR: 0.0286
+    loss: -0.0639
+    brier: -0.0341
+    ece: -0.0461
+- name: ccr_afs_aki
+  config: configs/ccr_afs_aki.json
+  output: runs/ccr_afs_aki/eval.parquet
+  status: done
+  notes: 'CCR+AFS combined for AKI. Completes 3x3 ablation matrix. Base: RetrV5 cross3.'
+  server: local
+  gpu: 1
+  pid: 530482
+  started: '2026-04-01 02:33:31'
+  finished: '2026-04-02 05:34:38'
+  results:
+    AUCROC: 0.0551
+    AUCPR: 0.1558
+    loss: -0.1099
+    brier: -0.0193
+    ece: -0.0037
+- name: ccr_mortality
+  config: configs/ccr_mortality_base.json
+  output: runs/ccr_mortality/eval.parquet
+  status: done
+  notes: 'CCR only for mortality (base seed). Completes 3x3 ablation matrix. Base: RetrV4+MMD.'
+  server: local
+  gpu: 0
+  pid: 638993
+  started: '2026-04-01 02:59:55'
+  finished: '2026-04-01 08:08:23'
+  results:
+    AUCROC: 0.0419
+    AUCPR: 0.0405
+    loss: -0.0668
+    brier: -0.0342
+    ece: -0.0312
+- name: ccr_afs_sepsis_eval_local
+  config: configs/ccr_afs_sepsis.json
+  output: runs/ccr_afs_sepsis/eval.parquet
+  status: done
+  server: local
+  command: translate_and_eval
+  notes: Re-eval ccr_afs_sepsis locally (3090 eval failed - checkpoint path issue)
+  gpu: 0
+  pid: 966621
+  started: '2026-04-01 08:34:45'
+  finished: '2026-04-01 08:59:11'
+  results:
+    AUCROC: 0.0533
+    AUCPR: 0.0202
+    loss: -0.1206
+    brier: -0.0731
+    ece: -0.0673
+- name: adaptive_afs_sepsis
+  config: configs/adaptive_afs_sepsis.json
+  output: runs/adaptive_afs_sepsis/eval.parquet
+  status: done
+  notes: V7 adaptive refresh + AFS combined for sepsis. Both independently positive (+0.0575, +0.0606).
+  server: '3090'
+  gpu: 0
+  pid: 1885962
+  started: '2026-04-01 08:47:01'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/adaptive_afs_sepsis.json
+  finished: '2026-04-01 21:47:43'
+  results:
+    AUCROC: 0.0549
+    AUCPR: 0.0234
+    loss: -0.1176
+    brier: -0.0574
+    ece: -0.0525
+- name: adaptive_ccr_sepsis
+  config: configs/adaptive_ccr_sepsis.json
+  output: runs/adaptive_ccr_sepsis/eval.parquet
+  status: done
+  notes: V7 adaptive refresh + CCR combined for sepsis. Adaptive positive (+0.0575), CCR neutral.
+  server: local
+  gpu: 0
+  pid: 971942
+  started: '2026-04-01 08:59:11'
+  finished: '2026-04-01 19:28:39'
+  results:
+    AUCROC: 0.0617
+    AUCPR: 0.0234
+    loss: -0.1271
+    brier: -0.077
+    ece: -0.0733
+- name: adaptive_ccr_afs_sepsis
+  config: configs/adaptive_ccr_afs_sepsis.json
+  output: runs/adaptive_ccr_afs_sepsis/eval.parquet
+  status: done
+  notes: 'Triple combo: adaptive refresh + CCR + AFS for sepsis.'
+  server: local
+  gpu: 0
+  pid: 4080179
+  started: '2026-04-01 21:56:51'
+  finished: '2026-04-02 10:24:47'
+  results:
+    AUCROC: 0.0515
+    AUCPR: 0.0159
+    loss: -0.1046
+    brier: -0.0505
+    ece: -0.0547
+- name: adaptive_ccr_afs_aki
+  config: configs/adaptive_ccr_afs_aki.json
+  output: runs/adaptive_ccr_afs_aki/eval.parquet
+  status: done
+  notes: 'Triple combo: adaptive refresh + CCR + AFS for AKI. Base: RetrV5 cross3.'
+  server: a6000
+  gpu: 3
+  pid: 932447
+  started: '2026-04-01 21:56:56'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/adaptive_ccr_afs_aki.json
+  finished: '2026-04-03 00:43:52'
+  results:
+    AUCROC: 0.0525
+    AUCPR: 0.149
+    loss: -0.1029
+    brier: -0.0122
+    ece: 0.0089
+- name: adaptive_ccr_afs_mortality
+  config: configs/adaptive_ccr_afs_mortality.json
+  output: runs/adaptive_ccr_afs_mortality/eval.parquet
+  status: done
+  notes: 'Triple combo: adaptive refresh + CCR + AFS for mortality. Bidirectional, no VLB.'
+  server: '3090'
+  gpu: 0
+  pid: 1910535
+  started: '2026-04-01 21:57:01'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/adaptive_ccr_afs_mortality.json
+  finished: '2026-04-02 03:11:35'
+  results:
+    AUCROC: 0.0424
+    AUCPR: 0.0326
+    loss: -0.0644
+    brier: -0.0267
+    ece: -0.0366
+- name: adaptive_ccr_sepsis_seed2
+  config: configs/adaptive_ccr_sepsis_seed2.json
+  output: runs/adaptive_ccr_sepsis_seed2/eval.parquet
+  status: athena_pending
+  notes: 'Seed validation: adaptive+CCR sepsis with training_seed=7777. Validates +0.0617 record.'
+  server: athena
+  slurm_job_id: '67730'
+  submitted: '2026-04-02 00:59:54'
+- name: afs_sepsis_seed2
+  config: configs/afs_sepsis_seed2.json
+  output: runs/afs_sepsis_seed2/eval.parquet
+  status: athena_pending
+  notes: 'Seed validation: AFS sepsis with training_seed=7777. Validates +0.0606.'
+  server: athena
+  slurm_job_id: '67731'
+  submitted: '2026-04-02 01:00:00'
+- name: adaptive_ccr_sepsis_seed2_eval
+  config: configs/adaptive_ccr_sepsis_seed2.json
+  output: runs/adaptive_ccr_sepsis_seed2/eval.parquet
+  status: done
+  server: local
+  command: translate_and_eval
+  notes: Re-eval adaptive+CCR sepsis seed2 locally (Athena segfault)
+  gpu: 0
+  pid: 50247
+  started: '2026-04-02 11:32:47'
+  finished: '2026-04-02 11:57:13'
+  results:
+    AUCROC: 0.0413
+    AUCPR: 0.0178
+    loss: -0.1074
+    brier: -0.0729
+    ece: -0.0733
+- name: afs_sepsis_seed2_eval
+  config: configs/afs_sepsis_seed2.json
+  output: runs/afs_sepsis_seed2/eval.parquet
+  status: done
+  server: local
+  command: translate_and_eval
+  notes: Re-eval AFS sepsis seed2 locally (Athena segfault)
+  gpu: 1
+  pid: 50248
+  started: '2026-04-02 11:32:47'
+  finished: '2026-04-02 11:59:15'
+  results:
+    AUCROC: 0.044
+    AUCPR: 0.0192
+    loss: -0.0831
+    brier: -0.0901
+    ece: -0.1224
+- name: adaptive_ccr_aki
+  config: configs/adaptive_ccr_aki.json
+  output: runs/adaptive_ccr_aki/eval.parquet
+  status: done
+  notes: Adaptive+CCR for AKI (default seed). Completes adaptive+CCR across all tasks.
+  server: '3090'
+  gpu: 0
+  pid: 1935978
+  started: '2026-04-02 11:40:59'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/adaptive_ccr_aki.json
+  finished: '2026-04-03 07:56:19'
+  results:
+    AUCROC: 0.0525
+    AUCPR: 0.1515
+    loss: -0.1031
+    brier: -0.0116
+    ece: 0.0122
+- name: adaptive_ccr_mortality
+  config: configs/adaptive_ccr_mortality.json
+  output: runs/adaptive_ccr_mortality/eval.parquet
+  status: done
+  notes: Adaptive+CCR for mortality (default seed). Completes adaptive+CCR across all tasks.
+  server: local
+  gpu: 0
+  pid: 57433
+  started: '2026-04-02 11:57:14'
+  finished: '2026-04-02 18:51:35'
+  results:
+    AUCROC: 0.0406
+    AUCPR: 0.0393
+    loss: -0.0501
+    brier: -0.0697
+    ece: -0.105
+- name: adaptive_ccr_aki_seed2
+  config: configs/adaptive_ccr_aki_seed2.json
+  output: runs/adaptive_ccr_aki_seed2/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: Adaptive+CCR AKI seed2 (training_seed=7777).
+  slurm_job_id: '67734'
+  submitted: '2026-04-02 11:41:05'
+- name: adaptive_ccr_mortality_seed2
+  config: configs/adaptive_ccr_mortality_seed2.json
+  output: runs/adaptive_ccr_mortality_seed2/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: Adaptive+CCR mortality seed2 (training_seed=7777).
+  slurm_job_id: '67735'
+  submitted: '2026-04-02 11:41:11'
+- name: afs_aki_seed2
+  config: configs/afs_aki_seed2.json
+  output: runs/afs_aki_seed2/eval.parquet
+  status: done
+  notes: AFS AKI seed2 (training_seed=7777).
+  server: local
+  gpu: 1
+  pid: 57980
+  started: '2026-04-02 11:59:15'
+  finished: '2026-04-03 17:39:00'
+  results:
+    AUCROC: 0.0554
+    AUCPR: 0.1647
+    loss: -0.1087
+    brier: -0.0125
+    ece: 0.0038
+- name: afs_mortality_seed2
+  config: configs/afs_mortality_seed2.json
+  output: runs/afs_mortality_seed2/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: AFS mortality seed2 (training_seed=7777).
+  slurm_job_id: '67738'
+  submitted: '2026-04-02 11:48:40'
+- name: adaptive_ccr_sepsis_seed2_local
+  config: configs/adaptive_ccr_sepsis_seed2_local.json
+  output: runs/adaptive_ccr_sepsis_seed2_local/eval.parquet
+  status: done
+  server: local
+  notes: adaptive+CCR sepsis seed2 TRAINED locally (previous seed2 trained on Athena Blackwell). Resolves GPU confound.
+  gpu: 0
+  pid: 216883
+  started: '2026-04-02 18:51:35'
+  finished: '2026-04-03 05:55:31'
+  results:
+    AUCROC: 0.0519
+    AUCPR: 0.0187
+    loss: -0.1
+    brier: -0.0246
+    ece: -0.0072
+- name: afs_sepsis_seed2_local
+  config: configs/afs_sepsis_seed2_local.json
+  output: runs/afs_sepsis_seed2_local/eval.parquet
+  status: done
+  server: local
+  notes: AFS sepsis seed2 TRAINED locally (previous seed2 trained on Athena Blackwell). Resolves GPU confound.
+  gpu: 0
+  pid: 389362
+  started: '2026-04-03 05:55:31'
+  finished: '2026-04-03 15:18:53'
+  results:
+    AUCROC: 0.0483
+    AUCPR: 0.0216
+    loss: -0.1122
+    brier: -0.0539
+    ece: -0.0418
+- name: sepsis_retr_v4_mmd_seed2
+  config: configs/sepsis_retr_v4_mmd_seed2.json
+  output: runs/sepsis_retr_v4_mmd_seed2/eval.parquet
+  status: done
+  server: local
+  notes: Baseline V4+MMD sepsis with training_seed=7777. Needed for fair 2-seed comparison with V8.
+  gpu: 0
+  pid: 653123
+  started: '2026-04-03 15:18:53'
+  finished: '2026-04-04 01:12:44'
+  results:
+    AUCROC: 0.0384
+    AUCPR: 0.0161
+    loss: -0.0978
+    brier: -0.0736
+    ece: -0.0824
+- name: sepsis_retr_v4_mmd_athena_cal
+  config: configs/sepsis_retr_v4_mmd_athena_cal.json
+  output: runs/sepsis_retr_v4_mmd_athena_cal/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Athena calibration: baseline V4+MMD sepsis, same config as local +0.0512. Measures Athena-vs-local offset.'
+  submitted: '2026-04-02 22:50:04'
+  slurm_job_id: '68142'
+- name: sepsis_retr_v4_mmd_athena_cal
+  config: configs/sepsis_retr_v4_mmd_athena_cal.json
+  output: runs/sepsis_retr_v4_mmd_athena_cal/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Athena calibration: baseline V4+MMD sepsis (local got +0.0512). Measures Athena offset.'
+- name: aki_v5_cross3_athena_cal
+  config: configs/aki_v5_cross3_athena_cal.json
+  output: runs/aki_v5_cross3_athena_cal/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Athena calibration: baseline V5 cross3 AKI (local got +0.0556). Measures Athena offset for AKI.'
+  submitted: '2026-04-02 22:51:57'
+  slurm_job_id: '68143'
+- name: aki_v5_cross3_athena_cal
+  config: configs/aki_v5_cross3_athena_cal.json
+  output: runs/aki_v5_cross3_athena_cal/eval.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Athena calibration: baseline V5 cross3 AKI (local got +0.0556). Measures Athena offset for AKI.'
+- name: ccr_afs_sepsis_eval_fix
+  config: configs/ccr_afs_sepsis.json
+  output: runs/ccr_afs_sepsis_eval_fix/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Re-eval with polars fix (segfault fix)
+  submitted: '2026-04-02 23:07:21'
+  slurm_job_id: '68145'
+- name: ccr_afs_sepsis_seed2_eval_fix
+  config: configs/ccr_afs_sepsis_seed2.json
+  output: runs/ccr_afs_sepsis_seed2_eval_fix/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Re-eval with polars fix (segfault fix)
+  submitted: '2026-04-02 23:07:27'
+  slurm_job_id: '68146'
+- name: adaptive_ccr_sepsis_seed2_eval_fix
+  config: configs/adaptive_ccr_sepsis_seed2.json
+  output: runs/adaptive_ccr_sepsis_seed2_eval_fix/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Re-eval with polars fix (segfault fix)
+  submitted: '2026-04-02 23:07:32'
+  slurm_job_id: '68147'
+- name: afs_sepsis_seed2_eval_fix
+  config: configs/afs_sepsis_seed2.json
+  output: runs/afs_sepsis_seed2_eval_fix/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Re-eval with polars fix (segfault fix)
+  submitted: '2026-04-02 23:07:38'
+  slurm_job_id: '68148'
+- name: adaptive_ccr_aki_seed2_eval_fix
+  config: configs/adaptive_ccr_aki_seed2.json
+  output: runs/adaptive_ccr_aki_seed2_eval_fix/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: Re-eval with polars fix (segfault fix)
+  submitted: '2026-04-02 23:07:44'
+  slurm_job_id: '68149'
+- name: sepsis_retr_v4_mmd_athena_cal_v2
+  config: configs/sepsis_retr_v4_mmd_athena_cal.json
+  output: runs/sepsis_retr_v4_mmd_athena_cal_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Resubmit with graceful IndexError fallback
+  submitted: '2026-04-03 13:03:29'
+  slurm_job_id: '68307'
+- name: aki_v5_cross3_athena_cal_v2
+  config: configs/aki_v5_cross3_athena_cal.json
+  output: runs/aki_v5_cross3_athena_cal_v2/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: Resubmit with graceful IndexError fallback
+  submitted: '2026-04-03 13:03:34'
+  slurm_job_id: '68308'
+- name: ccr_afs_sepsis_eval_fix_v2
+  config: configs/ccr_afs_sepsis.json
+  output: runs/ccr_afs_sepsis_eval_fix_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Resubmit with graceful IndexError fallback
+  submitted: '2026-04-03 13:03:40'
+  slurm_job_id: '68309'
+- name: adaptive_ccr_sepsis_seed2_eval_fix_v2
+  config: configs/adaptive_ccr_sepsis_seed2.json
+  output: runs/adaptive_ccr_sepsis_seed2_eval_fix_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Resubmit with graceful IndexError fallback
+  submitted: '2026-04-03 13:03:46'
+  slurm_job_id: '68310'
+- name: sepsis_cal_v2
+  config: configs/sepsis_retr_v4_mmd_athena_cal.json
+  output: runs/sepsis_cal_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Calibration resubmit with IndexError fix
+  submitted: '2026-04-03 13:05:40'
+  slurm_job_id: '68313'
+- name: aki_cal_v2
+  config: configs/aki_v5_cross3_athena_cal.json
+  output: runs/aki_cal_v2/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: Calibration resubmit with IndexError fix
+  submitted: '2026-04-03 13:05:45'
+  slurm_job_id: '68314'
+- name: sepsis_cal_cu118
+  config: configs/sepsis_retr_v4_mmd_athena_cal.json
+  output: runs/sepsis_cal_cu118/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: Calibration with yaib env (cu118, same as local). L40S/A100 only.
+  submitted: '2026-04-03 13:15:04'
+  slurm_job_id: '68315'
+- name: sepsis_eval_cu118_test
+  config: configs/sepsis_eval_cu118_test.json
+  output: runs/sepsis_eval_cu118_test/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Eval-only: local-trained checkpoint on Athena L40S/A100 cu118. Should match +0.0512.'
+  submitted: '2026-04-03 13:17:38'
+  slurm_job_id: '68317'
+- name: aki_v5_cross3_3090_val
+  config: configs/aki_v5_cross3_3090_val.json
+  output: runs/aki_v5_cross3_3090_val/eval.parquet
+  status: done
+  server: '3090'
+  notes: 'Cross-server validation: AKI best config on 3090. Local baseline: +0.0556.'
+  gpu: 0
+  pid: 2004519
+  started: '2026-04-04 01:24:30'
+  finished: '2026-04-04 15:37:37'
+  results:
+    AUCROC: 0.055
+    AUCPR: 0.1592
+    loss: -0.11
+    brier: -0.0201
+    ece: -0.0046
+- name: aki_v5_cross3_a6000_val
+  config: configs/aki_v5_cross3_a6000_val.json
+  output: runs/aki_v5_cross3_a6000_val/eval.parquet
+  status: done
+  server: a6000
+  notes: 'Cross-server validation: AKI best config on a6000. Local baseline: +0.0556.'
+  gpu: 3
+  pid: 458938
+  started: '2026-04-04 01:12:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_a6000_val.json
+  finished: '2026-04-05 11:43:49'
+  results:
+    AUCROC: 0.0529
+    AUCPR: 0.1555
+    loss: -0.1034
+    brier: -0.0125
+    ece: 0.0018
+- name: mortality_retr_v4_mmd_3090_val
+  config: configs/mortality_retr_v4_mmd_3090_val.json
+  output: runs/mortality_retr_v4_mmd_3090_val/eval.parquet
+  status: done
+  server: '3090'
+  notes: 'Cross-server validation: mortality V4+MMD on 3090. Local: +0.0456, a6000: +0.0470.'
+  gpu: 0
+  pid: 2116859
+  started: '2026-04-05 09:30:00'
+  finished: '2026-04-05 12:41:03'
+  results:
+    AUCROC: 0.0441
+    AUCPR: 0.0478
+    loss: -0.0671
+    brier: -0.0434
+    ece: -0.0683
+- name: aki_eval_cu118_test
+  config: configs/aki_eval_cu118_test.json
+  output: runs/aki_eval_cu118_test/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Eval-only: local-trained AKI checkpoint on Athena L40S cu118. Should match +0.0556.'
+  submitted: '2026-04-04 01:12:15'
+  slurm_job_id: '68441'
+- name: aki_v5_cross3_seed7777
+  config: configs/aki_v5_cross3_seed7777.json
+  output: runs/aki_v5_cross3_seed7777/eval.parquet
+  status: done
+  notes: 'AKI seed variance test. V5 cross3 uses lambda_align=0.5 (same as V4+MMD). Baseline: +0.0556.'
+  server: local
+  gpu: 0
+  pid: 2279543
+  started: '2026-04-04 12:39:08'
+  finished: '2026-04-05 17:37:28'
+  results:
+    AUCROC: 0.0547
+    AUCPR: 0.1657
+    loss: -0.1093
+    brier: -0.0184
+    ece: -0.0049
+- name: aki_v5_cross3_seed42
+  config: configs/aki_v5_cross3_seed42.json
+  output: runs/aki_v5_cross3_seed42/eval.parquet
+  status: athena_pending
+  notes: AKI seed variance test, 3rd seed. If spread < 0.003 AKI is truly stable.
+  server: athena
+  gpu: 1
+  pid: 2279544
+  started: '2026-04-04 12:39:08'
+  slurm_job_id: '68535'
+  submitted: '2026-04-04 12:40:36'
+- name: mortality_retr_v4_mmd_seed7777
+  config: configs/mortality_retr_v4_mmd_seed7777.json
+  output: runs/mortality_retr_v4_mmd_seed7777/eval.parquet
+  status: athena_pending
+  notes: 'Mortality V4+MMD seed test. Has lambda_align=0.5 like sepsis. Local baseline: +0.0456.'
+  server: athena
+  slurm_job_id: '68536'
+  submitted: '2026-04-04 12:40:44'
+- name: sepsis_retr_v4_mmd_seed42
+  config: configs/sepsis_retr_v4_mmd_seed42.json
+  output: runs/sepsis_retr_v4_mmd_seed42/eval.parquet
+  status: done
+  notes: 'Sepsis V4+MMD 3rd seed. Existing: +0.0512 (default), +0.0384 (7777). Spread=0.013.'
+  server: a6000
+  gpu: 0
+  pid: 1584055
+  started: '2026-04-04 18:12:00'
+  finished: '2026-04-05 02:51:23'
+  results:
+    AUCROC: 0.0587
+    AUCPR: 0.024
+    loss: -0.1228
+    brier: -0.0712
+    ece: -0.0746
+- name: sepsis_var_no_mmd
+  config: configs/sepsis_var_no_mmd.json
+  output: runs/sepsis_var_no_mmd/eval.parquet
+  status: done
+  notes: 'ABLATION: V4 without MMD (lambda_align=0). If stable, MMD is the variance source.'
+  server: a6000
+  gpu: 1
+  pid: 1585812
+  started: '2026-04-04 18:14:00'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_var_no_mmd.json
+  finished: '2026-04-05 00:46:41'
+  results:
+    AUCROC: 0.0382
+    AUCPR: 0.0176
+    loss: -0.1063
+    brier: -0.0851
+    ece: -0.0901
+- name: sepsis_var_no_mmd_seed7777
+  config: configs/sepsis_var_no_mmd_seed7777.json
+  output: runs/sepsis_var_no_mmd_seed7777/eval.parquet
+  status: done
+  notes: 'ABLATION seed2: V4 without MMD. Compare spread vs V4+MMD (0.013).'
+  server: a6000
+  gpu: 2
+  pid: 1589713
+  started: '2026-04-04 18:17:00'
+  finished: '2026-04-05 01:35:45'
+  results:
+    AUCROC: 0.0477
+    AUCPR: 0.0194
+    loss: -0.1127
+    brier: -0.082
+    ece: -0.0861
+- name: sepsis_var_mmd_smooth
+  config: configs/sepsis_var_mmd_smooth.json
+  output: runs/sepsis_var_mmd_smooth/eval.parquet
+  status: done
+  notes: 'ABLATION: V4+MMD with lambda_smooth=0.1 restored. Tests if smoothness reduces variance.'
+  server: local
+  gpu: 1
+  pid: 2590684
+  started: '2026-04-04 18:28:10'
+  finished: '2026-04-05 06:15:45'
+  results:
+    AUCROC: 0.0235
+    AUCPR: 0.0148
+    loss: -0.0816
+    brier: -0.0353
+    ece: -0.018
+- name: sepsis_var_mmd_smooth_seed7777
+  config: configs/sepsis_var_mmd_smooth_seed7777.json
+  output: runs/sepsis_var_mmd_smooth_seed7777/eval.parquet
+  status: done
+  notes: 'ABLATION seed2: V4+MMD+smooth. Compare spread vs V4+MMD (0.013).'
+  server: '3090'
+  gpu: 0
+  pid: 2071249
+  started: '2026-04-04 18:28:15'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_var_mmd_smooth_seed7777.json
+  finished: '2026-04-05 01:45:59'
+  results:
+    AUCROC: 0.031
+    AUCPR: 0.0102
+    loss: -0.1017
+    brier: -0.0651
+    ece: -0.0488
+- name: aki_v5_cross3_seed42_eval_local
+  config: configs/aki_v5_cross3_seed42.json
+  output: runs/aki_v5_cross3_seed42/eval.parquet
+  status: done
+  server: local
+  command: translate_and_eval
+  notes: Re-eval AKI seed42 locally (Athena polars crash). Training completed on Athena.
+  gpu: 1
+  pid: 3227032
+  started: '2026-04-05 09:31:55'
+  finished: '2026-04-05 10:00:34'
+  results:
+    AUCROC: 0.0551
+    AUCPR: 0.1562
+    loss: -0.1103
+    brier: -0.0309
+    ece: -0.0242

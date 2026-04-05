@@ -18,8 +18,11 @@ For per-timestep tasks (AKI, Sepsis), predictions are clustered by stay.
 Clustering is inferred from consecutive identical targets or from stay_ids if present.
 """
 import argparse
+import logging
 import sys
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score

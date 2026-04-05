@@ -1226,7 +1226,7 @@ def _print_dry_run(servers, server_slots, running_by_server, pending, experiment
 # Status display
 # ---------------------------------------------------------------------------
 
-def show_status():
+def show_status(show_all: bool = False):
     """Print a human-readable status table."""
     queue = load_queue()
     experiments = queue.get("experiments", [])
@@ -1266,7 +1266,9 @@ def show_status():
         return
 
     # Group by status
-    for status in ["running", "pending", "done", "failed"]:
+    statuses = ["running", "pending", "done", "failed"] if show_all else ["running", "pending"]
+    hidden = sum(1 for e in experiments if e.get("status") in ("done", "failed"))
+    for status in statuses:
         group = [e for e in experiments if e.get("status") == status]
         if not group:
             continue
@@ -1318,6 +1320,8 @@ def show_status():
                 srv_str = f"({srv_name}) " if srv_name and srv_name != "local" else ""
                 print(f"    {name:<35} {srv_str}error: {error}")
 
+    if not show_all and hidden > 0:
+        print(f"\n  ({hidden} done/failed hidden — use --status --all to show)")
     print()
 
 
@@ -1387,6 +1391,28 @@ def add_experiment(name: str, config: str, notes: str = "", server: str = "",
 # Signal handling
 # ---------------------------------------------------------------------------
 
+def _cleanup_ssh_sockets():
+    """Close and remove stale SSH control sockets from a previous scheduler run."""
+    import glob
+    pattern = "/tmp/ssh-sched-*"
+    sockets = glob.glob(pattern)
+    for sock in sockets:
+        # Try graceful close first, then force-remove
+        try:
+            subprocess.run(
+                ["ssh", "-o", f"ControlPath={sock}", "-O", "exit", "dummy"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+        try:
+            os.remove(sock)
+        except OSError:
+            pass
+    if sockets:
+        logging.info(f"Cleaned up {len(sockets)} stale SSH control socket(s)")
+
+
 def _signal_handler(signum, frame):
     global _shutdown
     logging.info(f"Received signal {signum}, shutting down gracefully...")
@@ -1405,6 +1431,8 @@ def main():
     )
     parser.add_argument("--status", action="store_true",
                         help="Show queue status and exit")
+    parser.add_argument("--all", action="store_true",
+                        help="Show done/failed experiments in --status")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would launch without running")
     parser.add_argument("--add", action="store_true",
@@ -1430,7 +1458,7 @@ def main():
         return
 
     if args.status:
-        show_status()
+        show_status(show_all=args.all)
         return
 
     if args.add:
@@ -1447,12 +1475,14 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    _cleanup_ssh_sockets()
     logging.info("Starting GPU scheduler daemon (Ctrl+C to stop)")
     try:
         scheduler_loop()
     except KeyboardInterrupt:
         logging.info("Interrupted, shutting down...")
     finally:
+        _cleanup_ssh_sockets()
         # Wait briefly for any running processes (don't kill them)
         if _running_procs:
             logging.info(

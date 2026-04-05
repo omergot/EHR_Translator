@@ -80,6 +80,11 @@ QOS_TIERS = {
 }
 
 # Partition → conda env mapping. Ordered by preference (idle nodes first).
+# Blackwell/H200 partitions use yaib-cu128 (different PyTorch/CUDA build),
+# producing non-comparable results. They are excluded from defaults but can
+# be requested explicitly via --partition.
+DEFAULT_PARTITIONS = {"l40s-shared", "a100-public"}
+
 PARTITIONS = {
     "rtx6k-shared": {
         "conda_env": "yaib-cu128",
@@ -158,13 +163,14 @@ def _query_idle_gpus(partitions: list[str]) -> dict[str, int]:
 
 
 def select_partitions(qos: str) -> str:
-    """Return comma-separated list of all partitions compatible with this QoS.
+    """Return comma-separated list of default-safe partitions compatible with this QoS.
+    Only partitions in DEFAULT_PARTITIONS are included (yaib cu118 env).
     SLURM will schedule on whichever has a free slot first.
     The job script auto-detects GPU type and activates the right conda env."""
     compatible = [
         name for name, info in
         sorted(PARTITIONS.items(), key=lambda x: x[1]["priority"])
-        if qos in info["compatible_qos"]
+        if qos in info["compatible_qos"] and name in DEFAULT_PARTITIONS
     ]
     if not compatible:
         logging.warning(f"No partition supports QoS '{qos}', falling back to l40s-shared")

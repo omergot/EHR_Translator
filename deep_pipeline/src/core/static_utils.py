@@ -94,8 +94,16 @@ def build_static_matrix_for_dataset(
     if not hasattr(base_dataset, "outcome_df"):
         raise ValueError("Dataset missing outcome_df; cannot align static features")
 
-    stay_ids_series = base_dataset.outcome_df[group_col].unique()
-    stay_ids = [stay_ids_series[idx] for idx in index_map]
+    stay_ids_list = base_dataset.outcome_df[group_col].unique().to_list()
+    try:
+        stay_ids = [stay_ids_list[idx] for idx in index_map]
+    except IndexError:
+        logging.warning(
+            "Index mismatch in static feature alignment: index_map max=%d but %d unique stay IDs. "
+            "Skipping static feature augmentation.",
+            max(index_map) if index_map else -1, len(stay_ids_list),
+        )
+        return None
     order_df = pl.DataFrame({group_col: stay_ids, "_order": list(range(len(stay_ids)))})
 
     if static_df[group_col].dtype != order_df[group_col].dtype:

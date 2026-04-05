@@ -1852,6 +1852,25 @@ class RetrievalTranslatorTrainer:
         self.adaptive_refresh_patience = max(1, _tc.get("adaptive_refresh_patience", 2))
         self.adaptive_refresh_metric = _tc.get("adaptive_refresh_metric", "align")
         self.adaptive_refresh_min_delta = _tc.get("adaptive_refresh_min_delta", 0.001)
+
+        # V8: Class-Conditional Retrieval (CCR)
+        self.ccr_alpha = _tc.get("ccr_alpha", 0.0)
+        if self.ccr_alpha > 0:
+            logging.info("CCR (class-conditional retrieval) enabled: alpha=%.2f", self.ccr_alpha)
+
+        # V8: Adaptive Fidelity Scheduling (AFS)
+        self.fidelity_schedule = _tc.get("fidelity_schedule", None)
+        self.fidelity_decay_start_epoch = _tc.get("fidelity_decay_start_epoch", 5)
+        self.fidelity_decay_end_epoch = _tc.get("fidelity_decay_end_epoch", 40)
+        self.fidelity_min_ratio = max(0.01, _tc.get("fidelity_min_ratio", 0.1))
+        self._initial_lambda_recon = self.lambda_recon
+        if self.fidelity_schedule:
+            logging.info(
+                "AFS enabled: schedule=%s, start=%d, end=%d, min_ratio=%.2f (lambda_recon: %.4f → %.4f)",
+                self.fidelity_schedule, self.fidelity_decay_start_epoch,
+                self.fidelity_decay_end_epoch, self.fidelity_min_ratio,
+                self.lambda_recon, self.lambda_recon * self.fidelity_min_ratio,
+            )
         self._last_refresh_epoch = -999
         self._metric_at_last_refresh = None
         self._refresh_history = []
@@ -2074,6 +2093,25 @@ class RetrievalTranslatorTrainer:
             # Default L1 for backward compat
             return importance_w.abs().mean()
 
+    def _compute_scheduled_lambda_recon(self, epoch: int) -> float:
+        """Compute lambda_recon for the current epoch based on fidelity schedule (AFS)."""
+        if self.fidelity_schedule is None:
+            return self._initial_lambda_recon
+        start = self.fidelity_decay_start_epoch
+        end = self.fidelity_decay_end_epoch
+        min_val = self._initial_lambda_recon * self.fidelity_min_ratio
+        if epoch < start:
+            return self._initial_lambda_recon
+        if epoch >= end:
+            return min_val
+        progress = (epoch - start) / max(end - start, 1)
+        if self.fidelity_schedule == "linear_decay":
+            return self._initial_lambda_recon + (min_val - self._initial_lambda_recon) * progress
+        elif self.fidelity_schedule == "cosine_decay":
+            import math
+            return min_val + (self._initial_lambda_recon - min_val) * 0.5 * (1 + math.cos(math.pi * progress))
+        return self._initial_lambda_recon
+
     def _build_memory_bank(self) -> None:
         """Build/rebuild the MIMIC memory bank using the current encoder."""
         from ..core.retrieval_translator import build_memory_bank
@@ -2085,6 +2123,7 @@ class RetrievalTranslatorTrainer:
             device=self.device,
             window_size=self.retrieval_window,
             window_stride=self.window_stride,
+            store_labels=(self.ccr_alpha > 0),
         )
         self.translator.train()  # restore train mode after build
 
@@ -2215,6 +2254,9 @@ class RetrievalTranslatorTrainer:
                   "label_pred": 0.0, "contrastive": 0.0, "tcr": 0.0}
         n_batches = 0
 
+        # AFS: update lambda_recon based on fidelity schedule
+        self.lambda_recon = self._compute_scheduled_lambda_recon(epoch)
+
         for batch in train_loader:
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
@@ -2231,6 +2273,13 @@ class RetrievalTranslatorTrainer:
                     parts["M_pad"], parts["X_static"],
                 )
 
+                # CCR: compute soft label predictions for class-conditional retrieval
+                _ccr_label_probs = None
+                if self.ccr_alpha > 0 and self.memory_bank is not None:
+                    with torch.no_grad():
+                        _lp_logits = self.translator.predict_labels(src_latent.detach(), parts["M_pad"])
+                        _ccr_label_probs = torch.sigmoid(_lp_logits.float())
+
                 # Per-timestep retrieval from memory bank
                 importance_w = self.translator.get_importance_weights()
                 context = query_memory_bank(
@@ -2240,6 +2289,8 @@ class RetrievalTranslatorTrainer:
                     k_neighbors=self.k_neighbors,
                     retrieval_window=self.retrieval_window,
                     importance_weights=importance_w.detach(),
+                    query_label_probs=_ccr_label_probs,
+                    ccr_alpha=self.ccr_alpha,
                 )
 
                 # Forward with retrieved context (reuse src_latent to avoid double-encode)
@@ -2477,6 +2528,12 @@ class RetrievalTranslatorTrainer:
                     parts["M_pad"], parts["X_static"],
                 )
 
+                # CCR: compute soft label predictions for class-conditional retrieval
+                _ccr_label_probs = None
+                if self.ccr_alpha > 0 and self.memory_bank is not None:
+                    _lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    _ccr_label_probs = torch.sigmoid(_lp_logits.float())
+
                 context = query_memory_bank(
                     src_latent,
                     parts["M_pad"],
@@ -2484,6 +2541,8 @@ class RetrievalTranslatorTrainer:
                     k_neighbors=self.k_neighbors,
                     retrieval_window=self.retrieval_window,
                     importance_weights=importance_w,
+                    query_label_probs=_ccr_label_probs,
+                    ccr_alpha=self.ccr_alpha,
                 )
 
                 x_out, _ = self.translator.forward_with_retrieval(

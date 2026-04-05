@@ -84,6 +84,13 @@ These rules prevent catastrophic failures. Violating any one can silently ruin r
 - Config files: JSON in `configs/` (base) and `experiments/configs/` (experiments).
 - **`_get_training_config()` whitelist** (CRITICAL): This function in `cli.py` explicitly lists all config keys. New training config keys MUST be added here or they are **silently dropped**. This is the #1 source of "config change had no effect" bugs.
 
+## Experiments
+
+- **Check before recomputing**: When checking experiment results, ALWAYS check log files (`experiments/results/*.json`, `runs/*/run.log`) and existing outputs first. Never re-evaluate experiments when results are already available.
+- **Ablation discipline**: When designing ablation experiments, change EXACTLY ONE variable at a time unless explicitly told otherwise. Verify each config diff against the control before queuing.
+- **Remote sync gate**: Before queuing experiments on remote servers, verify that all relevant code changes have been pushed. Run `git log origin/<branch>..HEAD` to check for unpushed commits.
+- **Empirical estimates**: When estimating resource usage (GPU VRAM, disk, compute time), prefer actual measurements from prior runs (`nvidia-smi`, log files) over theoretical calculations. Flag when estimates are theoretical.
+
 ## Config Structure
 
 JSON configs with two main sections:
@@ -119,6 +126,8 @@ The scheduler uses `fcntl.flock()` on `experiments/queue.yaml.lock` for exclusiv
 - Servers with `slurm: true` are **never auto-assigned** by the scheduler. They are managed by `athena_submit.py`.
 - Pinning an experiment to a SLURM server (via `server` field) will log a warning and skip the experiment.
 - `--status` displays active SLURM jobs via `squeue` for SLURM servers.
+- **Distributing pending experiments**: The GPU scheduler only auto-assigns to local/a6000/3090 (non-SLURM). When experiments are pending, distribute them: keep some in queue.yaml (`status: pending`) for the scheduler to pick up on local/remote servers, and submit overflow to Athena via `athena_submit.py` (up to 2 concurrent, QoS limit). Aim for balanced utilization across all servers, not all-to-one. Steps for Athena: (1) `athena_submit.py --sync`, (2) `scp` pretrain checkpoints, (3) `athena_submit.py --config ... --name ...`, (4) mark as `athena_pending` in queue.yaml to prevent double-scheduling.
+- **Athena sepsis eval segfaults**: Athena has a known polars segfault during eval for sepsis task. If training completes but eval crashes, re-eval locally with `command: translate_and_eval`.
 
 ### Screening & Calibration
 Fast-iteration screening system for testing config changes before committing to full runs:

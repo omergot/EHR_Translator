@@ -1761,10 +1761,12 @@ trans_mean = np.mean([v["trans_f1"] for v in results.values()])
 print(f"src={src_mean:.3f} trans={trans_mean:.3f} Δ={trans_mean-src_mean:.3f}")
 ```
 
-#### Merge Status
+#### Merge Status (updated Apr 5)
 
-Worktree `agent-aaf98fa7` (all AdaTime code) has NOT been merged into `da-baselines-v2`. 
-- Local path: `/bigdata/omerg/Thesis/EHR_Translator/.claude/worktrees/agent-aaf98fa7/deep_pipeline/`
-- Do NOT run AdaTime experiments from the main repo — the `src/benchmarks/adatime/` directory only exists in this worktree.
-- Merge when: (a) all ablations complete and results documented, (b) MFD full results in.
-- Merge command: `git merge agent-aaf98fa7` from `da-baselines-v2` branch in the main repo.
+AdaTime code merged into `da-baselines-v2` (commit `966af85`) and then into `master`. 
+`src/benchmarks/adatime/` and `scripts/run_adatime.py` are now in the main repo.
+
+Running ablations still execute from the worktree path and write results to:
+`/bigdata/omerg/Thesis/EHR_Translator/.claude/worktrees/agent-aaf98fa7/deep_pipeline/runs/adatime_cnn/`
+
+When ablations complete, copy result dirs to the main repo's `runs/adatime_cnn/` before documenting.

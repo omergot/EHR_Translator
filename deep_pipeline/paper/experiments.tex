@@ -1,0 +1,44 @@
+\section{Experiments}
+\label{sec:experiments}
+
+% TARGET: ~2.5 pages
+
+% PLACEHOLDER — to be written
+
+\subsection{Setup}
+\label{sec:setup}
+% Datasets: eICU (source), MIMIC-IV (target), HiRID (2nd source)
+% Tasks: Mortality24 (per-stay), AKI (per-timestep), Sepsis (per-timestep),
+%        LoS (per-timestep, regression), KidneyFunction (per-stay, regression)
+% Frozen model: LSTM trained on MIMIC-IV via YAIB benchmark
+% Baselines: 8 DA methods (DANN, CORAL, CoDATS, CDAN, RAINCOAT, CLUDA, fine-tuning, statistics-only)
+% Metrics: AUROC, AUCPR for classification; MAE, MSE for regression
+% Implementation: PyTorch, batch_size=16, early stopping, seeds
+
+\subsection{Main Results}
+\label{sec:main_results}
+% Table 1: All tasks x all methods (ours + 8 baselines + frozen baseline + native models)
+% Key findings:
+%   - Surpasses eICU-native LSTM on all 3 classification tasks
+%   - AKI: surpasses MIMIC-native (+0.056 AUROC)
+%   - Outperforms all 8 DA baselines by 2-4x
+
+\subsection{Multi-Source Generalization}
+\label{sec:multi_source}
+% Table 2: HiRID -> MIMIC results
+% Even larger gains: AKI +0.078, Sepsis +0.078, Mortality +0.047
+
+\subsection{Architecture-Agnostic Transfer}
+\label{sec:mas}
+% Table 3: LSTM-trained translator evaluated on frozen GRU, TCN
+% No retraining needed; 47-86% of LSTM gain preserved
+
+\subsection{Ablation Studies}
+\label{sec:ablations}
+% Table 4: Component ablation (one variable at a time)
+% Key ablations: fidelity loss, cross-attention layers, memory bank, feature gate
+% n_cross_layers analysis: 3 for dense labels, 2 for sparse
+
+% \subsection{Analysis}
+% \label{sec:analysis}
+% Optional: t-SNE/UMAP visualization, training dynamics, gradient analysis

@@ -1,0 +1,29 @@
+\section{Discussion}
+\label{sec:discussion}
+
+% TARGET: ~1 page (including limitations and broader impact)
+
+% PLACEHOLDER — to be written
+
+\paragraph{Why input-space adaptation?}
+% Preserves clinical interpretability
+% Works with any frozen downstream model (practical deployment)
+% Architecture-agnostic transfer as evidence
+
+\paragraph{Why retrieval outperforms feature-space DA.}
+% Instance-level adaptation vs. distribution-level alignment
+% Memory bank provides concrete target exemplars, not just statistics
+% Cross-attention learns which target features to borrow per-instance
+
+\paragraph{Limitations.}
+% 1. Requires target domain data for memory bank (unlabeled sufficient)
+% 2. Memory bank is GPU-resident (memory cost scales with target size)
+% 3. Evaluated on LSTM only as downstream; broader architecture study needed
+% 4. Two EHR source domains; generalization to non-EHR time series not tested
+% 5. n_cross_layers needs task-specific tuning (3 vs 2 based on label density)
+
+\paragraph{Broader impact.}
+% Positive: enables cross-hospital model transfer without sharing patient data
+% The translator only needs aggregate statistics (memory bank), not raw records
+% Risk: translation errors could introduce clinical artifacts
+% Mitigation: fidelity loss constrains output to stay near original

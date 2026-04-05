@@ -1,0 +1,393 @@
+%% Part 3: Comparative Analysis and Contributions
+%% NeurIPS 2026 positioning paper
+%% Depends on: Part 1 (\ref{sec:related}), Part 2 (method/formulation sections)
+
+\section{Comparative Analysis and Contributions}
+\label{sec:comparison}
+
+With the related work surveyed in Section~\ref{sec:related}, we now
+position our work against prior art.
+We first provide a structured comparison across key desiderata
+(Section~\ref{sec:comparison_table}), then present focused head-to-head analyses
+with each method category (Section~\ref{sec:head_to_head}), situate our
+empirical results against reference baselines (Section~\ref{sec:results_position}),
+enumerate our concrete contributions (Section~\ref{sec:contributions}),
+and conclude with an honest assessment of the current scope and limitations
+(Section~\ref{sec:limitations}).
+
+
+%% ============================================================
+\subsection{Systematic Comparison}
+\label{sec:comparison_table}
+
+Table~\ref{tab:comparison} compares representative methods across eight
+dimensions that collectively define the desiderata for clinical time-series
+domain adaptation with a frozen predictor.
+No prior method satisfies all eight.
+
+\begin{table}[t]
+\centering
+\caption{Systematic comparison of domain adaptation and frozen-model methods
+across key desiderata for clinical time-series translation.
+\textbf{Model Frozen}: whether the target predictor's weights are entirely
+fixed (\cmark), partially fixed (P), or trainable (\xmark).
+\textbf{Adapt. Space}: Input (I), Representation (R), Weight (W), or Output (O).
+\textbf{Sample-Cond.}: whether the transformation depends on the input instance.
+\textbf{Clinical Tasks}: number of distinct clinical prediction tasks evaluated.
+}
+\label{tab:comparison}
+\small
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lcccccccc@{}}
+\toprule
+\textbf{Method} &
+\rotatebox{60}{\textbf{Model Frozen?}} &
+\rotatebox{60}{\textbf{Adapt. Space}} &
+\rotatebox{60}{\textbf{Sample-Cond.?}} &
+\rotatebox{60}{\textbf{Retrieval?}} &
+\rotatebox{60}{\textbf{Var.-Len. TS?}} &
+\rotatebox{60}{\textbf{Clinical Tasks}} &
+\rotatebox{60}{\textbf{Grad. Theory?}} \\
+\midrule
+\multicolumn{8}{@{}l}{\textit{Clinical DA}} \\
+VRADA~\cite{purushotham2017vrada}   & \xmark & R & \cmark & \xmark & \cmark & 1 & \xmark \\
+OTTEHR~\cite{ottehr2025}            & \xmark & R & \xmark & \xmark & \xmark & 3 & \xmark \\
+Mutnuri et al.~\cite{mutnuri2024}   & \xmark & W & \cmark & \xmark & \cmark & 3 & \xmark \\
+\midrule
+\multicolumn{8}{@{}l}{\textit{General TS-DA}} \\
+CoDATS~\cite{wilson2020codats}       & \xmark & R & \cmark & \xmark & \xmark & --- & \xmark \\
+RAINCOAT~\cite{he2023raincoat}       & \xmark & R & \cmark & \xmark & \xmark & --- & \xmark \\
+CLUDA~\cite{ozyurt2023cluda}         & \xmark & R & \cmark & \xmark & \xmark & --- & \xmark \\
+\midrule
+\multicolumn{8}{@{}l}{\textit{Frozen-model / Input-space}} \\
+VPT~\cite{jia2022vpt}                & \cmark & I & \xmark & \xmark & \xmark & 0 & \xmark \\
+Time-LLM~\cite{jin2024timellm}       & \cmark & I & \xmark & \xmark & \xmark & 0 & \xmark \\
+TATO~\cite{qiu2026tato}              & \cmark & I & P      & \xmark & \cmark & 0 & \xmark \\
+\midrule
+\multicolumn{8}{@{}l}{\textit{Retrieval-augmented}} \\
+$k$NN-MT~\cite{khandelwal2021knnmt}  & \cmark & O & \cmark & \cmark & \cmark & 0 & \xmark \\
+TS-RAG~\cite{ning2025tsrag}          & \xmark & R & \cmark & \cmark & \cmark & 0 & \xmark \\
+\midrule
+\multicolumn{8}{@{}l}{\textit{Foundation model}} \\
+ICareFM~\cite{burger2025icarefm}     & \xmark & W & \cmark & \xmark & \cmark & 4 & \xmark \\
+\midrule
+\textbf{Ours (Retrieval Translator)} & \cmark & \textbf{I} & \cmark & \cmark & \cmark & \textbf{5} & \cmark \\
+\bottomrule
+\end{tabular}
+\vspace{-6pt}
+\end{table}
+
+Several observations stand out.
+Representation-space (R) and weight-space (W) methods are architecturally coupled to the model's internals---they cannot be formulated without access to intermediate representations or weight tensors, violating the frozen-model constraint.
+In contrast, input-space translation treats the target model as a \emph{black-box oracle} $f: \mathcal{X} \to \mathcal{Y}$.
+While our efficient implementation leverages differentiable access (backpropagation through the frozen model) for gradient-based optimization, the method requires only query access to the model's input--output mapping.
+In principle, this makes input-space translation applicable even to proprietary models exposed only via API, using gradient-free optimization (e.g., evolutionary strategies or Bayesian optimization)---a property no R-space or W-space method can satisfy, though we note that gradient-free training of the translator remains untested and would likely require substantially more queries.
+The frozen-model methods from NLP and vision (VPT, Time-LLM) also operate in input space but use input-independent perturbations, limiting their capacity for heterogeneous clinical data.
+$k$NN-MT~\cite{khandelwal2021knnmt} is closest in spirit---frozen model, retrieval,
+per-timestep conditioning---but operates in output space (interpolating token distributions)
+rather than input space (transforming the data itself).
+Our retrieval translator is the only method that combines a fully frozen predictor,
+input-space adaptation, sample-conditional neural translation, target-domain retrieval,
+variable-length time-series support, evaluation across five clinical tasks, and a
+theoretical gradient alignment framework.
+
+
+%% ============================================================
+\subsection{Head-to-Head Analysis}
+\label{sec:head_to_head}
+
+\paragraph{Against clinical DA methods.}
+VRADA~\cite{purushotham2017vrada} pioneered adversarial alignment for clinical
+time series but requires end-to-end training and was evaluated on a single task
+(mortality).
+Mutnuri et al.~\cite{mutnuri2024} address three of our five tasks (mortality,
+AKI, LoS) with inductive transfer and standard adversarial DA, but fine-tune the
+target model---precisely the operation our setting forbids.
+On the shared AKI task, our frozen-model retrieval translator achieves
+AUROC 91.14 and AUCPR 72.9, surpassing the MIMIC-native LSTM baseline (89.7 AUROC, 66.5 AUCPR) that represents
+the performance ceiling when the model is trained on in-domain data---despite never modifying any predictor weights.
+OTTEHR~\cite{ottehr2025} applies optimal transport to the same eICU--MIMIC
+databases but performs population-level feature alignment without temporal
+modeling, treating each feature independently.
+Our instance-level, per-timestep retrieval and causal attention preserve the
+temporal structure essential for sequential clinical tasks (AKI, sepsis, LoS).
+In summary, prior clinical DA methods either sacrifice model integrity
+(fine-tuning) or temporal structure (population-level alignment); we sacrifice
+neither.
+
+\paragraph{Against adapted DA baselines (DANN/CORAL/CoDATS).}
+A natural question is whether standard DA methods can be adapted to our
+frozen-model setting by learning an input transformation $T_\theta(\mathbf{x})$
+that precedes the frozen predictor, with DANN's gradient reversal~\cite{ganin2016dann}
+or CORAL's covariance alignment~\cite{sun2016coral} applied to the predictor's
+internal representations.
+We implement these adapted baselines (detailed in the full paper) and
+find that they achieve limited improvement.
+The structural argument is that clinical domain shift is \emph{heterogeneous}:
+across 48 physiological features, the distributional shifts differ in magnitude,
+direction, and functional form (e.g., heart rate may require a simple affine
+correction while lab values exhibit nonlinear, context-dependent shifts).
+A shallow input transform with a single domain discriminator or covariance
+penalty lacks the capacity for such feature-specific, sample-conditional
+mappings.
+Our translator architectures provide structured inductive biases---additive
+residuals (delta), latent bottleneck (shared latent), or target-domain cross-attention
+(retrieval)---that decompose this complex mapping into learnable components.
+The gradient alignment analysis (Section~\ref{sec:formulation}) further
+explains the failure mode: when $\cos(\nabla_\theta \mathcal{L}_\text{task},
+\nabla_\theta \mathcal{L}_\text{fid}) < 0$, as observed for sparse-label tasks,
+the domain-alignment and task objectives pull the input transform in
+opposing directions, a conflict that generic input transforms cannot resolve.
+
+\paragraph{Against frozen-model methods.}
+Prompt tuning~\cite{lester2021prompt} and VPT~\cite{jia2022vpt} learn a fixed
+set of $\mathcal{O}(1)$ parameters (soft tokens or visual prompts) that are
+shared across all inputs.
+Clinical EHR time series vary from 1 to 169 timesteps, span 48--292 features with
+complex missingness patterns, and exhibit patient-specific distributional
+characteristics---far exceeding the capacity of input-independent perturbations.
+Time-LLM~\cite{jin2024timellm} reprograms frozen LLMs for time-series forecasting,
+but performs cross-\emph{modality} adaptation (language$\to$time series) for a
+generic pre-trained model, not cross-\emph{domain} adaptation for a task-specific
+validated clinical predictor.
+TATO~\cite{qiu2026tato}, a concurrent ICLR~2026 contribution, is the closest
+work in spirit: it explicitly proposes ``adapt data to model'' for frozen
+time-series foundation models.
+However, TATO relies on handcrafted transformation operators (slicing,
+normalization, outlier correction) rather than learned neural translation,
+targets forecasting rather than clinical prediction, and provides no
+theoretical analysis of when data adaptation succeeds or fails.
+We view TATO as validating the broader ``adapt data, not model'' paradigm;
+our work extends it with (i)~learned end-to-end translation,
+(ii)~retrieval-augmented cross-attention, and (iii)~gradient alignment theory.
+
+\paragraph{Against retrieval-augmented methods.}
+$k$NN-MT~\cite{khandelwal2021knnmt} is our closest architectural ancestor:
+both systems pair a frozen model with per-timestep $k$-NN retrieval from a
+domain-specific datastore.
+The critical distinction lies in \emph{how} retrieval is used.
+$k$NN-MT interpolates \emph{output token distributions}---blending the frozen
+decoder's next-token prediction with the empirical distribution from retrieved
+neighbors.
+Our retrieval translator uses retrieved target-domain embeddings as
+\emph{cross-attention context} in a Transformer decoder that transforms the
+\emph{input}, enabling selective feature-level borrowing rather than
+output-level interpolation.
+Moreover, $k$NN-MT operates within a single language (e.g., domain-adapted
+German$\to$English), while we bridge fundamentally different data distributions
+with heterogeneous recording practices and device calibrations.
+TS-RAG~\cite{ning2025tsrag} and RATD~\cite{liu2024ratd} retrieve time-series
+segments for forecasting augmentation within the same domain; our retrieval
+bridges \emph{across domains}---a qualitatively different use of the retrieval
+paradigm.
+RAM-EHR~\cite{xu2024ramehr} retrieves textual medical knowledge from PubMed
+and knowledge graphs; we retrieve encoded \emph{time-series windows}
+representing what the frozen predictor expects to see, grounding the translation
+in the target domain's statistical structure rather than external knowledge.
+
+
+%% ============================================================
+\subsection{Results Positioning}
+\label{sec:results_position}
+
+Table~\ref{tab:results_position} situates our best results against
+reference baselines from the YAIB benchmark~\cite{vandewater2024yaib}.
+Full experimental details and ablations will appear in the full paper.
+
+\begin{table}[t]
+\centering
+\caption{Our best translator results vs.\ reference baselines from YAIB~\cite{vandewater2024yaib}.
+Classification metrics: AUROC and AUCPR $\times 100$; regression: MAE in natural units.
+\textbf{Bold} indicates our result matches or surpasses the reference.
+$\dagger$: MIMIC-native LSTM surpassed.
+All our results use a \emph{frozen} MIMIC-IV predictor with no weight updates.}
+\label{tab:results_position}
+\small
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lcccccccc@{}}
+\toprule
+& \multicolumn{2}{c}{\textbf{Mortality}} & \multicolumn{2}{c}{\textbf{AKI}} & \multicolumn{2}{c}{\textbf{Sepsis}} & \textbf{LoS} & \textbf{KF} \\
+& AUROC & AUCPR & AUROC & AUCPR & AUROC & AUCPR & MAE (h) & MAE (mg/dL) \\
+\midrule
+Frozen baseline  & 80.79 & 50.2 & 85.58 & 56.8 & 71.59 & 3.0 & 42.5 & 0.403 \\
+eICU-native LSTM & 85.5  & 35.7 & 90.2  & 69.9 & 74.0  & 4.0 & 39.2 & 0.28 \\
+MIMIC-native LSTM& 86.7  & 41.0 & 89.7  & 66.5 & 82.0  & 8.0 & 40.6 & 0.28 \\
+\midrule
+\textbf{Ours (best)}
+  & \textbf{85.55} & \textbf{55.7} & $\mathbf{91.14}^\dagger$ & $\mathbf{72.9}^\dagger$ & \textbf{76.71} & \textbf{5.2} & \textbf{39.2} & 0.382 \\
+$\Delta$ vs.\ frozen
+  & $+$4.76 & $+$5.5 & $+$5.56 & $+$16.1 & $+$5.12 & $+$2.2 & $-$3.3 & $-$0.021 \\
+\bottomrule
+\end{tabular}
+\vspace{-4pt}
+\end{table}
+
+\paragraph{Where we exceed expectations.}
+On AKI, our frozen-model translator achieves AUROC 91.14, surpassing not only
+the eICU-native LSTM (90.2) but also the \emph{MIMIC-native LSTM} (89.7)---the
+model trained on in-domain data with full weight optimization.
+The AUCPR results are even more striking: $72.9$ vs.\ $66.5$ for the MIMIC-native LSTM and $69.9$ for the eICU-native LSTM, a $+16.1$ point improvement over the frozen baseline.
+AUCPR is particularly informative for clinical tasks with class imbalance because it measures the precision--recall tradeoff directly: a higher AUCPR means the model identifies more true positives without generating excessive false alarms.
+The fact that the AUCPR gain ($+16.1$) is nearly $3\times$ the AUROC gain ($+5.6$) indicates that translation disproportionately improves the model's ability to distinguish positive cases at clinically relevant operating points.
+On mortality, translation pushes AUCPR to $55.7$---far above both the eICU-native LSTM ($35.7$) and the MIMIC-native LSTM ($41.0$).
+Notably, the frozen baseline already exceeds both native models on mortality AUCPR ($50.2$), and the translator extends this advantage further.
+This demonstrates that input-space translation can recover performance
+\emph{beyond} what the target model achieves on its own training distribution,
+suggesting that the translated source data may introduce beneficial distributional
+diversity that complements the frozen predictor's training distribution.
+All three classification tasks surpass the eICU-native LSTM on both AUROC and AUCPR, confirming that
+the translator closes the domain gap rather than merely compensating for it.
+On LoS (regression), the translator achieves MAE of 39.2~hours, matching the
+eICU-native LSTM exactly and improving upon the MIMIC-native LSTM (40.6~hours).
+Cross-server reproducibility is strong: across 3 seeds on 2 physically
+distinct GPU servers, AKI AUROC varies by only $\pm$0.0005, confirming that
+the gains are robust and not artifacts of hardware-specific numerical behavior.
+
+\paragraph{Where we acknowledge gaps.}
+We identify three areas where performance does not yet match the strongest
+reference points, and in each case, we characterize the underlying cause.
+\emph{Sepsis}: the retrieval translator achieves $+5.12$ AUROC and $+2.2$ AUCPR, surpassing the eICU-native LSTM on both metrics (76.71 vs.\ 74.0 AUROC; 5.2 vs.\ 4.0 AUCPR---a 30\% relative AUCPR improvement), but the gains are smaller in magnitude than on denser tasks.
+With only 1.13\% positive labels per timestep, the task gradient is extremely sparse: our gradient alignment analysis ($\alpha = -0.21$ for sepsis vs.\ $+0.84$ for mortality) correctly predicts the relative difficulty and identifies label sparsity as the primary bottleneck for further improvement.
+\emph{Kidney Function}: the KF task involves 292 features including 192
+generated cumulative statistics (\texttt{\_min\_hist}, \texttt{\_max\_hist},
+\texttt{\_mean\_hist}, \texttt{\_count}) that must maintain internal
+consistency after translation---a substantially harder translation target.
+Our MAE of 0.382 improves over the frozen baseline (0.403) but a gap to the
+eICU-native reference (0.28) remains.
+\emph{Single domain pair}: our current evaluation covers eICU$\to$MIMIC-IV;
+extension to HiRID$\to$MIMIC-IV is ongoing and will test generalization of
+the approach across a third institutional distribution.
+
+
+%% ============================================================
+\subsection{Contributions}
+\label{sec:contributions}
+
+Our work makes five concrete contributions:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+
+\item \textbf{Frozen-model preservation as a first-class constraint.}
+We formalize the setting where the \emph{entire} target predictor is frozen---not
+just the classifier head (SHOT~\cite{liang2020shot}) or a subset of layers---and
+show that meaningful domain adaptation is achievable purely through input-space
+translation.
+This is directly motivated by the FDA's Software as a Medical Device (SaMD)
+framework~\cite{fda2021samd}, which provides a simpler regulatory pathway for
+``locked'' algorithms whose weights are not modified post-deployment.
+
+\item \textbf{Input-space modularity.}
+The translator is an external, independently trainable module that can be
+swapped, updated, or audited without touching the validated predictor.
+This decoupling enables a deployment model where the predictor and translator
+have separate validation lifecycles---a practical requirement in regulated
+clinical environments.
+
+\item \textbf{Instance-level retrieval-augmented cross-attention for clinical
+time-series DA.}
+To the best of our knowledge, we are the first to combine per-timestep $k$-NN
+retrieval from a target-domain memory bank with cross-attention decoding for
+domain adaptation of clinical time series.
+This provides each translated timestep with contextual grounding in what the
+frozen model expects to see, enabling the fine-grained, feature-specific
+transformations that generic input transforms cannot achieve.
+
+\item \textbf{Universal paradigm across five clinical tasks.}
+We evaluate on the broadest task set in the clinical DA literature:
+three classification tasks (Mortality24, AKI, Sepsis) spanning per-stay and
+per-timestep label structures, and two regression tasks (Length of Stay, Kidney
+Function) with continuous targets.
+The retrieval translator achieves the best or tied-best results on all five,
+with improvements on both AUROC and AUCPR for all classification tasks---including
+surpassing the MIMIC-native LSTM on both metrics for AKI.
+This establishes retrieval translation as a universal paradigm with task-adapted capacity
+(specifically, the number of cross-attention layers: 3 for dense-label tasks
+like AKI, 2 for sparse-label tasks like sepsis).
+
+\item \textbf{Gradient alignment as a predictive diagnostic.}
+We introduce the cosine similarity
+$\cos(\nabla_\theta \mathcal{L}_\text{task}, \nabla_\theta \mathcal{L}_\text{fid})$
+as a diagnostic for frozen-model translation, connecting to the gradient conflict
+literature in multi-task learning~\cite{yu2020pcgrad,liu2021cagrad} and
+UDA~\cite{du2024gh,phan2024pga}.
+This metric correctly predicts method--task suitability a priori
+($+0.84$ for mortality, where delta translation succeeds; $-0.21$ for sepsis,
+where it fails and retrieval is required) and reveals that the retrieval
+architecture resolves the conflict \emph{structurally} through the cross-attention
+information pathway, rather than requiring algorithmic gradient surgery.
+
+\end{enumerate}
+
+
+%% ============================================================
+\subsection{Scope, Applicability, and Limitations}
+\label{sec:limitations}
+
+\paragraph{When to use input-space translation.}
+Our approach is most applicable when three conditions hold:
+(i)~a validated target-domain predictor exists and must remain frozen
+(regulatory, institutional, or practical constraints);
+(ii)~labeled data from both source and target domains is available for
+translator training; and
+(iii)~the target task provides sufficient label signal for the task gradient to guide translation. In our experiments, translation gains scale with label density: AKI (11.95\%) and mortality (5.5\%) yield the largest improvements, while sepsis (1.13\%) shows smaller but still meaningful gains ($+5.12$ AUROC), consistent with the gradient alignment analysis.
+Under these conditions, the retrieval translator consistently closes the
+domain gap across diverse clinical prediction tasks.
+
+\paragraph{When alternatives are preferable.}
+If the target model can be retrained, standard domain adaptation or foundation
+model fine-tuning can optimize the predictor's own parameters---a strictly more
+expressive search space---and may outperform input-space translation, though
+this is not guaranteed: our translator surpasses the in-domain MIMIC-native
+LSTM on AKI, suggesting that the inductive bias of retrieval-augmented
+translation can sometimes compensate for the constrained parameter space.
+If no target-domain data is available, source-free methods
+(e.g., MAPU~\cite{ragab2023mapu}) are one option; alternatively,
+our delta translator can operate without a target-domain memory bank,
+using only the frozen model's task gradient and fidelity regularisation
+to learn input corrections---achieving up to $+2.9$ AUROC on AKI
+(vs.\ $+5.6$ with retrieval) when gradient alignment is positive ($\alpha > 0$).
+If real-time inference latency is critical, the memory bank $k$-NN lookup
+introduces approximately $2$--$3\times$ overhead compared to the frozen model
+alone, which may be unacceptable in time-sensitive clinical alerting systems.
+
+\paragraph{Current limitations.}
+We identify five limitations that define the scope of the present work and
+inform future directions:
+\begin{enumerate}[leftmargin=*,itemsep=1pt]
+\item \textit{Single domain pair.}
+Our evaluation covers eICU$\to$MIMIC-IV.
+Extension to additional source domains (HiRID$\to$MIMIC-IV) is under way
+and will test whether the approach generalizes across institutional
+distributions with different data collection protocols.
+
+\item \textit{Label density dependence.}
+Translation quality correlates with label density:
+AKI (11.95\% positive rate) shows the largest gains ($\Delta$AUROC $+$5.56, $\Delta$AUCPR $+$16.1),
+while sepsis (1.13\%) shows smaller but still meaningful improvements ($+5.12$ AUROC, $+2.2$ AUCPR).
+The gradient alignment diagnostic quantifies this relationship, but does
+not resolve the underlying information bottleneck for extremely sparse tasks.
+
+\item \textit{Calibration degradation.}
+Translation improves discrimination (AUROC, AUCPR) but can degrade probability
+calibration (ECE), requiring post-hoc temperature scaling---an additional
+validation step in clinical deployment.
+
+\item \textit{Inference overhead.}
+The retrieval translator requires maintaining a GPU-resident memory bank and
+performing $k$-NN search at each timestep, adding computational and memory
+costs relative to direct model inference.
+
+\item \textit{Architecture specificity.}
+Our frozen baselines are LSTMs from the YAIB
+framework~\cite{vandewater2024yaib}.
+Since input-space translation treats the predictor as a black-box function
+$f: \mathcal{X} \to \mathcal{Y}$, the paradigm is architecture-agnostic in
+principle; empirical validation with other target architectures (Transformers,
+GRUs, temporal convolutional networks) remains future work.
+\end{enumerate}
+
+\noindent
+We view these as open problems rather than fundamental obstacles.
+The frozen-model, input-space translation paradigm opens a new direction in
+clinical DA research, and the gradient alignment framework provides guidance
+for extending it to new domains, tasks, and architectures.

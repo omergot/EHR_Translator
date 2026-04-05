@@ -1,0 +1,20 @@
+\section{Problem Formulation}
+\label{sec:problem}
+
+% TARGET: ~0.75 pages
+
+% PLACEHOLDER — to be written
+
+% Define:
+% - Source domain D_S (eICU), target domain D_T (MIMIC-IV)
+% - Frozen target model f_T: X_T -> Y, trained on D_T
+% - Goal: learn translator T: X_S -> X_T such that f_T(T(x_S)) performs well
+% - Key constraint: f_T is FROZEN (no gradient updates)
+% - Difference from standard UDA: we adapt inputs, not features or model
+
+% Formal notation:
+% X_S = {x_S^(i), y_S^(i)}_{i=1}^{N_S}  — source labeled data
+% X_T = {x_T^(j)}_{j=1}^{N_T}            — target unlabeled data (or with labels for memory bank)
+% f_T = frozen LSTM trained on D_T
+% T_\theta = translator (learnable)
+% Objective: min_\theta L_task(f_T(T_\theta(x_S)), y_S) + lambda * L_fidelity(T_\theta(x_S), x_S)

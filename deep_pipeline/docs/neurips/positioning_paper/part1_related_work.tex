@@ -1,0 +1,202 @@
+\section{Related Work and Current Methods}
+\label{sec:related}
+
+\paragraph{Domain adaptation in clinical and general time series.}
+Domain adaptation for electronic health records has been approached through
+representation-space alignment~\cite{purushotham2017vrada,zhang2022adadiag,extracare2026},
+optimal transport~\cite{ottehr2025},
+inductive transfer with model fine-tuning~\cite{mutnuri2024,driever2025},
+and data harmonization pipelines~\cite{purushotham2018benchmark,harutyunyan2019multitask}.
+VRADA~\cite{purushotham2017vrada} introduced variational RNNs with adversarial alignment for
+clinical time series but requires end-to-end training of the target model.
+OTTEHR~\cite{ottehr2025} applies optimal transport to the same eICU--MIMIC databases we study,
+yet performs population-level feature alignment without temporal modeling and without any
+frozen-model constraint.
+ExtraCare~\cite{extracare2026}, a concurrent work on interpretable clinical DA through concept-grounded
+orthogonal decomposition, also operates in representation space.
+In the broader time-series DA literature, established methods---CoDATS~\cite{wilson2020codats},
+RAINCOAT~\cite{he2023raincoat}, CLUDA~\cite{ozyurt2023cluda},
+ACON~\cite{liu2024acon}---learn domain-invariant representations through a shared feature
+extractor, typically with adversarial~\cite{wilson2020codats}, contrastive~\cite{ozyurt2023cluda},
+or spectral kernel~\cite{liu2021advskm} objectives.
+ADATIME~\cite{ragab2023adatime} benchmarks eleven such methods across fifty scenarios, all
+operating in representation space.
+MAPU~\cite{ragab2023mapu} addresses the orthogonal constraint of restricted \emph{data} access
+(source-free adaptation) but still modifies the target model.
+A unifying limitation of every method above is the assumption that the target model's
+parameters are trainable: they either fine-tune the predictor or jointly learn a feature
+extractor.
+When the target predictor must remain frozen---as required for regulatory compliance with
+locked clinical algorithms under the FDA's Software as a Medical Device
+(SaMD) framework~\cite{fda2021samd}---these methods are inapplicable,
+motivating input-space adaptation approaches.
+
+\paragraph{Frozen-model adaptation and input-space methods.}
+A growing body of work modifies \emph{inputs} rather than model weights.
+Prompt tuning~\cite{lester2021prompt} learns a fixed soft-token prefix for frozen language models;
+Visual Prompt Tuning (VPT)~\cite{jia2022vpt} extends this to frozen vision transformers.
+Adversarial reprogramming~\cite{elsayed2019reprogramming} repurposes frozen ImageNet classifiers
+via a single universal additive perturbation.
+Voice2Series~\cite{yang2021voice2series} reprograms frozen acoustic models for time-series
+classification, and Time-LLM~\cite{jin2024timellm} reprograms frozen LLMs (GPT-2, LLaMA) for
+time-series forecasting---the most prominent frozen-model work in the time-series literature,
+with over 1000 citations.
+TATO~\cite{qiu2026tato}, a concurrent ICLR~2026 contribution, explicitly proposes
+``adapt data to model'' for frozen time-series foundation models using handcrafted
+transformation operators (slicing, normalization, outlier correction).
+L2C~\cite{chi2025l2c} learns input-space modifications for frozen CLIP at test time.
+PixelDA~\cite{bousmalis2017pixelda} performs input-space DA in vision via GANs but does
+not freeze the downstream model.
+SHOT~\cite{liang2020shot} partially freezes the classifier head while adapting the feature
+extractor; our constraint is stronger in that the \emph{entire} model is frozen.
+Table~\ref{tab:frozen_comparison} summarizes the key distinctions.
+These methods face three limitations in our setting.
+First, prompt tuning, VPT, and reprogramming apply \emph{input-independent} transformations: they learn a single perturbation that is shared identically across all inputs.
+While our translator also has fixed (learned) parameters, its output is \emph{input-conditioned}---each patient's time series receives a distinct transformation adapted to its specific values, length (1 to 169 timesteps), and missingness pattern across 48+ features.
+A universal additive perturbation cannot provide such sample-level adaptation, as the correction needed for one patient's lab values may be entirely inappropriate for another's.
+Second, the vast majority target \emph{task} adaptation (repurposing a model for a new task),
+not \emph{domain} adaptation (translating data from one hospital's distribution to another's).
+Third, handcrafted transforms (TATO) rely on a predefined set of operators (slicing, normalization, outlier correction) applied independently per feature.
+Clinical domain shift, however, involves nonlinear, \emph{context-dependent} distributional differences: the correction required for a lab value depends on concurrent vitals, medications, and the patient's trajectory---interactions that a fixed pipeline of feature-wise operators cannot model.
+To our knowledge, no prior frozen-model work simultaneously incorporates instance-level retrieval from the target domain,
+evaluates on clinical EHR data, and provides theoretical grounding via gradient dynamics.
+These capacity limitations motivate our
+neural translator, which uses instance-level retrieval from the target domain for contextual
+grounding.
+
+\begin{table}[t]
+\centering
+\caption{Comparison of frozen-model and input-space adaptation methods. Our approach is the
+only one that combines sample-conditional neural translation, target-domain retrieval,
+variable-length support, and cross-domain DA for clinical time series.}
+\label{tab:frozen_comparison}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method} & \textbf{Input modification} & \textbf{Sample-cond.} & \textbf{Retrieval} & \textbf{Var.-length} & \textbf{Purpose} \\
+\midrule
+Prompt Tuning~\cite{lester2021prompt} & Fixed prefix & \xmark & \xmark & \xmark & Task adapt. \\
+VPT~\cite{jia2022vpt} & Prepended tokens & \xmark & \xmark & \xmark & Task adapt. \\
+Voice2Series~\cite{yang2021voice2series} & Learned transform & \xmark & \xmark & \xmark & Cross-task \\
+Time-LLM~\cite{jin2024timellm} & Reprogramming layer & \xmark & \xmark & Fixed patches & Cross-modality \\
+TATO~\cite{qiu2026tato} & Handcrafted pipeline & Partially & \xmark & \cmark & Domain adapt. \\
+\textbf{Ours} & \textbf{Neural translator} & \cmark & \cmark & \cmark & \textbf{Cross-domain DA} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Retrieval-augmented models for time series.}
+Retrieval-augmented generation (RAG)~\cite{lewis2020rag} established the paradigm of
+conditioning neural models on retrieved external knowledge.
+$k$NN-LM~\cite{khandelwal2020knnlm} augments a frozen language model with nearest-neighbor
+retrieval from a token-level datastore, achieving domain adaptation by simply swapping the
+datastore---without any model retraining.
+$k$NN-MT~\cite{khandelwal2021knnmt} extends this to machine translation, performing
+per-timestep $k$-NN lookup from a domain-specific datastore and interpolating
+\emph{output token distributions} with the frozen model's predictions.
+RETRO~\cite{borgeaud2022retro} introduced chunked cross-attention over retrieved document
+passages---the closest architectural precedent for our fusion mechanism.
+However, RETRO retrieves passages from the \emph{same} domain to augment language generation,
+whereas we retrieve from the \emph{target} domain to transform \emph{source} inputs,
+making retrieval an instrument of domain translation rather than knowledge augmentation.
+In the time-series literature, retrieval augmentation is an emerging paradigm at top venues:
+RATD~\cite{liu2024ratd} retrieves relevant series to guide diffusion-based forecasting
+(NeurIPS~2024),
+TS-RAG~\cite{ning2025tsrag} augments time-series foundation models with an adaptive
+retrieval mixer (NeurIPS~2025),
+and RAFT~\cite{raft2025} exploits inductive biases from retrieved examples for forecasting
+(ICML~2025).
+RAM-EHR~\cite{xu2024ramehr} retrieves textual medical knowledge from PubMed and
+knowledge graphs to augment EHR predictions, but retrieves \emph{text}, not time-series data.
+Our retrieval translator differs from all prior work in three respects:
+(a)~we retrieve encoded \emph{target-domain time-series windows}---representations of what the
+frozen predictor expects to see---not text passages or output distributions;
+(b)~retrieved windows serve as \emph{cross-attention context} in a Transformer decoder,
+enabling selective feature-level borrowing, rather than being interpolated with output
+distributions ($k$NN-MT) or concatenated with the query (RAG); and
+(c)~the purpose is cross-domain translation, not knowledge augmentation or forecasting.
+$k$NN-MT~\cite{khandelwal2021knnmt} is the closest ancestor: both systems pair a frozen
+model with per-step $k$-NN from a domain-specific store.
+The critical difference is that $k$NN-MT interpolates output token distributions at
+the decoder, operating within a single language, while our retrieval translator uses
+retrieved embeddings as cross-attention context to transform the \emph{input}, bridging
+fundamentally different data distributions (eICU vs.\ MIMIC-IV feature spaces with
+heterogeneous recording practices, device calibrations, and documentation conventions).
+
+\paragraph{Foundation models as an alternative paradigm.}
+Large-scale pre-training offers a complementary path to cross-hospital generalization.
+ICareFM~\cite{burger2025icarefm} pre-trains on 650K ICU stays from multiple hospitals with
+a self-supervised time-to-event objective, achieving zero-shot transfer.
+CLMBR/EHRSHOT~\cite{wornow2023ehrshot} provides a 141M-parameter EHR foundation model
+with strong few-shot evaluation on 6,739 patients.
+LLEMR~\cite{wu2024llemr} instruction-tunes an LLM on 400K+ MIMIC-IV examples.
+Med-BERT~\cite{rasmy2021medbert} and BEHRT~\cite{li2020behrt} pre-train Transformers on
+28.5M and 1.6M patient records, respectively.
+We build directly on the YAIB benchmark framework~\cite{vandewater2024yaib}, whose
+multi-center preprocessing pipeline and five standardized task definitions provide our
+experimental infrastructure and frozen baselines (LSTMs in our experiments, though the input-space translation paradigm is architecture-agnostic).
+Foundation models require (a)~massive multi-center datasets (100K--650K stays),
+(b)~weeks of compute for pre-training, and (c)~replacing the deployed predictor
+entirely, necessitating full regulatory re-validation.
+Our approach is complementary, not competitive: when a hospital has a validated, deployed
+predictor that cannot be retrained due to regulatory, institutional, or practical constraints,
+input-space translation is the only viable adaptation strategy.
+Foundation models and our translators address different points on the
+\emph{deployment constraint spectrum}---from unconstrained model replacement to
+fully frozen predictor preservation.
+
+\paragraph{Domain adaptation theory and gradient dynamics.}
+Ben-David et al.~\cite{bendavid2010} bound target-domain error by
+$\varepsilon_T \leq \varepsilon_S + d_{\mathcal{H}\Delta\mathcal{H}}(\mathcal{S}, \mathcal{T}) + \lambda^*$,
+where $d_{\mathcal{H}\Delta\mathcal{H}}$ measures distribution divergence and $\lambda^*$
+is the ideal joint error.
+Mansour et al.~\cite{mansour2009} refine this via discrepancy distance tailored to the
+loss and hypothesis class; Zhang et al.~\cite{zhang2019mdd} bridge theory and algorithms
+through margin disparity discrepancy.
+Canonical methods operationalize these bounds:
+DANN~\cite{ganin2016dann} minimizes $\mathcal{H}$-divergence via gradient reversal,
+Deep CORAL~\cite{sun2016coral} aligns second-order feature statistics,
+and DAN~\cite{long2015dan} matches multi-kernel MMD~\cite{gretton2012mmd} across layers.
+All require a \emph{learnable} feature extractor.
+In our frozen-model setting, representation-space alignment is impossible by construction: since $\nabla_\phi f_T = 0$, no gradient signal can reshape the frozen model's internal representations, and any alignment objective (MMD, adversarial, CORAL) applied to intermediate layers has no learnable pathway to reduce the domain gap.
+We instead adapt these methods to operate in input space and evaluate them as baselines (detailed in the full paper).
+%
+The multi-objective structure of our training---minimizing task loss $\mathcal{L}_\text{task}$
+(prediction accuracy through the frozen model) and fidelity loss $\mathcal{L}_\text{fid}$
+(proximity to the source distribution) simultaneously---connects to the gradient conflict
+literature in multi-task learning.
+Sener and Koltun~\cite{sener2018moo} frame this as multi-objective optimization;
+PCGrad~\cite{yu2020pcgrad} defines conflict as $\cos(\nabla\mathcal{L}_i, \nabla\mathcal{L}_j) < 0$
+and projects conflicting gradients onto the normal plane;
+CAGrad~\cite{liu2021cagrad} provides convergence guarantees under conflict.
+In the DA literature specifically,
+Du et al.~\cite{du2024gh} analyze obtuse-angle gradients between alignment and classification
+losses in standard UDA and propose gradient rotation (GH/GH++),
+while Phan et al.~\cite{phan2024pga} align per-domain gradients for prompt-based adaptation
+of frozen vision-language models.
+Our contribution extends gradient conflict analysis to the frozen-model DA setting.
+We show that the cosine similarity
+$\cos(\nabla_\theta\mathcal{L}_\text{task}, \nabla_\theta\mathcal{L}_\text{fid})$
+between task and fidelity gradients---measured at the translator parameters $\theta$---is
+a diagnostic that predicts method--task suitability:
+$+0.84$ for mortality (aligned; delta translation suffices) versus $-0.21$ for sepsis
+(conflicting; delta translation fails catastrophically).
+Crucially, where PCGrad and CAGrad intervene \emph{algorithmically} by manipulating gradient
+directions, our retrieval translator resolves the conflict \emph{architecturally}: the
+cross-attention pathway over target-domain windows provides an alternative information
+channel that reduces the dependence of the task gradient on input-space fidelity,
+substantially mitigating the destructive interference without requiring gradient surgery
+(detailed empirical gradient measurements in the full paper).
+
+\medskip
+\noindent
+To summarize, no prior work combines a frozen target predictor, learned neural input-space
+translation, instance-level target-domain retrieval, and gradient alignment theory for
+clinical time-series domain adaptation.
+The frozen-model constraint is motivated by real-world regulatory requirements, yet it
+renders all existing clinical DA methods, general time-series DA methods, and foundation
+model approaches inapplicable without fundamental modification.
+Our retrieval-augmented translator fills this gap: it operates entirely in input space,
+grounds translations in target-domain examples, and provides a theoretical framework
+that explains when and why the approach succeeds.

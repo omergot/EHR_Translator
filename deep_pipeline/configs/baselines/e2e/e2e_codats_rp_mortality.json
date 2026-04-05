@@ -1,0 +1,102 @@
+{
+  "data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/eicu",
+  "target_data_dir": "/bigdata/omerg/Thesis/cohort_data/mortality24/miiv",
+  "baseline_model_dir": "/bigdata/omerg/Thesis/pretrained_models/mimic/Mortality24/LSTM/repetition_0/fold_0",
+  "task_config": "/bigdata/omerg/Thesis/YAIB/configs/tasks/BinaryClassification.gin",
+  "model_config": "/bigdata/omerg/Thesis/YAIB/configs/prediction_models/LSTM.gin",
+  "model_name": "LSTM",
+  "vars": {
+    "GROUP": "stay_id",
+    "LABEL": "label",
+    "SEQUENCE": "time",
+    "DYNAMIC": [
+      "alb",
+      "alp",
+      "alt",
+      "ast",
+      "be",
+      "bicar",
+      "bili",
+      "bili_dir",
+      "bnd",
+      "bun",
+      "ca",
+      "cai",
+      "ck",
+      "ckmb",
+      "cl",
+      "crea",
+      "crp",
+      "dbp",
+      "fgn",
+      "fio2",
+      "glu",
+      "hgb",
+      "hr",
+      "inr_pt",
+      "k",
+      "lact",
+      "lymph",
+      "map",
+      "mch",
+      "mchc",
+      "mcv",
+      "methb",
+      "mg",
+      "na",
+      "neut",
+      "o2sat",
+      "pco2",
+      "ph",
+      "phos",
+      "plt",
+      "po2",
+      "ptt",
+      "resp",
+      "sbp",
+      "temp",
+      "tnt",
+      "urine",
+      "wbc"
+    ],
+    "STATIC": [
+      "age",
+      "sex",
+      "height",
+      "weight"
+    ]
+  },
+  "file_names": {
+    "DYNAMIC": "dyn.parquet",
+    "OUTCOME": "outc.parquet",
+    "STATIC": "sta.parquet"
+  },
+  "paths": {
+    "bounds_csv": "/bigdata/omerg/Thesis/EHR_Translator/deep_pipeline/data/YAIB/feature_stats_miiv_vs_eicu.csv",
+    "static_recipe": "/bigdata/omerg/Thesis/cohort_data/sepsis/eicu/preproc/static_recipe"
+  },
+  "seed": 2222,
+  "device": "cuda",
+  "debug": false,
+  "translator": {
+    "type": "e2e_codats"
+  },
+  "training": {
+    "seq_len": 25,
+    "num_input_channels": 96,
+    "batch_size": 64,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 50,
+    "hidden_size": 128,
+    "dropout": 0.2,
+    "lambda_cls": 1.0,
+    "lambda_adversarial": 1.0,
+    "early_stopping_patience": 15,
+    "pad_side": "right"
+  },
+  "output": {
+    "run_dir": "runs/e2e_codats_rp_mortality",
+    "log_file": "runs/e2e_codats_rp_mortality/run.log"
+  }
+}

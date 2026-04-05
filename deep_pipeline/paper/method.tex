@@ -1,0 +1,39 @@
+\section{Method}
+\label{sec:method}
+
+% TARGET: ~2.5 pages
+
+% PLACEHOLDER — to be written
+
+\subsection{Overview}
+% High-level architecture figure reference
+% Three-phase approach: (1) pretrain autoencoder on target, (2) build memory bank, (3) train translator
+
+\subsection{Shared Encoder and Memory Bank}
+\label{sec:memory_bank}
+% Shared encoder E_\phi maps both source and target windows to latent space
+% Memory bank M = {E_\phi(x_T^(j))} pre-encoded from target domain
+% k-NN retrieval: for each source timestep, find k nearest target windows
+% Naturally causal: retrieval uses only past context
+
+\subsection{Cross-Attention Translation}
+\label{sec:cross_attention}
+% Cross-attention blocks attend over retrieved target examples
+% n_cross_layers is task-dependent (3 for dense labels, 2 for sparse)
+% Decoder produces translated output in input space
+
+\subsection{Training Procedure}
+\label{sec:training}
+% Phase 1: Autoencoder pretrain on target data (reusable checkpoint)
+% Phase 2: End-to-end with frozen downstream model
+%   L = L_task + lambda_f * L_fidelity + lambda_r * L_range + lambda_s * L_smooth
+% L_task: BCE/MSE through frozen model
+% L_fidelity: MSE(translated, original) — prevents catastrophic divergence
+% L_range: penalizes out-of-range values
+% Memory bank refresh every K epochs
+
+\subsection{Design Choices}
+\label{sec:design_choices}
+% Temporal attention mode: causal vs bidirectional (task-dependent)
+% Feature gate: learnable per-feature importance weights
+% Cross-domain normalization: affine renorm of source stats to target

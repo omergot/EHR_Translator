@@ -1,0 +1,49 @@
+# NeurIPS 2026 matplotlib style
+# Usage: plt.style.use('paper/figures/neurips.mplstyle')
+
+# Font — match NeurIPS Times New Roman
+font.family: serif
+font.serif: Times New Roman, Times, DejaVu Serif
+font.size: 9
+mathtext.fontset: stix
+
+# Figure size — NeurIPS single column width = 5.5in
+figure.figsize: 5.5, 3.5
+figure.dpi: 150
+figure.autolayout: True
+
+# Axes
+axes.labelsize: 9
+axes.titlesize: 10
+axes.titleweight: bold
+axes.linewidth: 0.8
+axes.spines.top: False
+axes.spines.right: False
+axes.prop_cycle: cycler('color', ['1f77b4', 'ff7f0e', '2ca02c', 'd62728', '9467bd', '8c564b', 'e377c2', '7f7f7f', 'bcbd22', '17becf'])
+
+# Ticks
+xtick.labelsize: 8
+ytick.labelsize: 8
+xtick.major.width: 0.8
+ytick.major.width: 0.8
+xtick.minor.visible: False
+ytick.minor.visible: False
+
+# Legend
+legend.fontsize: 8
+legend.frameon: False
+legend.borderaxespad: 0.5
+
+# Grid
+grid.alpha: 0.3
+grid.linewidth: 0.5
+
+# Lines
+lines.linewidth: 1.5
+lines.markersize: 5
+
+# Saving — vector PDF for publication
+savefig.dpi: 300
+savefig.format: pdf
+savefig.bbox: tight
+savefig.pad_inches: 0.05

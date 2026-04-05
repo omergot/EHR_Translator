@@ -1,0 +1,16 @@
+\begin{abstract}
+% TARGET: 150-200 words
+% Structure: (1) Problem, (2) Gap, (3) Approach, (4) Key results with numbers, (5) Significance
+%
+% PLACEHOLDER — to be written
+%
+% Key points to cover:
+% - EHR time-series domain adaptation (eICU -> MIMIC-IV) with frozen target-trained model
+% - Input-space translation (not feature-space): preserves clinical interpretability
+% - Retrieval-guided translator: shared encoder + memory bank + cross-attention
+% - Results: surpasses eICU-native LSTM on all 3 classification tasks
+%            AKI surpasses MIMIC-native (+0.056 AUROC)
+% - Outperforms 8 DA baselines (DANN, CORAL, CoDATS, CDAN, RAINCOAT, CLUDA, fine-tuning, statistics-only)
+% - Architecture-agnostic: transfers to GRU/TCN without retraining (47-86% of LSTM gain)
+% - Multi-source: HiRID->MIMIC shows even larger gains (+0.078 AKI, +0.078 Sepsis)
+\end{abstract}

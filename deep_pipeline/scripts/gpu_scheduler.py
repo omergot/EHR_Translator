@@ -16,6 +16,7 @@ Designed to run in a tmux session. Graceful shutdown with Ctrl+C.
 """
 
 import argparse
+import fcntl
 import json
 import logging
 import os
@@ -24,6 +25,7 @@ import signal
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +38,7 @@ except ImportError:
 
 REPO = Path(__file__).resolve().parent.parent
 QUEUE_PATH = REPO / "experiments" / "queue.yaml"
+QUEUE_LOCK_PATH = REPO / "experiments" / "queue.yaml.lock"
 LOG_DIR = REPO / "experiments" / "logs"
 RESULTS_DIR = REPO / "experiments" / "results"
 SCHEDULER_LOG = LOG_DIR / "scheduler.log"
@@ -82,6 +85,7 @@ class ServerConfig:
     repo_path: str = ""
     conda_env: str = "yaib"
     path_mappings: dict[str, str] = field(default_factory=dict)
+    slurm: bool = False  # SLURM-managed servers are skipped by this scheduler
 
     @property
     def is_local(self) -> bool:
@@ -105,6 +109,7 @@ def _parse_servers(settings: dict) -> dict[str, ServerConfig]:
 
     servers = {}
     for name, cfg in servers_cfg.items():
+        name = str(name)  # YAML may parse numeric keys (e.g. 3090) as int
         servers[name] = ServerConfig(
             name=name,
             host=cfg.get("host"),
@@ -114,6 +119,7 @@ def _parse_servers(settings: dict) -> dict[str, ServerConfig]:
             repo_path=cfg.get("repo_path", ""),
             conda_env=cfg.get("conda_env", "yaib"),
             path_mappings=cfg.get("path_mappings", {}),
+            slurm=cfg.get("slurm", False),
         )
     return servers
 
@@ -137,6 +143,20 @@ def setup_logging():
 # ---------------------------------------------------------------------------
 # Queue I/O
 # ---------------------------------------------------------------------------
+
+@contextmanager
+def _queue_lock():
+    """Acquire an exclusive file lock on the queue lock file.
+    Prevents race conditions between concurrent scheduler/add operations."""
+    QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(QUEUE_LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
 
 def load_queue() -> dict:
     if not QUEUE_PATH.exists():
@@ -207,6 +227,8 @@ def _parse_nvidia_smi_output(output: str, threshold_mb: int) -> list[int]:
 
 def get_free_gpus(threshold_mb: int, server: ServerConfig | None = None) -> list[int]:
     """Return GPU indices with memory usage below threshold (local or remote)."""
+    if server is not None and server.slurm:
+        return []  # SLURM servers managed by athena_submit.py, not this scheduler
     if server is not None and not server.is_local:
         return get_free_gpus_remote(server, threshold_mb)
 
@@ -274,7 +296,7 @@ def select_gpus(server: ServerConfig, free_gpus: list[int], running_gpus: set[in
 def infer_task(config_path: str) -> str:
     """Infer task name from config filename."""
     name = Path(config_path).stem.lower()
-    for task in ["mortality", "aki", "sepsis"]:
+    for task in ["mortality", "aki", "sepsis", "los", "kf", "kidney_function"]:
         if task in name:
             return task
     return "unknown"
@@ -303,10 +325,12 @@ def pid_is_alive(pid: int) -> bool:
 
 
 def pid_is_alive_remote(server: ServerConfig, pid: int) -> bool:
-    """Check if a process is alive on a remote server. Conservative: returns True on SSH failure."""
+    """Check if a process is alive on a remote server. Conservative: returns True on SSH failure.
+    Falls back to checking child processes via pgrep -P when kill -0 fails."""
     rc, output = _ssh_run(
         server.host,
-        f"kill -0 {pid} 2>/dev/null && echo ALIVE || echo DEAD",
+        f"kill -0 {pid} 2>/dev/null && echo ALIVE || "
+        f"(pgrep -P {pid} >/dev/null 2>&1 && echo ALIVE || echo DEAD)",
     )
     if rc != 0:
         # SSH failure — assume alive (conservative)
@@ -315,11 +339,13 @@ def pid_is_alive_remote(server: ServerConfig, pid: int) -> bool:
 
 
 def batch_pid_check_remote(server: ServerConfig, pids: list[int]) -> dict[int, bool]:
-    """Check multiple PIDs on a remote server in a single SSH call."""
+    """Check multiple PIDs on a remote server in a single SSH call.
+    Falls back to pgrep -P for child process detection when kill -0 fails."""
     if not pids:
         return {}
     checks = "; ".join(
-        f'kill -0 {pid} 2>/dev/null && echo "{pid} ALIVE" || echo "{pid} DEAD"'
+        f'kill -0 {pid} 2>/dev/null && echo "{pid} ALIVE" || '
+        f'(pgrep -P {pid} >/dev/null 2>&1 && echo "{pid} ALIVE" || echo "{pid} DEAD")'
         for pid in pids
     )
     rc, output = _ssh_run(server.host, checks)
@@ -357,12 +383,21 @@ def recover_stale(experiments: list[dict], servers: dict[str, ServerConfig]):
             remote_groups.setdefault(srv_name, []).append(exp)
         elif server and server.is_local:
             if not pid_is_alive(pid):
-                logging.warning(
-                    f"Stale experiment '{exp['name']}' (PID {pid} dead), marking failed"
-                )
-                exp["status"] = "failed"
-                exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                exp["error"] = "Process died (scheduler restart recovery)"
+                output_path = REPO / exp.get("output", "")
+                if output_path.exists():
+                    logging.info(
+                        f"Stale experiment '{exp['name']}' (PID {pid} dead) — "
+                        f"output exists, marking done"
+                    )
+                    exp["status"] = "done"
+                    exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    logging.warning(
+                        f"Stale experiment '{exp['name']}' (PID {pid} dead), marking failed"
+                    )
+                    exp["status"] = "failed"
+                    exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    exp["error"] = "Process died (scheduler restart recovery)"
 
     # Batch check remote PIDs
     for srv_name, exps in remote_groups.items():
@@ -371,29 +406,52 @@ def recover_stale(experiments: list[dict], servers: dict[str, ServerConfig]):
         alive_map = batch_pid_check_remote(server, pids)
         for exp in exps:
             if not alive_map.get(exp["pid"], True):
-                logging.warning(
-                    f"Stale remote experiment '{exp['name']}' on {srv_name} "
-                    f"(PID {exp['pid']} dead), marking failed"
-                )
-                exp["status"] = "failed"
-                exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                exp["error"] = f"Process died on {srv_name} (scheduler restart recovery)"
+                # Check if output parquet exists on the remote server
+                remote_output = f"{server.repo_path}/{exp.get('output', '')}"
+                rc_out, _ = _ssh_run(server.host, f"test -f {remote_output}")
+                if rc_out == 0:
+                    logging.info(
+                        f"Stale remote experiment '{exp['name']}' on {srv_name} "
+                        f"(PID {exp['pid']} dead) — output exists, marking done"
+                    )
+                    exp["status"] = "done"
+                    exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    logging.warning(
+                        f"Stale remote experiment '{exp['name']}' on {srv_name} "
+                        f"(PID {exp['pid']} dead), marking failed"
+                    )
+                    exp["status"] = "failed"
+                    exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    exp["error"] = f"Process died on {srv_name} (scheduler restart recovery)"
 
 
 # ---------------------------------------------------------------------------
 # Path remapping
 # ---------------------------------------------------------------------------
 
+def _remap_value(value, path_mappings: dict[str, str]):
+    """Recursively remap string values in a JSON-like structure."""
+    if isinstance(value, str):
+        for local_prefix, remote_prefix in path_mappings.items():
+            value = value.replace(local_prefix, remote_prefix)
+        return value
+    elif isinstance(value, dict):
+        return {k: _remap_value(v, path_mappings) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_remap_value(item, path_mappings) for item in value]
+    return value
+
+
 def _remap_config(config_path: str, server: ServerConfig) -> str:
-    """Read a config JSON and remap all paths for the remote server.
+    """Read a config JSON, recursively remap all string path values for the remote server.
     Returns the remapped JSON string."""
     with open(config_path) as f:
-        content = f.read()
+        config = json.load(f)
 
-    for local_prefix, remote_prefix in server.path_mappings.items():
-        content = content.replace(local_prefix, remote_prefix)
+    config = _remap_value(config, server.path_mappings)
 
-    return content
+    return json.dumps(config, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +547,38 @@ def _ensure_remote_worktree(branch: str, server: ServerConfig) -> str | None:
         if rc != 0:
             logging.error(f"Failed to create remote worktree on {server.name}: {out}")
             return None
+
+    # Verify commit hash matches origin/<branch>
+    rc_wt, wt_hash = _ssh_run(server.host, f"git -C {remote_wt} rev-parse HEAD", timeout=10)
+    rc_orig, origin_hash = _ssh_run(
+        server.host, f"git -C {remote_git_root} rev-parse origin/{branch}", timeout=10,
+    )
+    if rc_wt != 0 or rc_orig != 0:
+        logging.warning(f"Could not verify commit hashes on {server.name} for '{branch}'")
+    elif wt_hash.strip() != origin_hash.strip():
+        logging.warning(
+            f"Worktree hash mismatch on {server.name}: "
+            f"worktree={wt_hash.strip()[:12]} vs origin={origin_hash.strip()[:12]}. "
+            f"Force checking out origin/{branch}."
+        )
+        rc, out = _ssh_run(
+            server.host,
+            f"git -C {remote_wt} checkout -f origin/{branch}",
+            timeout=30,
+        )
+        if rc != 0:
+            logging.error(f"Force checkout failed on {server.name}: {out}")
+            return None
+        # Re-verify
+        rc_wt2, wt_hash2 = _ssh_run(server.host, f"git -C {remote_wt} rev-parse HEAD", timeout=10)
+        if rc_wt2 != 0 or wt_hash2.strip() != origin_hash.strip():
+            logging.error(
+                f"Commit hash still mismatched after force checkout on {server.name}. Aborting."
+            )
+            return None
+        logging.info(f"Force checkout succeeded on {server.name}: {wt_hash2.strip()[:12]}")
+    else:
+        logging.info(f"Remote worktree on {server.name} at commit {wt_hash.strip()[:12]}")
 
     rc, _ = _ssh_run(server.host, f"test -d {remote_dp}")
     if rc != 0:
@@ -615,8 +705,9 @@ def launch_experiment_local(exp: dict, gpu: int,
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    run_command = exp.get("command", "train_and_eval")
     cmd = [
-        sys.executable, str(repo / "run.py"), "train_and_eval",
+        sys.executable, str(repo / "run.py"), run_command,
         "--config", config_path,
         "--output_parquet", output_path,
     ]
@@ -688,13 +779,14 @@ def launch_experiment_remote(exp: dict, gpu: int, server: ServerConfig,
     # Conda-activated Python processes keep SSH FDs open, so we can't use
     # subprocess.run (it would block). Instead, fire-and-forget with Popen
     # and read the PID from a file written by the remote shell.
+    run_command = exp.get("command", "train_and_eval")
     pid_file = f"{remote_main}/experiments/.remote_configs/{exp['name']}.pid"
     conda_activate = f"source $HOME/miniforge3/etc/profile.d/conda.sh && conda activate {server.conda_env}"
     launch_cmd = (
         f"{conda_activate} && "
         f"cd {remote_code_dir} && "
         f"CUDA_VISIBLE_DEVICES={gpu} EHR_LOG_FILE={remote_log} "
-        f"nohup python run.py train_and_eval "
+        f"nohup python run.py {run_command} "
         f"--config {remote_config_path} "
         f"--output_parquet {remote_output} "
         f"> {remote_log} 2>&1 & "
@@ -846,9 +938,16 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                 pid = exp.get("pid")
                 if pid and not pid_is_alive(pid):
                     logging.warning(f"Experiment '{name}' PID {pid} no longer running")
-                    exp["status"] = "failed"
                     exp["finished"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    exp["error"] = "Process died (detected during monitoring)"
+                    # Check if experiment actually completed (output file exists)
+                    output_path = REPO / exp.get("output", "")
+                    if output_path.exists():
+                        logging.info(f"Experiment '{name}' output found — marking as done")
+                        exp["status"] = "done"
+                        collect_results(exp, servers)
+                    else:
+                        exp["status"] = "failed"
+                        exp["error"] = "Process died (detected during monitoring)"
                     _running_procs.pop(name, None)
         elif server and not server.is_local:
             # Queue for batch remote check
@@ -881,13 +980,21 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                 success = any(m in tail_lower for m in [
                     "evaluation results", "exported", "evaluation complete", "saved to",
                 ])
-                if success:
+                # Also check if the output parquet exists on the remote server
+                remote_output = f"{server.repo_path}/{exp.get('output', '')}"
+                rc_out, _ = _ssh_run(server.host, f"test -f {remote_output}")
+                output_exists = (rc_out == 0)
+
+                if success or output_exists:
                     exp["status"] = "done"
-                    logging.info(f"  Remote experiment '{name}' completed successfully")
+                    logging.info(f"  Remote experiment '{name}' completed successfully"
+                                 f" (log_markers={success}, output_exists={output_exists})")
                 else:
-                    exp["status"] = "done"
-                    logging.info(f"  Remote experiment '{name}' finished (status uncertain)")
-                collect_results(exp, servers)
+                    exp["status"] = "failed"
+                    exp["error"] = f"Process died on {srv_name} (no success markers in log, no output file)"
+                    logging.warning(f"  Remote experiment '{name}' FAILED — no success markers and no output file")
+                if exp["status"] == "done":
+                    collect_results(exp, servers)
 
 
 # ---------------------------------------------------------------------------
@@ -904,13 +1011,23 @@ def _select_server(
 
     if preferred != "any":
         # Pinned to a specific server
+        server = servers.get(preferred)
+        if server and server.slurm:
+            logging.warning(
+                f"Experiment '{exp['name']}' pinned to SLURM server '{preferred}' — "
+                f"use athena_submit.py instead. Skipping."
+            )
+            return None
         slots = server_slots.get(preferred, [])
         if slots:
             return preferred, slots.pop(0)
         return None
 
-    # Auto-assign: iterate servers in definition order
+    # Auto-assign: iterate servers in definition order, skip SLURM servers
     for srv_name, slots in server_slots.items():
+        server = servers.get(srv_name)
+        if server and server.slurm:
+            continue  # SLURM servers are never auto-assigned
         if slots:
             return srv_name, slots.pop(0)
     return None
@@ -924,15 +1041,16 @@ def scheduler_loop(dry_run: bool = False):
     """Main scheduler loop — poll GPUs, launch pending experiments."""
     global _shutdown
 
-    queue = load_queue()
-    settings = queue.get("settings", {})
-    experiments = queue.get("experiments", [])
-    servers = _parse_servers(settings)
+    with _queue_lock():
+        queue = load_queue()
+        settings = queue.get("settings", {})
+        experiments = queue.get("experiments", [])
+        servers = _parse_servers(settings)
 
-    # Recover stale entries on startup
-    recover_stale(experiments, servers)
-    if not dry_run:
-        save_queue(queue)
+        # Recover stale entries on startup
+        recover_stale(experiments, servers)
+        if not dry_run:
+            save_queue(queue)
 
     logging.info(
         f"Scheduler started — {sum(1 for e in experiments if e.get('status') == 'pending')} pending, "
@@ -946,102 +1064,103 @@ def scheduler_loop(dry_run: bool = False):
     threshold_mb = settings.get("gpu_free_threshold_mb", 1000)
 
     while not _shutdown:
-        # Reload queue (may have been edited externally)
-        try:
-            queue = load_queue()
-            settings = queue.get("settings", {})
-            experiments = queue.get("experiments", [])
-            servers = _parse_servers(settings)
-        except Exception as e:
-            logging.error(f"Failed to reload queue: {e}")
-            time.sleep(poll_interval)
-            continue
-
-        # Check running experiments
-        check_running(experiments, servers)
-
-        # Build per-server available GPU slots
-        # First, find which GPUs each server is already using
-        running_by_server: dict[str, set[int]] = {name: set() for name in servers}
-        for exp in experiments:
-            if exp.get("status") == "running" and "gpu" in exp:
-                srv = exp.get("server", "local")
-                if srv in running_by_server:
-                    running_by_server[srv].add(exp["gpu"])
-
-        # Get free GPUs and compute available slots per server
-        server_slots: dict[str, list[int]] = {}
-        for srv_name, server in servers.items():
-            free_gpus = get_free_gpus(threshold_mb, server)
-            available = select_gpus(server, free_gpus, running_by_server.get(srv_name, set()))
-            server_slots[srv_name] = available
-
-        # Find pending experiments
-        pending = [e for e in experiments if e.get("status") == "pending"]
-
-        if dry_run:
-            _print_dry_run(servers, server_slots, running_by_server, pending, experiments, threshold_mb)
-            return
-
-        # Launch as many as we have GPU slots
-        launched = 0
-        for exp in list(pending):
-            result = _select_server(exp, servers, server_slots)
-            if result is None:
-                continue  # No slots available for this experiment
-
-            srv_name, gpu = result
-            server = servers[srv_name]
-
-            # Resolve branch worktree
-            branch = exp.get("branch")
-            repo_path = REPO
-            config_override = None
-            remote_cwd = None
-            needs_local_worktree = branch and branch != _get_current_branch()
-            # Remote servers ALWAYS need a worktree when branch is specified,
-            # because _get_current_branch() reflects the LOCAL checkout —
-            # the remote default path may have different code.
-            needs_remote_worktree = branch and not server.is_local
-
-            if needs_local_worktree:
-                repo_path = _ensure_local_worktree(branch)
-                if repo_path is None:
-                    exp["status"] = "failed"
-                    exp["error"] = f"Local worktree failed for branch '{branch}'"
-                    continue
-
-            if needs_local_worktree or needs_remote_worktree:
-                config_override = _prepare_worktree_config(exp, repo_path)
-                if config_override is None:
-                    exp["status"] = "failed"
-                    exp["error"] = f"Config preparation failed for branch '{branch}'"
-                    continue
-
-            if needs_remote_worktree:
-                remote_cwd = _ensure_remote_worktree(branch, server)
-                if remote_cwd is None:
-                    exp["status"] = "failed"
-                    exp["error"] = f"Remote worktree failed for branch '{branch}' on {srv_name}"
-                    continue
-
-            # Verify config exists
-            check_path = config_override or str(repo_path / exp["config"])
-            if not Path(check_path).exists():
-                logging.error(
-                    f"Config not found for '{exp['name']}': {check_path}. Skipping."
-                )
-                exp["status"] = "failed"
-                exp["error"] = f"Config not found: {check_path}"
+        with _queue_lock():
+            # Reload queue (may have been edited externally)
+            try:
+                queue = load_queue()
+                settings = queue.get("settings", {})
+                experiments = queue.get("experiments", [])
+                servers = _parse_servers(settings)
+            except Exception as e:
+                logging.error(f"Failed to reload queue: {e}")
+                time.sleep(poll_interval)
                 continue
 
-            if launch_experiment(exp, gpu, server, repo_path=repo_path,
-                                 config_override=config_override, remote_cwd=remote_cwd):
-                launched += 1
-            pending.remove(exp)
+            # Check running experiments
+            check_running(experiments, servers)
 
-        # Save updated queue
-        save_queue(queue)
+            # Build per-server available GPU slots
+            # First, find which GPUs each server is already using
+            running_by_server: dict[str, set[int]] = {name: set() for name in servers}
+            for exp in experiments:
+                if exp.get("status") == "running" and "gpu" in exp:
+                    srv = exp.get("server", "local")
+                    if srv in running_by_server:
+                        running_by_server[srv].add(exp["gpu"])
+
+            # Get free GPUs and compute available slots per server
+            server_slots: dict[str, list[int]] = {}
+            for srv_name, server in servers.items():
+                free_gpus = get_free_gpus(threshold_mb, server)
+                available = select_gpus(server, free_gpus, running_by_server.get(srv_name, set()))
+                server_slots[srv_name] = available
+
+            # Find pending experiments
+            pending = [e for e in experiments if e.get("status") == "pending"]
+
+            if dry_run:
+                _print_dry_run(servers, server_slots, running_by_server, pending, experiments, threshold_mb)
+                return
+
+            # Launch as many as we have GPU slots
+            launched = 0
+            for exp in list(pending):
+                result = _select_server(exp, servers, server_slots)
+                if result is None:
+                    continue  # No slots available for this experiment
+
+                srv_name, gpu = result
+                server = servers[srv_name]
+
+                # Resolve branch worktree
+                branch = exp.get("branch")
+                repo_path = REPO
+                config_override = None
+                remote_cwd = None
+                needs_local_worktree = branch and branch != _get_current_branch()
+                # Remote servers ALWAYS need a worktree when branch is specified,
+                # because _get_current_branch() reflects the LOCAL checkout —
+                # the remote default path may have different code.
+                needs_remote_worktree = branch and not server.is_local
+
+                if needs_local_worktree:
+                    repo_path = _ensure_local_worktree(branch)
+                    if repo_path is None:
+                        exp["status"] = "failed"
+                        exp["error"] = f"Local worktree failed for branch '{branch}'"
+                        continue
+
+                if needs_local_worktree or needs_remote_worktree:
+                    config_override = _prepare_worktree_config(exp, repo_path)
+                    if config_override is None:
+                        exp["status"] = "failed"
+                        exp["error"] = f"Config preparation failed for branch '{branch}'"
+                        continue
+
+                if needs_remote_worktree:
+                    remote_cwd = _ensure_remote_worktree(branch, server)
+                    if remote_cwd is None:
+                        exp["status"] = "failed"
+                        exp["error"] = f"Remote worktree failed for branch '{branch}' on {srv_name}"
+                        continue
+
+                # Verify config exists
+                check_path = config_override or str(repo_path / exp["config"])
+                if not Path(check_path).exists():
+                    logging.error(
+                        f"Config not found for '{exp['name']}': {check_path}. Skipping."
+                    )
+                    exp["status"] = "failed"
+                    exp["error"] = f"Config not found: {check_path}"
+                    continue
+
+                if launch_experiment(exp, gpu, server, repo_path=repo_path,
+                                     config_override=config_override, remote_cwd=remote_cwd):
+                    launched += 1
+                pending.remove(exp)
+
+            # Save updated queue
+            save_queue(queue)
 
         if launched:
             logging.info(f"Launched {launched} experiment(s) this cycle")
@@ -1107,7 +1226,7 @@ def _print_dry_run(servers, server_slots, running_by_server, pending, experiment
 # Status display
 # ---------------------------------------------------------------------------
 
-def show_status():
+def show_status(show_all: bool = False):
     """Print a human-readable status table."""
     queue = load_queue()
     experiments = queue.get("experiments", [])
@@ -1124,6 +1243,18 @@ def show_status():
 
     # Per-server GPU info
     for srv_name, server in servers.items():
+        if server.slurm:
+            host_str = server.host or "localhost"
+            print(f"  [{srv_name}] {host_str}  |  SLURM-managed (use athena_submit.py)")
+            # Query SLURM jobs
+            if server.host:
+                rc, squeue_out = _ssh_run(server.host, "squeue -u $USER -o '%.8i %.30j %.8T %.10M %.6D %R' 2>/dev/null", timeout=15)
+                if rc == 0 and squeue_out.strip():
+                    for line in squeue_out.strip().split("\n"):
+                        print(f"    {line.strip()}")
+                else:
+                    print(f"    (no active SLURM jobs or SSH failed)")
+            continue
         max_gpus = get_max_gpus(server)
         free_gpus = get_free_gpus(threshold_mb, server)
         host_str = server.host or "localhost"
@@ -1135,7 +1266,9 @@ def show_status():
         return
 
     # Group by status
-    for status in ["running", "pending", "done", "failed"]:
+    statuses = ["running", "pending", "done", "failed"] if show_all else ["running", "pending"]
+    hidden = sum(1 for e in experiments if e.get("status") in ("done", "failed"))
+    for status in statuses:
         group = [e for e in experiments if e.get("status") == status]
         if not group:
             continue
@@ -1187,6 +1320,8 @@ def show_status():
                 srv_str = f"({srv_name}) " if srv_name and srv_name != "local" else ""
                 print(f"    {name:<35} {srv_str}error: {error}")
 
+    if not show_all and hidden > 0:
+        print(f"\n  ({hidden} done/failed hidden — use --status --all to show)")
     print()
 
 
@@ -1197,54 +1332,55 @@ def show_status():
 def add_experiment(name: str, config: str, notes: str = "", server: str = "",
                    branch: str = ""):
     """Add a new pending experiment to the queue."""
-    queue = load_queue()
-    experiments = queue.get("experiments", [])
+    with _queue_lock():
+        queue = load_queue()
+        experiments = queue.get("experiments", [])
 
-    # Check for duplicate name
-    existing_names = {e["name"] for e in experiments}
-    if name in existing_names:
-        logging.error(f"Experiment '{name}' already exists in queue")
-        sys.exit(1)
+        # Check for duplicate name
+        existing_names = {e["name"] for e in experiments}
+        if name in existing_names:
+            logging.error(f"Experiment '{name}' already exists in queue")
+            sys.exit(1)
 
-    # Default branch to current
-    if not branch:
-        branch = _get_current_branch()
+        # Default branch to current
+        if not branch:
+            branch = _get_current_branch()
 
-    # Verify config exists (check in worktree if different branch)
-    current = _get_current_branch()
-    if branch and branch != current:
-        wt_dp = _ensure_local_worktree(branch)
-        config_abs = wt_dp / config if wt_dp else REPO / config
-    else:
-        config_abs = REPO / config
-    if not config_abs.exists():
-        logging.warning(f"Config file not found: {config_abs}")
+        # Verify config exists (check in worktree if different branch)
+        current = _get_current_branch()
+        if branch and branch != current:
+            wt_dp = _ensure_local_worktree(branch)
+            config_abs = wt_dp / config if wt_dp else REPO / config
+        else:
+            config_abs = REPO / config
+        if not config_abs.exists():
+            logging.warning(f"Config file not found: {config_abs}")
 
-    task = infer_task(config)
-    output = f"experiments/results/{name}.parquet"
+        task = infer_task(config)
+        output = f"experiments/results/{name}.parquet"
 
-    entry = {
-        "name": name,
-        "config": config,
-        "output": output,
-        "status": "pending",
-    }
-    if branch:
-        entry["branch"] = branch
-    if server:
-        entry["server"] = server
-    if notes:
-        entry["notes"] = notes
+        entry = {
+            "name": name,
+            "config": config,
+            "output": output,
+            "status": "pending",
+        }
+        if branch:
+            entry["branch"] = branch
+        if server:
+            entry["server"] = server
+        if notes:
+            entry["notes"] = notes
 
-    # Insert before first non-pending entry (or at end)
-    insert_idx = len(experiments)
-    for i, exp in enumerate(experiments):
-        if exp.get("status") not in ("pending",):
-            insert_idx = i
-            break
-    experiments.insert(insert_idx, entry)
+        # Insert before first non-pending entry (or at end)
+        insert_idx = len(experiments)
+        for i, exp in enumerate(experiments):
+            if exp.get("status") not in ("pending",):
+                insert_idx = i
+                break
+        experiments.insert(insert_idx, entry)
 
-    save_queue(queue)
+        save_queue(queue)
     srv_str = f", server={server}" if server else ""
     branch_str = f", branch={branch}" if branch else ""
     logging.info(f"Added experiment '{name}' ({task}{srv_str}{branch_str}) at position {insert_idx}")
@@ -1254,6 +1390,28 @@ def add_experiment(name: str, config: str, notes: str = "", server: str = "",
 # ---------------------------------------------------------------------------
 # Signal handling
 # ---------------------------------------------------------------------------
+
+def _cleanup_ssh_sockets():
+    """Close and remove stale SSH control sockets from a previous scheduler run."""
+    import glob
+    pattern = "/tmp/ssh-sched-*"
+    sockets = glob.glob(pattern)
+    for sock in sockets:
+        # Try graceful close first, then force-remove
+        try:
+            subprocess.run(
+                ["ssh", "-o", f"ControlPath={sock}", "-O", "exit", "dummy"],
+                capture_output=True, timeout=5,
+            )
+        except Exception:
+            pass
+        try:
+            os.remove(sock)
+        except OSError:
+            pass
+    if sockets:
+        logging.info(f"Cleaned up {len(sockets)} stale SSH control socket(s)")
+
 
 def _signal_handler(signum, frame):
     global _shutdown
@@ -1273,6 +1431,8 @@ def main():
     )
     parser.add_argument("--status", action="store_true",
                         help="Show queue status and exit")
+    parser.add_argument("--all", action="store_true",
+                        help="Show done/failed experiments in --status")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show what would launch without running")
     parser.add_argument("--add", action="store_true",
@@ -1298,7 +1458,7 @@ def main():
         return
 
     if args.status:
-        show_status()
+        show_status(show_all=args.all)
         return
 
     if args.add:
@@ -1315,12 +1475,14 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
+    _cleanup_ssh_sockets()
     logging.info("Starting GPU scheduler daemon (Ctrl+C to stop)")
     try:
         scheduler_loop()
     except KeyboardInterrupt:
         logging.info("Interrupted, shutting down...")
     finally:
+        _cleanup_ssh_sockets()
         # Wait briefly for any running processes (don't kill them)
         if _running_procs:
             logging.info(

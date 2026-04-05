@@ -11,10 +11,35 @@ from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 import time
 
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau, LambdaLR, SequentialLR
+
 from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
 from ..core.schema import SchemaResolver
 from ..core.mmd import multi_kernel_mmd
+
+
+def _create_lr_scheduler(optimizer, scheduler_type, total_epochs, lr_min=0.0, warmup_epochs=0):
+    """Create an LR scheduler (cosine or plateau) with optional linear warmup."""
+    if scheduler_type is None:
+        return None
+    warmup_sched = None
+    if warmup_epochs > 0:
+        warmup_sched = LambdaLR(
+            optimizer, lr_lambda=lambda ep: min(1.0, (ep + 1) / warmup_epochs)
+        )
+    if scheduler_type == "cosine":
+        cosine_epochs = max(1, total_epochs - warmup_epochs)
+        main_sched = CosineAnnealingLR(optimizer, T_max=cosine_epochs, eta_min=lr_min)
+        if warmup_sched is not None:
+            return SequentialLR(optimizer, [warmup_sched, main_sched], milestones=[warmup_epochs])
+        return main_sched
+    elif scheduler_type == "plateau":
+        # ReduceLROnPlateau doesn't compose well with warmup, skip warmup for this type
+        return ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, min_lr=lr_min)
+    else:
+        logging.warning("Unknown lr_scheduler type '%s', ignoring", scheduler_type)
+        return None
 
 
 def _compute_loader_stats(loader: DataLoader, schema_resolver: "SchemaResolver", device: str):
@@ -94,6 +119,87 @@ def verify_baseline_determinism(
             "Internal LSTM dropout or other noise source is active."
         )
     print(f"[Safety Check] PASSED. Baseline is deterministic (Max Diff: {diff:.2e}).\n")
+
+
+def _gradient_diagnostic(
+    optimizer: torch.optim.Optimizer,
+    translator: nn.Module,
+    x_out: torch.Tensor,
+    l_task: torch.Tensor,
+    l_reg: torch.Tensor,
+    l_range: torch.Tensor,
+    parts: dict,
+    epoch: int,
+    batch_idx: int,
+    reg_label: str = "fid",
+) -> None:
+    """Log gradient magnitude, cosine alignment, and per-timestep gradient analysis.
+
+    Called periodically during training to diagnose task vs regularization gradient
+    dynamics.  Performs 3+1 extra backward passes (retain_graph=True) — caller must
+    zero_grad before the real backward.
+    """
+    all_params = list(translator.parameters())
+
+    def _grad_vec(loss_val):
+        optimizer.zero_grad()
+        if x_out.grad is not None:
+            x_out.grad = None
+        loss_val.backward(retain_graph=True)
+        grads = [p.grad.detach().flatten() if p.grad is not None
+                 else torch.zeros(p.numel(), device=x_out.device)
+                 for p in all_params]
+        return torch.cat(grads)
+
+    task_vec = _grad_vec(l_task)
+    reg_vec = _grad_vec(l_reg)
+    range_vec = _grad_vec(l_range)
+
+    task_norm = task_vec.norm().item()
+    reg_norm = reg_vec.norm().item()
+    range_norm = range_vec.norm().item()
+
+    cos_task_reg = F.cosine_similarity(task_vec.unsqueeze(0), reg_vec.unsqueeze(0)).item()
+
+    logging.info(
+        "[grad-diag] epoch=%d batch=%d task_grad=%.6f %s_grad=%.6f range_grad=%.6f "
+        "ratio_%s/task=%.2f ratio_range/task=%.2f cos_task_%s=%.4f",
+        epoch, batch_idx, task_norm, reg_label, reg_norm, range_norm,
+        reg_label, reg_norm / (task_norm + 1e-12),
+        range_norm / (task_norm + 1e-12),
+        reg_label, cos_task_reg,
+    )
+
+    # Per-timestep gradient analysis
+    if x_out.grad is not None:
+        x_out.grad = None
+    optimizer.zero_grad()
+    l_task.backward(retain_graph=True)
+    if x_out.grad is not None:
+        grad = x_out.grad.detach().float()
+        label_m = parts["M_label"].bool()
+        pad_m = parts["M_pad"]
+        y = parts["y"]
+        pos_mask = (y >= 1) & label_m
+        neg_mask = (y < 1) & label_m
+        unlabeled_mask = (~label_m) & (~pad_m)
+        grad_per_ts = grad.norm(dim=-1)
+        pos_norm = grad_per_ts[pos_mask].mean().item() if pos_mask.any() else 0.0
+        neg_norm = grad_per_ts[neg_mask].mean().item() if neg_mask.any() else 0.0
+        unlabeled_norm = grad_per_ts[unlabeled_mask].mean().item() if unlabeled_mask.any() else 0.0
+        logging.info(
+            "[grad-ts] epoch=%d batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
+            "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
+            epoch, batch_idx, pos_norm, neg_norm, unlabeled_norm,
+            pos_norm / (neg_norm + 1e-12),
+            pos_mask.sum().item(), neg_mask.sum().item(),
+            unlabeled_mask.sum().item(), pad_m.sum().item(),
+        )
+    else:
+        logging.info(
+            "[grad-ts] epoch=%d batch=%d x_out.grad is None (no task grad reached output)",
+            epoch, batch_idx,
+        )
 
 
 class TranslatorTrainer:
@@ -248,11 +354,13 @@ class TransformerTranslatorTrainer:
         run_dir: Path | None = None,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
         training_config: dict | None = None,
+        freeze_baseline: bool = True,
     ) -> None:
         self.yaib_runtime = yaib_runtime
         self.schema_resolver = schema_resolver
         self.translator = translator.to(device)
         self.device = device
+        self.freeze_baseline = freeze_baseline
         self.optimizer = AdamW(self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay)
         self.lambda_fidelity = lambda_fidelity
         self.lambda_range = lambda_range
@@ -270,9 +378,20 @@ class TransformerTranslatorTrainer:
         self.yaib_runtime.load_baseline_model()
         if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             self.yaib_runtime._model = self.yaib_runtime._model.to(device)
-            for param in self.yaib_runtime._model.parameters():
-                param.requires_grad = False
-            self._apply_baseline_speed_safe_mode()
+            if self.freeze_baseline:
+                for param in self.yaib_runtime._model.parameters():
+                    param.requires_grad = False
+                self._apply_baseline_speed_safe_mode()
+            else:
+                # Unfrozen baseline (fine-tuning): add LSTM params to optimizer
+                # and keep model in train() mode with active dropout
+                baseline_params = list(self.yaib_runtime._model.parameters())
+                self.optimizer.add_param_group({"params": baseline_params})
+                self.yaib_runtime._model.train()
+                logging.info(
+                    "Baseline UNFROZEN: %d params added to optimizer (fine-tune mode)",
+                    sum(p.numel() for p in baseline_params),
+                )
 
         self.lower_bounds, self.upper_bounds = self._load_feature_bounds(bounds_csv, schema_resolver.dynamic_features)
         self.lower_bounds = self.lower_bounds.to(device)
@@ -286,6 +405,13 @@ class TransformerTranslatorTrainer:
 
         # Store training config for experiment-specific features
         self._training_config = training_config or {}
+
+        # V6: LR scheduling, grad clipping, grad accumulation
+        self.lr_scheduler_type = self._training_config.get("lr_scheduler", None)
+        self.lr_min = self._training_config.get("lr_min", 0.0)
+        self.lr_warmup_epochs = self._training_config.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = self._training_config.get("grad_clip_norm", 0.0)
+        self.accumulate_grad_batches = max(1, self._training_config.get("accumulate_grad_batches", 1))
 
         # MIMIC target task loss
         self.lambda_target_task = self._training_config.get("lambda_target_task", 0.0)
@@ -575,92 +701,46 @@ class TransformerTranslatorTrainer:
 
             # Gradient magnitude diagnostic (periodic: epoch 0 detailed, then batch 0 at intervals)
             if _do_grad_diag:
-                # Measure per-component gradient norms before the real step
-                def _grad_vec(loss_val):
-                    self.optimizer.zero_grad()
-                    if x_val_out.grad is not None:
-                        x_val_out.grad = None
-                    loss_val.backward(retain_graph=True)
-                    vec = torch.cat([
-                        p.grad.detach().flatten()
-                        for p in self.translator.parameters()
-                        if p.grad is not None
-                    ])
-                    return vec
-
-                task_grad_vec = _grad_vec(l_task)
-                fid_grad_vec = _grad_vec(self.lambda_fidelity * l_fidelity)
-                range_grad_vec = _grad_vec(self.lambda_range * l_range)
-
-                task_grad = task_grad_vec.norm().item()
-                fid_grad = fid_grad_vec.norm().item()
-                range_grad = range_grad_vec.norm().item()
-
-                # Cosine similarity between task and fidelity gradient directions
-                cos_task_fid = F.cosine_similarity(
-                    task_grad_vec.unsqueeze(0), fid_grad_vec.unsqueeze(0)
-                ).item()
-
-                logging.info(
-                    "[grad-diag] epoch=%d batch=%d task_grad=%.6f fid_grad=%.6f range_grad=%.6f "
-                    "ratio_fid/task=%.2f ratio_range/task=%.2f cos_task_fid=%.4f",
-                    epoch, num_batches, task_grad, fid_grad, range_grad,
-                    fid_grad / (task_grad + 1e-12),
-                    range_grad / (task_grad + 1e-12),
-                    cos_task_fid,
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_val_out,
+                    l_task, self.lambda_fidelity * l_fidelity, self.lambda_range * l_range,
+                    parts, epoch, num_batches, reg_label="fid",
                 )
 
-                # Per-timestep gradient analysis on x_val_out
-                if x_val_out.grad is not None:
-                    x_val_out.grad = None
+            if num_batches % self.accumulate_grad_batches == 0:
                 self.optimizer.zero_grad()
-                l_task.backward(retain_graph=True)
-                if x_val_out.grad is not None:
-                    grad = x_val_out.grad.detach().float()  # (B, T, F)
-                    label_m = parts["M_label"].bool()
-                    pad_m = parts["M_pad"]
-                    y = parts["y"]
-                    pos_mask = (y >= 1) & label_m  # positive labeled timesteps
-                    neg_mask = (y < 1) & label_m   # negative labeled timesteps
-                    unlabeled_mask = (~label_m) & (~pad_m)  # non-padded, unlabeled
-                    grad_per_ts = grad.norm(dim=-1)  # (B, T)
-                    pos_norm = grad_per_ts[pos_mask].mean().item() if pos_mask.any() else 0.0
-                    neg_norm = grad_per_ts[neg_mask].mean().item() if neg_mask.any() else 0.0
-                    unlabeled_norm = grad_per_ts[unlabeled_mask].mean().item() if unlabeled_mask.any() else 0.0
-                    n_pos = pos_mask.sum().item()
-                    n_neg = neg_mask.sum().item()
-                    n_unlab = unlabeled_mask.sum().item()
-                    n_pad = pad_m.sum().item()
-                    logging.info(
-                        "[grad-ts] epoch=%d batch=%d pos_norm=%.6f neg_norm=%.6f unlabeled_norm=%.6f "
-                        "ratio_pos/neg=%.2f n_pos=%d n_neg=%d n_unlabeled=%d n_pad=%d",
-                        epoch, num_batches, pos_norm, neg_norm, unlabeled_norm,
-                        pos_norm / (neg_norm + 1e-12),
-                        n_pos, n_neg, n_unlab, n_pad,
-                    )
-                else:
-                    logging.info("[grad-ts] epoch=%d batch=%d x_val_out.grad is None (no task grad reached output)", epoch, num_batches)
-
-            self.optimizer.zero_grad()
             if use_amp:
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t_backward = time.time()
-                self.scaler.scale(l_total).backward()
+                self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 backward_time = time.time() - t_backward
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                if (num_batches + 1) % self.accumulate_grad_batches == 0:
+                    if self.grad_clip_norm > 0:
+                        self.scaler.unscale_(self.optimizer)
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for g in self.optimizer.param_groups for p in g["params"]],
+                            self.grad_clip_norm,
+                        )
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
             else:
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 t_backward = time.time()
-                l_total.backward()
+                (l_total / self.accumulate_grad_batches).backward()
                 if self.device.startswith("cuda"):
                     torch.cuda.synchronize()
                 backward_time = time.time() - t_backward
-                self.optimizer.step()
+                if (num_batches + 1) % self.accumulate_grad_batches == 0:
+                    if self.grad_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            [p for g in self.optimizer.param_groups for p in g["params"]],
+                            self.grad_clip_norm,
+                        )
+                    self.optimizer.step()
 
             if not logged_this_epoch:
                 logging.info(
@@ -692,6 +772,25 @@ class TransformerTranslatorTrainer:
             totals["mmd_trans"] += l_mmd_trans.item()
             totals["target_task"] += l_target_task.item()
             num_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and num_batches % self.accumulate_grad_batches != 0:
+            if use_amp:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                if self.grad_clip_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.optimizer.step()
 
         if num_batches == 0:
             return {k: float("inf") for k in totals}
@@ -823,7 +922,7 @@ class TransformerTranslatorTrainer:
         return {k: v / num_batches for k, v in totals.items()}
 
     def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
-        if hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+        if self.freeze_baseline and hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
             try:
                 sample_batch = next(iter(train_loader))
                 sample_batch = tuple(b.to(self.device) for b in sample_batch)
@@ -833,8 +932,12 @@ class TransformerTranslatorTrainer:
         self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
         logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
         for epoch in range(epochs):
-            logging.info("Epoch %d/%d - training", epoch + 1, epochs)
+            logging.info("Epoch %d/%d - training (lr=%.2e)", epoch + 1, epochs, self.optimizer.param_groups[0]["lr"])
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             logging.info("Epoch %d/%d - validating", epoch + 1, epochs)
             val_metrics = self._validate(val_loader)
@@ -869,6 +972,7 @@ class TransformerTranslatorTrainer:
             self.history.append(
                 {
                     "epoch": epoch + 1,
+                    "lr": self.optimizer.param_groups[0]["lr"],
                     "train_total": train_metrics["total"],
                     "train_task": train_metrics["task"],
                     "train_fidelity": train_metrics["fidelity"],
@@ -888,6 +992,13 @@ class TransformerTranslatorTrainer:
                 }
             )
 
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
+
             candidate = val_metrics["total"] if self.best_metric == "val_total" else val_metrics["task"]
             if candidate < self.best_val:
                 self.best_val = candidate
@@ -900,6 +1011,9 @@ class TransformerTranslatorTrainer:
                     "renorm_scale": self.renorm_scale,
                     "renorm_offset": self.renorm_offset,
                 }
+                # Save baseline model state when fine-tuning (unfrozen)
+                if not self.freeze_baseline and hasattr(self.yaib_runtime, "_model") and self.yaib_runtime._model is not None:
+                    checkpoint["model_state_dict"] = self.yaib_runtime._model.state_dict()
                 torch.save(checkpoint, self.run_dir / "best_translator.pt")
                 logging.info("Saved new best checkpoint to %s", self.run_dir / "best_translator.pt")
                 epochs_without_improvement = 0
@@ -1033,6 +1147,13 @@ class LatentTranslatorTrainer:
         self.lambda_label_pred = _tc.get("lambda_label_pred", 0.0)
         self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
         self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
+
+        # V6: LR scheduling, grad clipping, grad accumulation
+        self.lr_scheduler_type = _tc.get("lr_scheduler", None)
+        self.lr_min = _tc.get("lr_min", 0.0)
+        self.lr_warmup_epochs = _tc.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = _tc.get("grad_clip_norm", 0.0)
+        self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
 
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
@@ -1225,6 +1346,10 @@ class LatentTranslatorTrainer:
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
+            _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
+            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
+                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path ──
                 src_latent = self.translator.encode(
@@ -1232,6 +1357,8 @@ class LatentTranslatorTrainer:
                     parts["M_pad"], parts["X_static"],
                 )
                 x_out = self.translator.decode(src_latent, parts["M_pad"], parts["X_static"])
+                if _do_grad_diag:
+                    x_out.retain_grad()
 
                 # Rebuild YAIB batch and get task loss (cast to float32 for schema rebuild)
                 x_yaib_translated = self.schema_resolver.rebuild(
@@ -1356,10 +1483,25 @@ class LatentTranslatorTrainer:
                     + self.lambda_contrastive_align * l_contrastive
                 )
 
-            self.optimizer.zero_grad()
-            self.scaler.scale(l_total).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if _do_grad_diag:
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_out,
+                    l_task, self.lambda_recon * l_recon, self.lambda_range * l_range,
+                    parts, epoch, n_batches, reg_label="recon",
+                )
+
+            if n_batches % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
+            self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
+            if (n_batches + 1) % self.accumulate_grad_batches == 0:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
@@ -1370,6 +1512,17 @@ class LatentTranslatorTrainer:
             totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
             n_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and n_batches % self.accumulate_grad_batches != 0:
+            if self.grad_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    [p for g in self.optimizer.param_groups for p in g["params"]],
+                    self.grad_clip_norm,
+                )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
 
@@ -1547,16 +1700,23 @@ class LatentTranslatorTrainer:
 
         # Phase 2: Joint training
         logging.info("=== Phase 2: Joint training (%d epochs) ===", epochs)
+        self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
+        logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
         for epoch in range(epochs):
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f (lr=%.2e)",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
                 train_metrics["align"], train_metrics["recon"], train_metrics["range"],
                 train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
+                self.optimizer.param_groups[0]["lr"],
             )
             logging.info(
                 "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f target_task=%.4f label_pred=%.4f",
@@ -1567,9 +1727,17 @@ class LatentTranslatorTrainer:
 
             self.history.append({
                 "epoch": epoch + 1,
+                "lr": self.optimizer.param_groups[0]["lr"],
                 **{f"train_{k}": v for k, v in train_metrics.items()},
                 **{f"val_{k}": v for k, v in val_metrics.items()},
             })
+
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
             if candidate < self.best_val:
@@ -1662,6 +1830,61 @@ class RetrievalTranslatorTrainer:
         self.importance_reg_type = _tc.get("importance_reg_type", "l1")
         self.lambda_contrastive_align = _tc.get("lambda_contrastive_align", 0.0)
         self.recon_positive_boost = _tc.get("recon_positive_boost", 0.0)
+
+        # V6: LR scheduling, grad clipping, self-retrieval, grad accumulation
+        self.lr_scheduler_type = _tc.get("lr_scheduler", None)
+        self.lr_min = _tc.get("lr_min", 0.0)
+        self.lr_warmup_epochs = _tc.get("lr_warmup_epochs", 0)
+        self.grad_clip_norm = _tc.get("grad_clip_norm", 0.0)
+        self.phase1_self_retrieval = _tc.get("phase1_self_retrieval", False)
+        self.phase1_memory_refresh_epochs = _tc.get(
+            "phase1_memory_refresh_epochs", self.memory_refresh_epochs
+        )
+        self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
+
+        # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline
+        self.lambda_tcr = _tc.get("lambda_tcr", 0.0)
+        # V7 (NeurIPS): FJS — Jacobian-initialized feature gate
+        self.jacobian_init = _tc.get("jacobian_init", False)
+
+        # V7: Adaptive memory bank refresh
+        self.adaptive_refresh = _tc.get("adaptive_refresh", False)
+        self.adaptive_refresh_patience = max(1, _tc.get("adaptive_refresh_patience", 2))
+        self.adaptive_refresh_metric = _tc.get("adaptive_refresh_metric", "align")
+        self.adaptive_refresh_min_delta = _tc.get("adaptive_refresh_min_delta", 0.001)
+
+        # V8: Class-Conditional Retrieval (CCR)
+        self.ccr_alpha = _tc.get("ccr_alpha", 0.0)
+        if self.ccr_alpha > 0:
+            logging.info("CCR (class-conditional retrieval) enabled: alpha=%.2f", self.ccr_alpha)
+
+        # V8: Adaptive Fidelity Scheduling (AFS)
+        self.fidelity_schedule = _tc.get("fidelity_schedule", None)
+        self.fidelity_decay_start_epoch = _tc.get("fidelity_decay_start_epoch", 5)
+        self.fidelity_decay_end_epoch = _tc.get("fidelity_decay_end_epoch", 40)
+        self.fidelity_min_ratio = max(0.01, _tc.get("fidelity_min_ratio", 0.1))
+        self._initial_lambda_recon = self.lambda_recon
+        if self.fidelity_schedule:
+            logging.info(
+                "AFS enabled: schedule=%s, start=%d, end=%d, min_ratio=%.2f (lambda_recon: %.4f → %.4f)",
+                self.fidelity_schedule, self.fidelity_decay_start_epoch,
+                self.fidelity_decay_end_epoch, self.fidelity_min_ratio,
+                self.lambda_recon, self.lambda_recon * self.fidelity_min_ratio,
+            )
+        self._last_refresh_epoch = -999
+        self._metric_at_last_refresh = None
+        self._refresh_history = []
+
+        # Guard: if adaptive + align metric but no MMD loss, fall back to recon
+        if self.adaptive_refresh and self.adaptive_refresh_metric == "align" and self.lambda_align <= 0:
+            logging.warning(
+                "adaptive_refresh_metric='align' but lambda_align=0 (val_align always 0). "
+                "Falling back to metric='recon'."
+            )
+            self.adaptive_refresh_metric = "recon"
+
+        if self.lambda_tcr > 0:
+            logging.info("TCR (target context reconstruction) enabled: lambda_tcr=%.4f", self.lambda_tcr)
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
@@ -1674,6 +1897,20 @@ class RetrievalTranslatorTrainer:
             logging.info("Positive-weighted reconstruction enabled: boost=%.1f", self.recon_positive_boost)
         if self.lambda_align > 0:
             logging.info("Latent MMD alignment enabled: lambda_align=%.4f", self.lambda_align)
+        if self.phase1_self_retrieval:
+            logging.info("Phase 1 self-retrieval enabled (refresh every %d epochs)", self.phase1_memory_refresh_epochs)
+        if self.lr_scheduler_type:
+            logging.info("LR scheduler: %s (min=%.1e, warmup=%d)", self.lr_scheduler_type, self.lr_min, self.lr_warmup_epochs)
+        if self.grad_clip_norm > 0:
+            logging.info("Gradient clipping: max_norm=%.1f", self.grad_clip_norm)
+        if self.accumulate_grad_batches > 1:
+            logging.info("Gradient accumulation: %d batches", self.accumulate_grad_batches)
+        if self.adaptive_refresh:
+            logging.info(
+                "Adaptive memory refresh enabled: metric=%s, min_delta=%.4f, patience=%d",
+                self.adaptive_refresh_metric, self.adaptive_refresh_min_delta,
+                self.adaptive_refresh_patience,
+            )
 
         # Load and freeze baseline (before feature gate, so LSTM weights are available)
         self.yaib_runtime.load_baseline_model()
@@ -1703,7 +1940,10 @@ class RetrievalTranslatorTrainer:
             from ..core.feature_gate import FeatureGate
             num_features = len(schema_resolver.dynamic_features)
             init_logits = None
-            if _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
+            if self.jacobian_init and hasattr(self.yaib_runtime, "_model"):
+                init_logits = self._compute_jacobian_sensitivity(num_features)
+                logging.info("FJS: Jacobian-initialized feature gate enabled")
+            elif _tc.get("lstm_informed_gate", False) and hasattr(self.yaib_runtime, "_model"):
                 from ..core.lstm_importance import extract_lstm_feature_importance
                 init_logits = extract_lstm_feature_importance(
                     self.yaib_runtime._model,
@@ -1737,6 +1977,55 @@ class RetrievalTranslatorTrainer:
         self.best_state = None
         self.history: list[dict] = []
         self.memory_bank = None
+
+    def _compute_jacobian_sensitivity(self, num_features: int) -> torch.Tensor:
+        """FJS: Compute frozen model's per-feature input sensitivity via Jacobian.
+
+        Returns init_logits (num_features,) suitable for FeatureGate initialization.
+        Computes |∂loss/∂x_yaib| averaged over MIMIC batches, then extracts the
+        dynamic feature columns to get per-translator-feature sensitivity.
+        """
+        from itertools import islice
+        logging.info("FJS: Computing frozen model Jacobian sensitivity...")
+        sensitivities = []
+        model = self.yaib_runtime._model
+        was_training = model.training
+
+        for batch in islice(self.target_train_loader, 50):
+            batch = tuple(b.to(self.device) for b in batch)
+            parts = self.schema_resolver.extract(batch)
+            # Work directly on the YAIB-format tensor to avoid rebuild grad issues
+            x_yaib = parts["X_yaib"].clone().detach().float().requires_grad_(True)
+            label_mask = parts["M_label"].bool()
+            with torch.enable_grad():
+                model.train()  # cuDNN RNN backward requires train mode
+                logits = self.yaib_runtime.forward((x_yaib, parts["y"], label_mask))
+                loss = self.yaib_runtime.compute_loss(
+                    logits.float(), (x_yaib, parts["y"], label_mask)
+                ).float()
+                grad = torch.autograd.grad(loss, x_yaib)[0]  # (B, T, F_yaib)
+            mask = ~parts["M_pad"].bool()
+            abs_grad = grad.abs().float()
+            abs_grad[~mask] = 0.0
+            n_valid = mask.float().sum(dim=1, keepdim=True).clamp(min=1)  # (B, 1)
+            # Per-YAIB-feature mean absolute gradient: (B, F) / (B, 1) broadcasts
+            feat_sens = (abs_grad.sum(dim=1) / n_valid).mean(dim=0)  # (F_yaib,)
+            # Extract only the dynamic feature columns (first num_features)
+            sensitivities.append(feat_sens[:num_features].detach())
+
+        if was_training:
+            model.train()
+        if not sensitivities:
+            logging.warning("FJS: No valid batches, falling back to zero init")
+            return None
+        S = torch.stack(sensitivities).mean(0)  # (num_features,)
+        S = S / S.max().clamp(min=1e-8)  # normalize to [0, 1]
+        # Convert to logits: logit(S) = log(S / (1-S)), clamped for stability
+        S_clamped = S.clamp(0.05, 0.95)
+        init_logits = torch.log(S_clamped / (1.0 - S_clamped))
+        logging.info("FJS: Sensitivity range [%.4f, %.4f], logit range [%.4f, %.4f]",
+                      S.min().item(), S.max().item(), init_logits.min().item(), init_logits.max().item())
+        return init_logits.cpu()
 
     def _label_pred_loss(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         if self.task_type == "regression":
@@ -1804,6 +2093,25 @@ class RetrievalTranslatorTrainer:
             # Default L1 for backward compat
             return importance_w.abs().mean()
 
+    def _compute_scheduled_lambda_recon(self, epoch: int) -> float:
+        """Compute lambda_recon for the current epoch based on fidelity schedule (AFS)."""
+        if self.fidelity_schedule is None:
+            return self._initial_lambda_recon
+        start = self.fidelity_decay_start_epoch
+        end = self.fidelity_decay_end_epoch
+        min_val = self._initial_lambda_recon * self.fidelity_min_ratio
+        if epoch < start:
+            return self._initial_lambda_recon
+        if epoch >= end:
+            return min_val
+        progress = (epoch - start) / max(end - start, 1)
+        if self.fidelity_schedule == "linear_decay":
+            return self._initial_lambda_recon + (min_val - self._initial_lambda_recon) * progress
+        elif self.fidelity_schedule == "cosine_decay":
+            import math
+            return min_val + (self._initial_lambda_recon - min_val) * 0.5 * (1 + math.cos(math.pi * progress))
+        return self._initial_lambda_recon
+
     def _build_memory_bank(self) -> None:
         """Build/rebuild the MIMIC memory bank using the current encoder."""
         from ..core.retrieval_translator import build_memory_bank
@@ -1815,15 +2123,69 @@ class RetrievalTranslatorTrainer:
             device=self.device,
             window_size=self.retrieval_window,
             window_stride=self.window_stride,
+            store_labels=(self.ccr_alpha > 0),
         )
         self.translator.train()  # restore train mode after build
 
+    def _get_refresh_metric(self, val_metrics: dict) -> float:
+        """Extract the tracked metric value from validation metrics."""
+        if self.adaptive_refresh_metric == "both":
+            return val_metrics.get("align", 0.0) + val_metrics.get("recon", 0.0)
+        elif self.adaptive_refresh_metric == "align":
+            return val_metrics.get("align", 0.0)
+        else:  # "recon"
+            return val_metrics.get("recon", 0.0)
+
+    def _update_refresh_baseline(self, val_metrics: dict | None) -> None:
+        """Record the metric value at the time of last refresh."""
+        if val_metrics is None:
+            self._metric_at_last_refresh = None
+            return
+        self._metric_at_last_refresh = self._get_refresh_metric(val_metrics)
+
+    def _should_refresh_memory_bank(self, epoch: int, val_metrics: dict | None) -> tuple[bool, str]:
+        """Decide whether to rebuild the memory bank.
+
+        Returns: (should_refresh, reason)
+        """
+        if self.memory_bank is None:
+            return True, "initial_build"
+
+        # Fixed interval mode (backward compat)
+        if not self.adaptive_refresh:
+            if epoch % self.memory_refresh_epochs == 0:
+                return True, "fixed_interval"
+            return False, "fixed_not_due"
+
+        # Adaptive mode: check validation metric improvement
+        epochs_since = epoch - self._last_refresh_epoch
+        if epochs_since < self.adaptive_refresh_patience:
+            return False, "patience"
+
+        if val_metrics is None or self._metric_at_last_refresh is None:
+            return True, "no_baseline"
+
+        # Lower is better for both align and recon
+        current = self._get_refresh_metric(val_metrics)
+        improvement = self._metric_at_last_refresh - current  # positive = improved
+        if improvement > self.adaptive_refresh_min_delta:
+            return True, f"improved_{self.adaptive_refresh_metric}"
+
+        return False, "no_improvement"
+
     def _pretrain_epoch(self, target_loader: DataLoader) -> dict:
-        """Autoencoder pretraining on MIMIC target data."""
+        """Autoencoder pretraining on MIMIC target data.
+
+        When phase1_self_retrieval is enabled, builds a MIMIC memory bank from the
+        encoder's own representations and uses it to provide real context to
+        cross-attention blocks during pretraining (instead of zero tensors).
+        """
+        from ..core.retrieval_translator import query_memory_bank
         self.translator.train()
         total_recon = 0.0
         total_label_pred = 0.0
         n_batches = 0
+        use_self_retrieval = self.phase1_self_retrieval and self.memory_bank is not None
 
         for batch in target_loader:
             batch = tuple(b.to(self.device) for b in batch)
@@ -1834,7 +2196,25 @@ class RetrievalTranslatorTrainer:
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                 )
-                x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
+
+                if use_self_retrieval:
+                    # Self-retrieval: use the memory bank to provide real context
+                    importance_w = self.translator.get_importance_weights()
+                    context = query_memory_bank(
+                        latent.detach(),  # safety: prevent backprop through k-NN
+                        parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w.detach(),
+                    )
+                    x_out = self.translator.decode_with_context(
+                        latent, context, parts["M_pad"], parts["X_static"],
+                    )
+                else:
+                    # Standard zero-context decode (backward compat)
+                    x_out = self.translator.decode(latent, parts["M_pad"], parts["X_static"])
+
                 mask = ~parts["M_pad"].bool()
                 diff = (x_out.float() - parts["X_val"].float()) ** 2
                 l_recon = diff.sum(dim=-1)[mask].mean() if mask.any() else diff.new_tensor(0.0)
@@ -1871,13 +2251,20 @@ class RetrievalTranslatorTrainer:
         self.translator.train()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
                   "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
-                  "label_pred": 0.0, "contrastive": 0.0}
+                  "label_pred": 0.0, "contrastive": 0.0, "tcr": 0.0}
         n_batches = 0
+
+        # AFS: update lambda_recon based on fidelity schedule
+        self.lambda_recon = self._compute_scheduled_lambda_recon(epoch)
 
         for batch in train_loader:
             batch = tuple(b.to(self.device) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
+
+            _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
+            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
+                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path with retrieval ──
@@ -1885,6 +2272,13 @@ class RetrievalTranslatorTrainer:
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
                     parts["M_pad"], parts["X_static"],
                 )
+
+                # CCR: compute soft label predictions for class-conditional retrieval
+                _ccr_label_probs = None
+                if self.ccr_alpha > 0 and self.memory_bank is not None:
+                    with torch.no_grad():
+                        _lp_logits = self.translator.predict_labels(src_latent.detach(), parts["M_pad"])
+                        _ccr_label_probs = torch.sigmoid(_lp_logits.float())
 
                 # Per-timestep retrieval from memory bank
                 importance_w = self.translator.get_importance_weights()
@@ -1895,6 +2289,8 @@ class RetrievalTranslatorTrainer:
                     k_neighbors=self.k_neighbors,
                     retrieval_window=self.retrieval_window,
                     importance_weights=importance_w.detach(),
+                    query_label_probs=_ccr_label_probs,
+                    ccr_alpha=self.ccr_alpha,
                 )
 
                 # Forward with retrieved context (reuse src_latent to avoid double-encode)
@@ -1904,6 +2300,8 @@ class RetrievalTranslatorTrainer:
                     context,
                     latent=src_latent,
                 )
+                if _do_grad_diag:
+                    x_out.retain_grad()
 
                 # Task loss via frozen LSTM
                 x_yaib_translated = self.schema_resolver.rebuild(
@@ -1942,6 +2340,28 @@ class RetrievalTranslatorTrainer:
                     ts_weight[pos_mask] = 1.0 + self.recon_positive_boost
                     tgt_recon_per_ts = tgt_recon_per_ts * ts_weight
                 l_recon = tgt_recon_per_ts[tgt_mask].mean() if tgt_mask.any() else tgt_diff.new_tensor(0.0)
+
+                # ── TCR: Target Context Reconstruction ──
+                # Route MIMIC through full retrieval pipeline (cross-attention gets gradient)
+                l_tcr = tgt_out.new_tensor(0.0)
+                if self.lambda_tcr > 0 and self.memory_bank is not None:
+                    tgt_context = query_memory_bank(
+                        tgt_latent.detach(),
+                        tgt_parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w.detach(),
+                    )
+                    tgt_out_full, _ = self.translator.forward_with_retrieval(
+                        tgt_parts["X_val"], tgt_parts["X_miss"], tgt_parts["t_abs"],
+                        tgt_parts["M_pad"], tgt_parts["X_static"],
+                        tgt_context, latent=tgt_latent,
+                    )
+                    l_tcr = F.mse_loss(
+                        tgt_out_full[tgt_mask].float(),
+                        tgt_parts["X_val"][tgt_mask].float(),
+                    )
 
                 # Range loss on source output
                 src_mask = ~parts["M_pad"].bool()
@@ -2036,12 +2456,28 @@ class RetrievalTranslatorTrainer:
                     + self.lambda_target_task * l_target_task
                     + self.lambda_label_pred * l_label_pred
                     + self.lambda_contrastive_align * l_contrastive
+                    + self.lambda_tcr * l_tcr
                 )
 
-            self.optimizer.zero_grad()
-            self.scaler.scale(l_total).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
+            if _do_grad_diag:
+                _gradient_diagnostic(
+                    self.optimizer, self.translator, x_out,
+                    l_task, self.lambda_recon * l_recon, self.lambda_range * l_range,
+                    parts, epoch, n_batches, reg_label="recon",
+                )
+
+            if n_batches % self.accumulate_grad_batches == 0:
+                self.optimizer.zero_grad()
+            self.scaler.scale(l_total / self.accumulate_grad_batches).backward()
+            if (n_batches + 1) % self.accumulate_grad_batches == 0:
+                if self.grad_clip_norm > 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for g in self.optimizer.param_groups for p in g["params"]],
+                        self.grad_clip_norm,
+                    )
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
             totals["total"] += l_total.item()
             totals["task"] += l_task.item()
@@ -2053,7 +2489,19 @@ class RetrievalTranslatorTrainer:
             totals["target_task"] += l_target_task.item()
             totals["label_pred"] += l_label_pred.item()
             totals["contrastive"] += l_contrastive.item()
+            totals["tcr"] += l_tcr.item()
             n_batches += 1
+
+        # Flush remaining accumulated gradients
+        if self.accumulate_grad_batches > 1 and n_batches % self.accumulate_grad_batches != 0:
+            if self.grad_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    [p for g in self.optimizer.param_groups for p in g["params"]],
+                    self.grad_clip_norm,
+                )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
         return {k: v / max(n_batches, 1) for k, v in totals.items()}
 
@@ -2064,7 +2512,7 @@ class RetrievalTranslatorTrainer:
         self.translator.eval()
         totals = {"total": 0.0, "task": 0.0, "align": 0.0, "recon": 0.0, "range": 0.0,
                   "smooth": 0.0, "importance_reg": 0.0, "target_task": 0.0,
-                  "label_pred": 0.0, "contrastive": 0.0}
+                  "label_pred": 0.0, "contrastive": 0.0, "tcr": 0.0}
         n_batches = 0
 
         importance_w = self.translator.get_importance_weights()
@@ -2080,6 +2528,12 @@ class RetrievalTranslatorTrainer:
                     parts["M_pad"], parts["X_static"],
                 )
 
+                # CCR: compute soft label predictions for class-conditional retrieval
+                _ccr_label_probs = None
+                if self.ccr_alpha > 0 and self.memory_bank is not None:
+                    _lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
+                    _ccr_label_probs = torch.sigmoid(_lp_logits.float())
+
                 context = query_memory_bank(
                     src_latent,
                     parts["M_pad"],
@@ -2087,6 +2541,8 @@ class RetrievalTranslatorTrainer:
                     k_neighbors=self.k_neighbors,
                     retrieval_window=self.retrieval_window,
                     importance_weights=importance_w,
+                    query_label_probs=_ccr_label_probs,
+                    ccr_alpha=self.ccr_alpha,
                 )
 
                 x_out, _ = self.translator.forward_with_retrieval(
@@ -2232,8 +2688,15 @@ class RetrievalTranslatorTrainer:
             self.translator.load_state_dict(ckpt["translator_state_dict"])
             logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
         elif self.pretrain_epochs > 0:
-            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
+            sr_label = " with self-retrieval" if self.phase1_self_retrieval else ""
+            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs%s) ===",
+                         self.pretrain_epochs, sr_label)
             for ep in range(self.pretrain_epochs):
+                # Build/refresh memory bank for self-retrieval
+                if self.phase1_self_retrieval:
+                    if self.memory_bank is None or (ep % self.phase1_memory_refresh_epochs == 0):
+                        self._build_memory_bank()
+
                 metrics = self._pretrain_epoch(self.target_train_loader)
                 lp_str = ""
                 if self.lambda_label_pred > 0:
@@ -2242,6 +2705,9 @@ class RetrievalTranslatorTrainer:
                     "Pretrain epoch %d/%d - recon=%.4f%s",
                     ep + 1, self.pretrain_epochs, metrics["pretrain_recon"], lp_str,
                 )
+
+            # Force Phase 2 to build a fresh memory bank (encoder changed during pretrain)
+            self.memory_bank = None
 
             torch.save({"translator_state_dict": self.translator.state_dict()}, pretrain_path)
             logging.info("Saved pretrain checkpoint to %s", pretrain_path)
@@ -2262,8 +2728,16 @@ class RetrievalTranslatorTrainer:
 
         # Phase 2: Retrieval-guided training
         logging.info("=== Phase 2: Retrieval-guided training (%d epochs) ===", epochs)
+        self._grad_diag_interval = max(1, epochs // 4) if epochs > 1 else 1
+        logging.info("Gradient diagnostics interval: every %d epochs", self._grad_diag_interval)
         epochs_without_improvement = 0
         start_epoch = 0
+
+        # Create LR scheduler for Phase 2
+        self.scheduler = _create_lr_scheduler(
+            self.optimizer, self.lr_scheduler_type, epochs,
+            lr_min=self.lr_min, warmup_epochs=self.lr_warmup_epochs,
+        )
 
         # --- Resume from checkpoint ---
         resume_path = self.run_dir / "latest_checkpoint.pt"
@@ -2282,25 +2756,37 @@ class RetrievalTranslatorTrainer:
             if rk.get("renorm_scale") is not None:
                 self.renorm_scale = rk["renorm_scale"]
                 self.renorm_offset = rk["renorm_offset"]
+            if self.scheduler is not None and "scheduler_state_dict" in rk:
+                self.scheduler.load_state_dict(rk["scheduler_state_dict"])
+            ar_state = rk.get("adaptive_refresh_state")
+            if ar_state:
+                self._last_refresh_epoch = ar_state["last_refresh_epoch"]
+                self._metric_at_last_refresh = ar_state.get("metric_at_last_refresh")
+                self._refresh_history = ar_state.get("refresh_history", [])
             logging.info(
                 "Resumed from checkpoint epoch %d (best_val=%.6f, no_improve=%d)",
                 start_epoch, self.best_val, epochs_without_improvement,
             )
 
-        for epoch in range(start_epoch, epochs):
-            # Rebuild memory bank periodically
-            if self.memory_bank is None or (epoch % self.memory_refresh_epochs == 0):
-                self._build_memory_bank()
+        # Initial memory bank build (before loop)
+        if self.memory_bank is None:
+            self._build_memory_bank()
+            self._last_refresh_epoch = start_epoch
+            self._update_refresh_baseline(None)
+            self._refresh_history.append({"epoch": start_epoch, "reason": "initial_build"})
 
+        for epoch in range(start_epoch, epochs):
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
+            cur_lr = self.optimizer.param_groups[0]["lr"]
             logging.info(
-                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
+                "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f (lr=%.2e)",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],
                 train_metrics.get("align", 0.0), train_metrics["recon"], train_metrics["range"],
                 train_metrics["smooth"], train_metrics["importance_reg"],
                 train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
+                cur_lr,
             )
             logging.info(
                 "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
@@ -2314,9 +2800,39 @@ class RetrievalTranslatorTrainer:
 
             self.history.append({
                 "epoch": epoch + 1,
+                "lr": cur_lr,
+                "bank_last_refresh_epoch": self._last_refresh_epoch,
                 **{f"train_{k}": v for k, v in train_metrics.items()},
                 **{f"val_{k}": v for k, v in val_metrics.items()},
             })
+
+            # Step LR scheduler
+            if self.scheduler is not None:
+                if isinstance(self.scheduler, ReduceLROnPlateau):
+                    self.scheduler.step(val_metrics["task"])
+                else:
+                    self.scheduler.step()
+
+            # Adaptive / fixed memory bank refresh (AFTER validation)
+            should_refresh, refresh_reason = self._should_refresh_memory_bank(epoch, val_metrics)
+            if should_refresh:
+                self._build_memory_bank()
+                self._last_refresh_epoch = epoch
+                self._update_refresh_baseline(val_metrics)
+                self._refresh_history.append({
+                    "epoch": epoch, "reason": refresh_reason,
+                    "val_align": val_metrics.get("align", 0.0),
+                    "val_recon": val_metrics.get("recon", 0.0),
+                })
+                logging.info(
+                    "[adaptive-refresh] Epoch %d: rebuilt (reason=%s, val_align=%.6f, val_recon=%.6f)",
+                    epoch, refresh_reason, val_metrics.get("align", 0.0), val_metrics.get("recon", 0.0),
+                )
+            else:
+                logging.info(
+                    "[adaptive-refresh] Epoch %d: skipped (reason=%s, val_align=%.6f, val_recon=%.6f)",
+                    epoch, refresh_reason, val_metrics.get("align", 0.0), val_metrics.get("recon", 0.0),
+                )
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
             if candidate < self.best_val:
@@ -2329,6 +2845,7 @@ class RetrievalTranslatorTrainer:
                     "train_metrics": train_metrics,
                     "renorm_scale": self.renorm_scale,
                     "renorm_offset": self.renorm_offset,
+                    "bank_last_refresh_epoch": self._last_refresh_epoch,
                 }
                 if self.feature_gate is not None:
                     ckpt_data["feature_gate_state_dict"] = self.feature_gate.state_dict()
@@ -2353,6 +2870,13 @@ class RetrievalTranslatorTrainer:
             }
             if self.feature_gate is not None:
                 resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()
+            if self.scheduler is not None:
+                resume_ckpt["scheduler_state_dict"] = self.scheduler.state_dict()
+            resume_ckpt["adaptive_refresh_state"] = {
+                "last_refresh_epoch": self._last_refresh_epoch,
+                "metric_at_last_refresh": self._metric_at_last_refresh,
+                "refresh_history": self._refresh_history,
+            }
             torch.save(resume_ckpt, resume_path)
 
             if self.early_stopping_patience > 0 and epochs_without_improvement >= self.early_stopping_patience:
@@ -2366,6 +2890,19 @@ class RetrievalTranslatorTrainer:
         if resume_path.exists():
             resume_path.unlink()
             logging.info("Training completed — removed resume checkpoint")
+
+        # Log adaptive refresh summary
+        if self._refresh_history:
+            total = len(self._refresh_history)
+            reasons = [r["reason"] for r in self._refresh_history]
+            adaptive_count = sum(1 for r in reasons if r.startswith("improved_"))
+            logging.info(
+                "[adaptive-refresh] Summary: %d total refreshes (%d initial, %d adaptive, %d fixed/other). "
+                "Epochs without refresh: %d/%d",
+                total, reasons.count("initial_build"), adaptive_count,
+                total - reasons.count("initial_build") - adaptive_count,
+                epochs - total, epochs,
+            )
 
         self._verify_baseline_frozen()
         self._plot_losses()

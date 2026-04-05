@@ -36,7 +36,11 @@ class MemoryBank:
 
     GPU-resident:
         window_latents: (N_windows, d_latent) — mean-pooled per non-overlapping window
-    CPU-resident:
+        all_latents_flat: (total_timesteps+1, d_latent) — all per-stay latents concatenated
+            into one contiguous tensor, with a zero-padding sentinel row at the end.
+        window_flat_start: (N_windows,) — index into all_latents_flat where each window starts
+        window_actual_len: (N_windows,) — actual number of timesteps per window (may be < window_size)
+    CPU-resident (legacy, used during build only):
         timestep_latents: list of (T_i, d_latent) tensors per stay
         pad_masks: list of (T_i,) bool tensors per stay
         window_to_stay_idx: (N_windows,) — maps window → parent stay
@@ -48,6 +52,13 @@ class MemoryBank:
     window_to_stay_idx: torch.Tensor   # (N_windows,) long  CPU
     window_to_time_range: torch.Tensor # (N_windows, 2) long  CPU
     window_size: int
+    # Vectorized gather support (GPU-resident)
+    all_latents_flat: torch.Tensor | None = None     # (total_ts+1, d_latent) GPU
+    window_flat_start: torch.Tensor | None = None    # (N_windows,) long GPU
+    window_actual_len: torch.Tensor | None = None    # (N_windows,) long GPU
+    # CCR (Class-Conditional Retrieval) — optional label info per window
+    window_labels: torch.Tensor | None = None       # (N_windows,) float CPU — mean label per window
+    window_label_masks: torch.Tensor | None = None   # (N_windows,) bool CPU — has valid labels
 
 
 def build_memory_bank(
@@ -57,6 +68,7 @@ def build_memory_bank(
     device: str,
     window_size: int = 6,
     window_stride: int | None = None,
+    store_labels: bool = False,
 ) -> MemoryBank:
     """Encode all MIMIC data and build the memory bank.
 
@@ -68,12 +80,15 @@ def build_memory_bank(
         window_size: window size for bank storage
         window_stride: stride between windows (default=window_size for non-overlapping,
                        set < window_size for overlapping dense banks)
+        store_labels: if True, store per-window mean labels for CCR
     """
     if window_stride is None:
         window_stride = window_size
     encoder.eval()
     all_timestep_latents = []  # list of (T_i, d_latent) on CPU
     all_pad_masks = []         # list of (T_i,) on CPU
+    all_labels = []            # list of (T_i,) on CPU (if store_labels)
+    all_label_masks = []       # list of (T_i,) on CPU (if store_labels)
 
     with torch.no_grad():
         for batch in target_loader:
@@ -88,16 +103,23 @@ def build_memory_bank(
             for i in range(latent.shape[0]):
                 all_timestep_latents.append(latent[i].cpu())    # (T, d_latent)
                 all_pad_masks.append(m_pad[i].cpu())             # (T,)
+                if store_labels:
+                    all_labels.append(parts["y"][i].float().cpu())         # (T,)
+                    all_label_masks.append(parts["M_label"][i].bool().cpu())  # (T,)
 
     # Segment into windows (overlapping if stride < window_size) and mean-pool each
     window_latent_list = []
     window_to_stay = []
     window_to_range = []
+    window_label_list = []
+    window_label_mask_list = []
 
     W = window_size
     stride = window_stride
     for stay_idx, (ts_lat, ts_mask) in enumerate(zip(all_timestep_latents, all_pad_masks)):
         T = ts_lat.shape[0]
+        labels_stay = all_labels[stay_idx] if store_labels else None
+        label_mask_stay = all_label_masks[stay_idx] if store_labels else None
         for start in range(0, T, stride):
             end = min(start + W, T)
             window_mask = ~ts_mask[start:end]  # True = valid
@@ -106,6 +128,15 @@ def build_memory_bank(
                 window_latent_list.append(valid_latents.mean(dim=0))
                 window_to_stay.append(stay_idx)
                 window_to_range.append([start, end])
+                if store_labels:
+                    win_valid_labels = label_mask_stay[start:end] & window_mask
+                    if win_valid_labels.any():
+                        win_label = labels_stay[start:end][win_valid_labels].mean().item()
+                        window_label_list.append(win_label)
+                        window_label_mask_list.append(True)
+                    else:
+                        window_label_list.append(0.0)
+                        window_label_mask_list.append(False)
 
     if len(window_latent_list) == 0:
         raise RuntimeError("Memory bank is empty — no valid MIMIC timesteps found")
@@ -114,13 +145,41 @@ def build_memory_bank(
     window_to_stay_idx = torch.tensor(window_to_stay, dtype=torch.long)
     window_to_time_range = torch.tensor(window_to_range, dtype=torch.long)
 
+    # CCR label tensors (CPU-resident, ~2MB for 480K windows)
+    w_labels = torch.tensor(window_label_list, dtype=torch.float32) if store_labels else None
+    w_label_masks = torch.tensor(window_label_mask_list, dtype=torch.bool) if store_labels else None
+
+    n_labeled = sum(window_label_mask_list) if store_labels else 0
+    n_positive = sum(1 for v, m in zip(window_label_list, window_label_mask_list) if m and v > 0.5) if store_labels else 0
+    label_info = f", labels: {n_labeled}/{len(window_latent_list)} windows ({n_positive} positive)" if store_labels else ""
+
+    # Build flattened timestep tensor for vectorized gather at query time
+    all_cat = torch.cat(all_timestep_latents, dim=0)  # (total_ts, d_latent)
+    padding_row = torch.zeros(1, all_cat.shape[1], dtype=all_cat.dtype)
+    all_latents_flat = torch.cat([all_cat, padding_row], dim=0).to(device)  # (total_ts+1, d_latent)
+
+    # Stay offsets: prefix-sum so stay i occupies [offsets[i], offsets[i+1])
+    lengths = torch.tensor([ts.shape[0] for ts in all_timestep_latents], dtype=torch.long)
+    stay_offsets = torch.zeros(len(all_timestep_latents) + 1, dtype=torch.long)
+    torch.cumsum(lengths, dim=0, out=stay_offsets[1:])
+    stay_offsets = stay_offsets.to(device)
+
+    # Per-window: absolute flat start index and actual length
+    _wts = window_to_stay_idx.to(device)
+    _wtr = window_to_time_range.to(device)
+    window_flat_start = stay_offsets[_wts] + _wtr[:, 0]   # (N_windows,)
+    window_actual_len = _wtr[:, 1] - _wtr[:, 0]           # (N_windows,)
+
+    flat_mb = all_latents_flat.nelement() * 4 / 1e6
     logger.info(
-        "Memory bank built: %d stays, %d windows (W=%d, stride=%d), %.1f MB GPU",
+        "Memory bank built: %d stays, %d windows (W=%d, stride=%d), %.1f MB GPU (windows) + %.1f MB GPU (flat)%s",
         len(all_timestep_latents),
         window_latents.shape[0],
         W,
         stride,
         window_latents.nelement() * 4 / 1e6,
+        flat_mb,
+        label_info,
     )
     return MemoryBank(
         window_latents=window_latents,
@@ -129,6 +188,11 @@ def build_memory_bank(
         window_to_stay_idx=window_to_stay_idx,
         window_to_time_range=window_to_time_range,
         window_size=W,
+        all_latents_flat=all_latents_flat,
+        window_flat_start=window_flat_start,
+        window_actual_len=window_actual_len,
+        window_labels=w_labels,
+        window_label_masks=w_label_masks,
     )
 
 
@@ -139,6 +203,8 @@ def query_memory_bank(
     k_neighbors: int = 16,
     retrieval_window: int = 6,
     importance_weights: torch.Tensor | None = None,
+    query_label_probs: torch.Tensor | None = None,
+    ccr_alpha: float = 0.0,
 ) -> torch.Tensor:
     """Per-timestep retrieval from the memory bank.
 
@@ -153,6 +219,8 @@ def query_memory_bank(
         k_neighbors: number of nearest windows to retrieve per timestep
         retrieval_window: backward-looking window size for query pooling
         importance_weights: optional (d_latent,) weights for weighted distance
+        query_label_probs: optional (B, T) soft label predictions in [0,1] for CCR
+        ccr_alpha: class-conditional retrieval scaling factor (0 = disabled)
 
     Returns:
         context: (B, T, K*W, d_latent) — retrieved MIMIC timestep latents
@@ -205,64 +273,71 @@ def query_memory_bank(
         queries_weighted = queries_flat
         bank_weighted = bank_vecs
 
-    # Compute distances in chunks to avoid OOM with large banks
-    # (B*T, d_latent) vs (N_windows, d_latent)
-    chunk_size = 256
-    all_topk_indices = []
-    for chunk_start in range(0, B * T, chunk_size):
-        chunk_end = min(chunk_start + chunk_size, B * T)
-        q_chunk = queries_weighted[chunk_start:chunk_end]  # (chunk, d_latent)
-        dists = torch.cdist(q_chunk, bank_weighted.unsqueeze(0).expand(q_chunk.shape[0], -1, -1).reshape(1, -1, d_latent).expand(q_chunk.shape[0], -1, -1).squeeze(0) if False else bank_weighted)
-        # cdist: (chunk, N_windows)
-        # Actually torch.cdist wants (B, M, D) and (B, N, D) or (M, D) and (N, D)
-        # Use matmul-based distance for efficiency
-        # ||q - b||^2 = ||q||^2 + ||b||^2 - 2*q@b^T
-        pass
-    # Actually let me simplify this. torch.cdist works with 2D tensors too.
-
-    # Compute all distances at once if feasible, otherwise chunk
+    # ── Distance computation: matmul-based squared Euclidean ──
+    # ||q - b||^2 = ||q||^2 + ||b||^2 - 2*q@b^T  (uses GEMM, faster than cdist)
     N_windows = bank_weighted.shape[0]
     total_queries = B * T
-
-    # For V100 with 32GB, (768, 480K) float32 = 1.4GB, fits fine
-    # But let's chunk to be safe
+    chunk_size = 512
     topk_k = min(K, N_windows)
     topk_indices = torch.zeros(total_queries, topk_k, dtype=torch.long, device=device)
+
+    b_norms_sq = (bank_weighted ** 2).sum(dim=1)  # (N_windows,) — precomputed once
+
+    # CCR: precompute bank labels on device if enabled
+    _ccr_enabled = (ccr_alpha > 0 and query_label_probs is not None
+                    and bank.window_labels is not None and bank.window_label_masks is not None)
+    if _ccr_enabled:
+        _bank_labels = bank.window_labels.to(device)        # (N_windows,)
+        _bank_lmask = bank.window_label_masks.to(device)    # (N_windows,)
+        _q_probs_flat = query_label_probs.reshape(B * T)    # (B*T,)
 
     for chunk_start in range(0, total_queries, chunk_size):
         chunk_end = min(chunk_start + chunk_size, total_queries)
         q_chunk = queries_weighted[chunk_start:chunk_end]  # (C, d_latent)
-        # dists: (C, N_windows)
-        dists = torch.cdist(q_chunk.unsqueeze(0), bank_weighted.unsqueeze(0)).squeeze(0)
-        _, chunk_topk = dists.topk(topk_k, dim=-1, largest=False)  # (C, K)
+
+        # Squared Euclidean via GEMM
+        q_norms_sq = (q_chunk ** 2).sum(dim=1)  # (C,)
+        dot_products = q_chunk @ bank_weighted.T  # (C, N_windows)
+        dists_sq = q_norms_sq.unsqueeze(1) + b_norms_sq.unsqueeze(0) - 2 * dot_products
+        dists_sq = dists_sq.clamp(min=0.0)
+
+        # CCR: scale distances by class agreement (needs L2, not squared)
+        if _ccr_enabled:
+            dists = dists_sq.sqrt()
+            q_probs = _q_probs_flat[chunk_start:chunk_end]  # (C,)
+            same_class = (q_probs.unsqueeze(1) * _bank_labels.unsqueeze(0)
+                          + (1 - q_probs.unsqueeze(1)) * (1 - _bank_labels.unsqueeze(0)))
+            scale = 1.0 / (1.0 + ccr_alpha * same_class)  # (C, N_windows)
+            scale[:, ~_bank_lmask] = 1.0
+            dists = dists * scale
+            _, chunk_topk = dists.topk(topk_k, dim=-1, largest=False)
+        else:
+            # Squared distances preserve ranking — skip sqrt
+            _, chunk_topk = dists_sq.topk(topk_k, dim=-1, largest=False)
+
         topk_indices[chunk_start:chunk_end] = chunk_topk
 
-    # Gather context: for each query timestep, fetch K windows' timestep latents
-    # topk_indices: (B*T, K) — indices into bank.window_latents
-    # For each window, get the parent stay and time range, then fetch timestep latents
-    topk_flat = topk_indices.reshape(-1).cpu()  # (B*T*K,)
-    stay_indices = bank.window_to_stay_idx[topk_flat]     # (B*T*K,)
-    time_ranges = bank.window_to_time_range[topk_flat]    # (B*T*K, 2)
+    # ── Vectorized context gather (no Python loop) ──
+    topk_flat = topk_indices.reshape(-1)  # (B*T*K,) GPU
 
-    # Gather timestep latents for each retrieved window
-    context_list = []
-    for i in range(topk_flat.shape[0]):
-        s_idx = stay_indices[i].item()
-        t_start = time_ranges[i, 0].item()
-        t_end = time_ranges[i, 1].item()
-        ts_lat = bank.timestep_latents[s_idx][t_start:t_end]  # (W_actual, d_latent) CPU
-        # Pad to bank_W if shorter
-        if ts_lat.shape[0] < bank_W:
-            pad = torch.zeros(bank_W - ts_lat.shape[0], d_latent, dtype=ts_lat.dtype)
-            ts_lat = torch.cat([ts_lat, pad], dim=0)
-        context_list.append(ts_lat[:bank_W])  # ensure exactly bank_W
+    # Look up flat start index and actual length for each retrieved window
+    base_offsets = bank.window_flat_start[topk_flat]    # (B*T*K,) GPU
+    actual_lens = bank.window_actual_len[topk_flat]     # (B*T*K,) GPU
 
-    # Stack and reshape: (B*T*K, bank_W, d_latent) → (B*T, K*bank_W, d_latent)
-    context_all = torch.stack(context_list).to(device)  # (B*T*K, bank_W, d_latent)
-    context = context_all.reshape(B * T, K * bank_W, d_latent)  # (B*T, K*W, d_latent)
+    # Build gather index grid: for each window, indices [base, base+1, ..., base+W-1]
+    ts_range = torch.arange(bank_W, device=device)  # (bank_W,)
+    gather_indices = base_offsets.unsqueeze(1) + ts_range.unsqueeze(0)  # (B*T*K, bank_W)
 
-    # Reshape to (B, T, K*W, d_latent) and zero out padded timesteps
-    context = context.reshape(B, T, K * bank_W, d_latent)
+    # Clamp out-of-range positions to the zero-padding sentinel row
+    sentinel_idx = bank.all_latents_flat.shape[0] - 1
+    out_of_range = ts_range.unsqueeze(0) >= actual_lens.unsqueeze(1)  # (B*T*K, bank_W)
+    gather_indices[out_of_range] = sentinel_idx
+
+    # Single vectorized GPU gather
+    context_all = bank.all_latents_flat[gather_indices]  # (B*T*K, bank_W, d_latent)
+
+    # Reshape to (B, T, K*bank_W, d_latent) and zero out padded timesteps
+    context = context_all.reshape(B, T, K * bank_W, d_latent)
     context = context.masked_fill(query_pad_mask[:, :, None, None], 0.0)
 
     return context

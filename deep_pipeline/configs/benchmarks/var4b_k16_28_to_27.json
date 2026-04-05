@@ -1,0 +1,49 @@
+{
+  "dataset": "HAR",
+  "source_id": "28",
+  "target_id": "27",
+  "data_path": "/bigdata/omerg/Thesis/AdaTime/data",
+  "device": "cuda:2",
+  "seed": 42,
+  "batch_size": 32,
+  "val_fraction": 0.2,
+  "target_model": {
+    "hidden_dim": 128,
+    "num_layers": 1,
+    "epochs": 50,
+    "lr": 1e-3,
+    "patience": 10
+  },
+  "translator": {
+    "type": "retrieval",
+    "d_latent": 64,
+    "d_model": 64,
+    "d_time": 16,
+    "n_enc_layers": 2,
+    "n_dec_layers": 1,
+    "n_cross_layers": 2,
+    "n_heads": 4,
+    "d_ff": 256,
+    "dropout": 0.1,
+    "out_dropout": 0.1,
+    "temporal_attention_mode": "bidirectional",
+    "output_mode": "residual"
+  },
+  "training": {
+    "epochs": 30,
+    "lr": 5e-4,
+    "pretrain_epochs": 10,
+    "lambda_recon": 0.1,
+    "lambda_range": 0.1,
+    "lambda_smooth": 0.0,
+    "lambda_importance_reg": 0.01,
+    "lambda_fidelity": 0.01,
+    "k_neighbors": 16,
+    "retrieval_window": 4,
+    "memory_refresh_epochs": 5,
+    "early_stopping_patience": 10
+  },
+  "output": {
+    "run_dir": "runs/adatime/HAR/var4b_k16_28_to_27"
+  }
+}

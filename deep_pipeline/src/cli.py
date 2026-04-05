@@ -118,6 +118,11 @@ def _get_training_config(config: dict) -> dict:
         "ot_reg": training.get("ot_reg", 0.1),
         # B6: Domain-adversarial (DANN)
         "lambda_adversarial": training.get("lambda_adversarial", 0.0),
+        # DA Baselines (DANN, CORAL, CoDATS)
+        "lambda_coral": training.get("lambda_coral", 0.0),
+        "discriminator_hidden_dim": training.get("discriminator_hidden_dim", 256),
+        "discriminator_lr": training.get("discriminator_lr", 1e-4),
+        "grl_schedule": training.get("grl_schedule", True),
         # Shared latent translator
         "pretrain_epochs": training.get("pretrain_epochs", 10),
         "lambda_align": training.get("lambda_align", 0.5),
@@ -155,6 +160,48 @@ def _get_training_config(config: dict) -> dict:
         "training_seed": training.get("training_seed", None),
         # Task type: "classification" (default) or "regression" (LoS, KF)
         "task_type": training.get("task_type", "classification"),
+        # V6: LR scheduling
+        "lr_scheduler": training.get("lr_scheduler", None),           # "cosine" | "plateau" | null
+        "lr_min": training.get("lr_min", 0.0),                        # eta_min for cosine
+        "lr_warmup_epochs": training.get("lr_warmup_epochs", 0),      # linear warmup
+        # V6: Gradient clipping
+        "grad_clip_norm": training.get("grad_clip_norm", 0.0),        # max grad norm (0=disabled)
+        # V6: Self-retrieval Phase 1
+        "phase1_self_retrieval": training.get("phase1_self_retrieval", False),
+        "phase1_memory_refresh_epochs": training.get("phase1_memory_refresh_epochs", None),
+        # V6: Gradient accumulation
+        "accumulate_grad_batches": training.get("accumulate_grad_batches", 1),
+        # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline
+        "lambda_tcr": training.get("lambda_tcr", 0.0),
+        # V7 (NeurIPS): FJS — initialize FeatureGate from frozen model Jacobian sensitivity
+        "jacobian_init": training.get("jacobian_init", False),
+        # V7: Adaptive memory bank refresh
+        "adaptive_refresh": training.get("adaptive_refresh", False),
+        "adaptive_refresh_patience": training.get("adaptive_refresh_patience", 2),
+        "adaptive_refresh_metric": training.get("adaptive_refresh_metric", "align"),
+        "adaptive_refresh_min_delta": training.get("adaptive_refresh_min_delta", 0.001),
+        # DA Baselines V2: CLUDA (ICLR 2023)
+        "lambda_cluda_temporal": training.get("lambda_cluda_temporal", 0.0),
+        "lambda_cluda_contextual": training.get("lambda_cluda_contextual", 0.0),
+        "cluda_temperature": training.get("cluda_temperature", 0.07),
+        "cluda_k_neighbors": training.get("cluda_k_neighbors", 5),
+        # DA Baselines V2: RAINCOAT (ICML 2023)
+        "lambda_raincoat_temporal": training.get("lambda_raincoat_temporal", 0.0),
+        "lambda_raincoat_freq": training.get("lambda_raincoat_freq", 0.0),
+        "raincoat_sinkhorn_eps": training.get("raincoat_sinkhorn_eps", 0.001),
+        "raincoat_sinkhorn_iters": training.get("raincoat_sinkhorn_iters", 1000),
+        # DA Baselines V2: ACON (NeurIPS 2024)
+        "lambda_acon_temporal": training.get("lambda_acon_temporal", 0.0),
+        "lambda_acon_freq": training.get("lambda_acon_freq", 0.0),
+        "lambda_acon_cross": training.get("lambda_acon_cross", 0.0),
+        "acon_freq_hidden_dim": training.get("acon_freq_hidden_dim", 128),
+        # V8: Class-Conditional Retrieval (CCR)
+        "ccr_alpha": training.get("ccr_alpha", 0.0),
+        # V8: Adaptive Fidelity Scheduling (AFS)
+        "fidelity_schedule": training.get("fidelity_schedule", None),
+        "fidelity_decay_start_epoch": training.get("fidelity_decay_start_epoch", 5),
+        "fidelity_decay_end_epoch": training.get("fidelity_decay_end_epoch", 40),
+        "fidelity_min_ratio": training.get("fidelity_min_ratio", 0.1),
     }
 
 
@@ -539,7 +586,7 @@ def train_translator(args):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    if translator_type == "transformer":
+    if translator_type in ("transformer", "affine"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
             config,
@@ -711,20 +758,27 @@ def train_translator(args):
         if not bounds_csv:
             raise ValueError("bounds_csv must be provided for transformer translator.")
 
-        translator = EHRTranslator(
-            num_features=len(schema_resolver.indices.dynamic),
-            d_latent=translator_cfg.get("d_latent", 16),
-            d_model=translator_cfg.get("d_model", 128),
-            d_time=translator_cfg.get("d_time", 16),
-            n_layers=translator_cfg.get("n_layers", 4),
-            n_heads=translator_cfg.get("n_heads", 8),
-            d_ff=translator_cfg.get("d_ff", 512),
-            dropout=translator_cfg.get("dropout", 0.2),
-            out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(static_features),
-            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
-            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
-        )
+        if translator_type == "affine":
+            from .core.translator import AffineTranslator
+            translator = AffineTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                static_dim=len(static_features),
+            )
+        else:
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
 
         # MLM pretraining phase (optional, controlled by config)
         mlm_pretrain_epochs = translator_cfg.get("mlm_pretrain_epochs", 0)
@@ -781,6 +835,215 @@ def train_translator(args):
             val_loader=val_loader,
         )
         logging.info("Transformer translator training completed")
+        return
+
+    elif translator_type == "finetune_lstm":
+        # -----------------------------------------------------------------
+        # Fine-tuned LSTM upper bound: unfreeze MIMIC LSTM, retrain on eICU.
+        # Uses IdentityDATranslator (data passes through unchanged) + unfrozen
+        # baseline.  This is an UPPER BOUND that violates the frozen constraint.
+        # -----------------------------------------------------------------
+        from .baselines.components import IdentityDATranslator
+
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        # Load baseline UNFROZEN — the key difference
+        yaib_runtime.load_baseline_model(freeze=False)
+
+        train_loader = yaib_runtime.create_dataloader(
+            'train',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        val_loader = yaib_runtime.create_dataloader(
+            'val',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+
+        feature_names = train_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError(
+                        "Static features are missing from YAIB inputs; "
+                        "provide paths.static_recipe in config for translator conditioning."
+                    )
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                train_loader = _augment_loader_with_static(train_loader, static_df, group_col, static_features)
+                val_loader = _augment_loader_with_static(val_loader, static_df, group_col, static_features)
+            else:
+                train_loader = _augment_loader_with_zero_static(train_loader, static_features)
+                val_loader = _augment_loader_with_zero_static(val_loader, static_features)
+
+        task_type = training_cfg.get("task_type", "classification")
+
+        neg_subsample = training_cfg.get("negative_subsample_count", 0)
+        if neg_subsample > 0 and task_type != "regression":
+            train_loader = _apply_negative_subsampling(
+                train_loader, neg_subsample, seed=config.get("seed", 2222)
+            )
+
+        oversampling_factor = training_cfg.get("oversampling_factor", 0)
+        vlb = training_cfg.get("variable_length_batching", False)
+        if not vlb and oversampling_factor > 0 and task_type != "regression":
+            train_loader = _apply_oversampling(train_loader, oversampling_factor)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        # Load MIMIC target data for cross-domain normalization
+        target_train_loader = None
+        target_data_dir = config.get("target_data_dir")
+        if target_data_dir:
+            logging.info("Loading target (MIMIC) data from %s for cross-domain normalization", target_data_dir)
+            target_runtime = _build_runtime_from_config(
+                config,
+                data_dir_override=target_data_dir,
+                batch_size_override=training_cfg["batch_size"],
+                seed_override=training_cfg["seed"],
+            )
+            target_runtime.load_data()
+            target_train_loader = target_runtime.create_dataloader(
+                'train',
+                shuffle=True,
+                ram_cache=True,
+                subset_fraction=debug_fraction if debug_mode else None,
+                subset_seed=training_cfg["seed"],
+            )
+            # Augment with static features (same handling as eICU)
+            target_feature_names = target_train_loader.dataset.get_feature_names()
+            target_static_in_features = all(name in target_feature_names for name in static_features)
+            if not target_static_in_features:
+                if use_static:
+                    static_recipe_target = _get_static_recipe(config)
+                    if static_recipe_target:
+                        target_static_df = load_static_with_recipe(
+                            data_dir=Path(target_data_dir),
+                            file_names=config["file_names"],
+                            group_col=group_col,
+                            static_features=static_features,
+                            recipe_path=Path(static_recipe_target),
+                        )
+                        target_train_loader = _augment_loader_with_static(
+                            target_train_loader, target_static_df, group_col, static_features
+                        )
+                    else:
+                        target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+                else:
+                    target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+            logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
+
+        # Variable-length bucket batching
+        if vlb:
+            from .core.bucket_batching import apply_bucket_batching
+            logging.info("Applying variable-length bucket batching...")
+            train_loader = apply_bucket_batching(
+                train_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=oversampling_factor,
+                shuffle=True,
+                drop_last=True,
+            )
+            if target_train_loader:
+                target_train_loader = apply_bucket_batching(
+                    target_train_loader,
+                    batch_size=training_cfg["batch_size"],
+                    oversampling_factor=0,
+                    shuffle=True,
+                    drop_last=True,
+                )
+            val_loader = apply_bucket_batching(
+                val_loader,
+                batch_size=training_cfg["batch_size"],
+                oversampling_factor=0,
+                shuffle=False,
+                drop_last=False,
+            )
+        elif oversampling_factor == 0:
+            should_shuffle = training_cfg.get("shuffle", False)
+            if should_shuffle:
+                train_loader = DataLoader(
+                    train_loader.dataset,
+                    batch_size=train_loader.batch_size,
+                    shuffle=True,
+                    num_workers=train_loader.num_workers,
+                    drop_last=train_loader.drop_last,
+                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    collate_fn=train_loader.collate_fn,
+                )
+
+        # Cross-domain normalization
+        use_target_norm = training_cfg.get("use_target_normalization", False)
+        renorm_params = None
+        if use_target_norm and target_train_loader is not None:
+            from .core.train import compute_renorm_params
+            renorm_params = compute_renorm_params(
+                train_loader, target_train_loader, schema_resolver,
+                config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            )
+
+        bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
+        if not bounds_csv:
+            raise ValueError("bounds_csv must be provided for finetune_lstm baseline.")
+
+        # Identity translator: data passes through unchanged
+        translator = IdentityDATranslator()
+
+        trainer = TransformerTranslatorTrainer(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            bounds_csv=Path(bounds_csv),
+            learning_rate=training_cfg["lr"],
+            weight_decay=translator_cfg.get("weight_decay", 1e-5),
+            lambda_fidelity=training_cfg["lambda_fidelity"],
+            lambda_range=training_cfg["lambda_range"],
+            lambda_forecast=training_cfg["lambda_forecast"],
+            lambda_mmd=training_cfg["lambda_mmd"],
+            lambda_mmd_transition=training_cfg["lambda_mmd_transition"],
+            target_train_loader=target_train_loader,
+            early_stopping_patience=training_cfg["early_stopping_patience"],
+            best_metric=training_cfg["best_metric"],
+            run_dir=Path(output_cfg["run_dir"]),
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            training_config=training_cfg,
+            freeze_baseline=False,  # KEY: LSTM is trainable
+        )
+        if renorm_params is not None:
+            trainer.set_renorm_params(*renorm_params)
+        trainer.train(
+            epochs=training_cfg["epochs"],
+            train_loader=train_loader,
+            val_loader=val_loader,
+        )
+        logging.info("Fine-tuned LSTM training completed (upper bound baseline)")
         return
 
     elif translator_type == "shared_latent":
@@ -1214,7 +1477,230 @@ def train_translator(args):
             logging.info("Saved linear regression model to %s", model_path)
         logging.info("Linear regression translator fitted on training set.")
         return
-    
+
+    elif translator_type in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
+        from .baselines.trainer import DABaselineTrainer
+
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        train_loader = yaib_runtime.create_dataloader(
+            'train', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        val_loader = yaib_runtime.create_dataloader(
+            'val', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+
+        feature_names = train_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError("Static features missing; provide paths.static_recipe.")
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                train_loader = _augment_loader_with_static(train_loader, static_df, group_col, static_features)
+                val_loader = _augment_loader_with_static(val_loader, static_df, group_col, static_features)
+            else:
+                train_loader = _augment_loader_with_zero_static(train_loader, static_features)
+                val_loader = _augment_loader_with_zero_static(val_loader, static_features)
+
+        task_type = training_cfg.get("task_type", "classification")
+        neg_subsample = training_cfg.get("negative_subsample_count", 0)
+        if neg_subsample > 0 and task_type != "regression":
+            train_loader = _apply_negative_subsampling(
+                train_loader, neg_subsample, seed=config.get("seed", 2222)
+            )
+
+        oversampling_factor = training_cfg.get("oversampling_factor", 0)
+        vlb = training_cfg.get("variable_length_batching", False)
+        if not vlb and oversampling_factor > 0 and task_type != "regression":
+            train_loader = _apply_oversampling(train_loader, oversampling_factor)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        # Target (MIMIC) data is REQUIRED for DA baselines
+        target_data_dir = config.get("target_data_dir")
+        if not target_data_dir:
+            raise ValueError(f"{translator_type} baseline requires target_data_dir in config")
+        logging.info("Loading target (MIMIC) data from %s", target_data_dir)
+        target_runtime = _build_runtime_from_config(
+            config,
+            data_dir_override=target_data_dir,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        target_runtime.load_data()
+        target_train_loader = target_runtime.create_dataloader(
+            'train', shuffle=True, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        # Augment target with static features
+        target_feature_names = target_train_loader.dataset.get_feature_names()
+        target_static_in_features = all(name in target_feature_names for name in static_features)
+        if not target_static_in_features:
+            if use_static:
+                static_recipe_target = _get_static_recipe(config)
+                if static_recipe_target:
+                    target_static_df = load_static_with_recipe(
+                        data_dir=Path(target_data_dir),
+                        file_names=config["file_names"],
+                        group_col=group_col,
+                        static_features=static_features,
+                        recipe_path=Path(static_recipe_target),
+                    )
+                    target_train_loader = _augment_loader_with_static(
+                        target_train_loader, target_static_df, group_col, static_features
+                    )
+                else:
+                    target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+            else:
+                target_train_loader = _augment_loader_with_zero_static(target_train_loader, static_features)
+        logging.info("Target (MIMIC) train loader: %d batches", len(target_train_loader))
+
+        # Variable-length bucket batching
+        if vlb:
+            from .core.bucket_batching import apply_bucket_batching
+            train_loader = apply_bucket_batching(
+                train_loader, batch_size=training_cfg["batch_size"],
+                oversampling_factor=oversampling_factor, shuffle=True, drop_last=True,
+            )
+            target_train_loader = apply_bucket_batching(
+                target_train_loader, batch_size=training_cfg["batch_size"],
+                oversampling_factor=0, shuffle=True, drop_last=True,
+            )
+            val_loader = apply_bucket_batching(
+                val_loader, batch_size=training_cfg["batch_size"],
+                oversampling_factor=0, shuffle=False, drop_last=False,
+            )
+        elif oversampling_factor == 0:
+            should_shuffle = training_cfg.get("shuffle", False)
+            if should_shuffle:
+                train_loader = DataLoader(
+                    train_loader.dataset, batch_size=train_loader.batch_size,
+                    shuffle=True, num_workers=train_loader.num_workers,
+                    drop_last=train_loader.drop_last,
+                    pin_memory=getattr(train_loader, "pin_memory", False),
+                    collate_fn=train_loader.collate_fn,
+                )
+
+        # Cross-domain normalization
+        use_target_norm = training_cfg.get("use_target_normalization", False)
+        renorm_params = None
+        if use_target_norm and target_train_loader is not None:
+            from .core.train import compute_renorm_params
+            renorm_params = compute_renorm_params(
+                train_loader, target_train_loader, schema_resolver,
+                config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            )
+
+        bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
+        if not bounds_csv:
+            raise ValueError("bounds_csv must be provided for DA baselines.")
+
+        # Build translator backbone
+        if translator_type == "codats":
+            from .baselines.codats_backbone import CoDATS1DCNN
+            translator = CoDATS1DCNN(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_model=translator_cfg.get("d_model", 128),
+                n_conv_layers=translator_cfg.get("n_conv_layers", 3),
+                kernel_size=translator_cfg.get("kernel_size", 5),
+                dropout=translator_cfg.get("dropout", 0.2),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            )
+        elif translator_type == "stats_only":
+            from .baselines.components import IdentityDATranslator
+            translator = IdentityDATranslator()
+            # Stats-only: save renorm params + identity translator and return
+            run_dir = Path(output_cfg["run_dir"])
+            run_dir.mkdir(parents=True, exist_ok=True)
+            checkpoint = {
+                "epoch": 0,
+                "translator_state_dict": translator.state_dict(),
+                "val_metrics": {},
+                "train_metrics": {},
+                "renorm_scale": renorm_params[0] if renorm_params else None,
+                "renorm_offset": renorm_params[1] if renorm_params else None,
+                "da_method": "stats_only",
+            }
+            torch.save(checkpoint, run_dir / "best_translator.pt")
+            torch.save(checkpoint, run_dir / "latest_checkpoint.pt")
+            logging.info("[stats_only] Saved renorm-only checkpoint to %s (no training)", run_dir)
+            return
+        else:
+            # DANN, CORAL, CLUDA, RAINCOAT, ACON all use EHRTranslator backbone
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
+
+        trainer = DABaselineTrainer(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            bounds_csv=Path(bounds_csv),
+            da_method=translator_type,
+            target_train_loader=target_train_loader,
+            learning_rate=training_cfg["lr"],
+            lambda_fidelity=training_cfg["lambda_fidelity"],
+            lambda_range=training_cfg["lambda_range"],
+            lambda_adversarial=training_cfg["lambda_adversarial"],
+            lambda_coral=training_cfg.get("lambda_coral", 0.0),
+            discriminator_hidden_dim=training_cfg.get("discriminator_hidden_dim", 256),
+            discriminator_lr=training_cfg.get("discriminator_lr", 1e-4),
+            grl_schedule=training_cfg.get("grl_schedule", True),
+            early_stopping_patience=training_cfg["early_stopping_patience"],
+            best_metric=training_cfg["best_metric"],
+            run_dir=Path(output_cfg["run_dir"]),
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            training_config=training_cfg,
+        )
+        if renorm_params is not None:
+            trainer.set_renorm_params(*renorm_params)
+        trainer.train(
+            epochs=training_cfg["epochs"],
+            train_loader=train_loader,
+            val_loader=val_loader,
+        )
+        logging.info("%s baseline training completed", translator_type.upper())
+        return
+
     yaib_runtime = _build_runtime_from_config(
         config,
         batch_size_override=training_cfg["batch_size"],
@@ -1274,7 +1760,7 @@ def translate_and_eval(args):
     lr_target_loader = None
     results = None
 
-    if translator_type == "transformer":
+    if translator_type in ("transformer", "affine"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
             config,
@@ -1331,20 +1817,27 @@ def translate_and_eval(args):
             group_col=group_col,
         )
 
-        translator = EHRTranslator(
-            num_features=len(schema_resolver.indices.dynamic),
-            d_latent=translator_cfg.get("d_latent", 16),
-            d_model=translator_cfg.get("d_model", 128),
-            d_time=translator_cfg.get("d_time", 16),
-            n_layers=translator_cfg.get("n_layers", 4),
-            n_heads=translator_cfg.get("n_heads", 8),
-            d_ff=translator_cfg.get("d_ff", 512),
-            dropout=translator_cfg.get("dropout", 0.2),
-            out_dropout=translator_cfg.get("out_dropout", 0.1),
-            static_dim=len(static_features),
-            temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
-            temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
-        )
+        if translator_type == "affine":
+            from .core.translator import AffineTranslator
+            translator = AffineTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                static_dim=len(static_features),
+            )
+        else:
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
 
         checkpoint_path = args.translator_checkpoint
         if not checkpoint_path:
@@ -1630,6 +2123,231 @@ def translate_and_eval(args):
             export_full_sequence=getattr(args, "export_full_sequence", True),
         )
 
+    elif translator_type == "finetune_lstm":
+        # -----------------------------------------------------------------
+        # Fine-tuned LSTM upper bound: load fine-tuned LSTM weights from
+        # checkpoint, use identity translator, evaluate as normal.
+        # -----------------------------------------------------------------
+        from .baselines.components import IdentityDATranslator
+
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        test_loader = yaib_runtime.create_dataloader(
+            'test',
+            shuffle=False,
+            ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        feature_names = test_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError(
+                        "Static features are missing from YAIB inputs; "
+                        "provide paths.static_recipe in config for translator conditioning."
+                    )
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                test_loader = _augment_loader_with_static(test_loader, static_df, group_col, static_features)
+            else:
+                test_loader = _augment_loader_with_zero_static(test_loader, static_features)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        translator = IdentityDATranslator()
+
+        checkpoint_path = args.translator_checkpoint
+        if not checkpoint_path:
+            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+
+        # Step 1: Evaluate with ORIGINAL frozen LSTM (the baseline we compare against)
+        yaib_runtime.load_baseline_model(freeze=True)
+        device = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        yaib_runtime._model = yaib_runtime._model.to(device)
+        orig_evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=device,
+            renorm_scale=None,
+            renorm_offset=None,
+            task_type=training_cfg.get("task_type", "classification"),
+        )
+        logging.info("Evaluating with ORIGINAL frozen LSTM (baseline)...")
+        original_metrics, orig_probs, orig_targets = orig_evaluator.evaluate_original(test_loader)
+
+        # Step 2: Load fine-tuned LSTM weights and evaluate
+        renorm_scale = None
+        renorm_offset = None
+        if checkpoint_path and Path(checkpoint_path).exists():
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
+            renorm_scale = checkpoint.get("renorm_scale")
+            renorm_offset = checkpoint.get("renorm_offset")
+            model_state = checkpoint.get("model_state_dict")
+            if model_state is not None:
+                yaib_runtime._model.load_state_dict(model_state)
+                logging.info("Loaded fine-tuned LSTM weights from checkpoint")
+            else:
+                logging.warning("No model_state_dict in checkpoint — using original frozen LSTM")
+            logging.info("Loaded finetune_lstm translator from %s", checkpoint_path)
+        else:
+            logging.warning("No finetune_lstm checkpoint found at %s", checkpoint_path)
+
+        ft_evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=device,
+            renorm_scale=renorm_scale,
+            renorm_offset=renorm_offset,
+            task_type=training_cfg.get("task_type", "classification"),
+        )
+        logging.info("Evaluating with FINE-TUNED LSTM...")
+        output_path = Path(args.output_parquet)
+        translated_metrics, trans_probs, trans_targets = ft_evaluator.translate_and_evaluate(
+            test_loader, output_path,
+        )
+
+        if output_path:
+            if trans_probs is not None:
+                from .core.eval import _save_predictions
+                _save_predictions(trans_probs, trans_targets, output_path)
+            if orig_probs is not None:
+                from .core.eval import _save_predictions
+                _save_predictions(orig_probs, orig_targets, output_path, suffix=".original")
+
+        results = {
+            "original": original_metrics,
+            "translated": translated_metrics,
+        }
+
+    elif translator_type in ("dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only"):
+        translator_cfg = _get_translator_config(config)
+        yaib_runtime = _build_runtime_from_config(
+            config,
+            batch_size_override=training_cfg["batch_size"],
+            seed_override=training_cfg["seed"],
+        )
+        yaib_runtime.load_data()
+        test_loader = yaib_runtime.create_dataloader(
+            'test', shuffle=False, ram_cache=True,
+            subset_fraction=debug_fraction if debug_mode else None,
+            subset_seed=training_cfg["seed"],
+        )
+        feature_names = test_loader.dataset.get_feature_names()
+        group_col = yaib_runtime.vars.get("GROUP")
+        static_features = config["vars"]["STATIC"]
+        static_in_features = all(name in feature_names for name in static_features)
+        use_static = config.get("use_static", True)
+        if not static_in_features:
+            if use_static:
+                static_recipe = _get_static_recipe(config)
+                if not static_recipe:
+                    raise ValueError("Static features missing; provide paths.static_recipe.")
+                static_df = load_static_with_recipe(
+                    data_dir=Path(config["data_dir"]),
+                    file_names=config["file_names"],
+                    group_col=group_col,
+                    static_features=static_features,
+                    recipe_path=Path(static_recipe),
+                )
+                test_loader = _augment_loader_with_static(test_loader, static_df, group_col, static_features)
+            else:
+                test_loader = _augment_loader_with_zero_static(test_loader, static_features)
+
+        schema_resolver = SchemaResolver(
+            feature_names=feature_names,
+            dynamic_features=config["vars"]["DYNAMIC"],
+            static_features=static_features,
+            allow_missing_static=not static_in_features,
+            missing_prefix=translator_cfg.get("missing_prefix", "MissingIndicator_"),
+            group_col=group_col,
+        )
+
+        # Build translator matching what was used during training
+        if translator_type == "codats":
+            from .baselines.codats_backbone import CoDATS1DCNN
+            translator = CoDATS1DCNN(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_model=translator_cfg.get("d_model", 128),
+                n_conv_layers=translator_cfg.get("n_conv_layers", 3),
+                kernel_size=translator_cfg.get("kernel_size", 5),
+                dropout=translator_cfg.get("dropout", 0.2),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+            )
+        elif translator_type == "stats_only":
+            from .baselines.components import IdentityDATranslator
+            translator = IdentityDATranslator()
+        else:
+            # DANN, CORAL, CLUDA, RAINCOAT, ACON all use EHRTranslator
+            translator = EHRTranslator(
+                num_features=len(schema_resolver.indices.dynamic),
+                d_latent=translator_cfg.get("d_latent", 16),
+                d_model=translator_cfg.get("d_model", 128),
+                d_time=translator_cfg.get("d_time", 16),
+                n_layers=translator_cfg.get("n_layers", 4),
+                n_heads=translator_cfg.get("n_heads", 8),
+                d_ff=translator_cfg.get("d_ff", 512),
+                dropout=translator_cfg.get("dropout", 0.2),
+                out_dropout=translator_cfg.get("out_dropout", 0.1),
+                static_dim=len(static_features),
+                temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
+                temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
+            )
+
+        checkpoint_path = args.translator_checkpoint
+        if not checkpoint_path:
+            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        renorm_scale = None
+        renorm_offset = None
+        if checkpoint_path and Path(checkpoint_path).exists():
+            checkpoint = torch.load(checkpoint_path, map_location="cpu")
+            translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
+            renorm_scale = checkpoint.get("renorm_scale")
+            renorm_offset = checkpoint.get("renorm_offset")
+            logging.info("Loaded %s translator from %s", translator_type, checkpoint_path)
+        else:
+            logging.warning("No %s checkpoint found at %s", translator_type, checkpoint_path)
+
+        evaluator = TransformerTranslatorEvaluator(
+            yaib_runtime=yaib_runtime,
+            translator=translator,
+            schema_resolver=schema_resolver,
+            device=config.get("device", "cuda" if torch.cuda.is_available() else "cpu"),
+            renorm_scale=renorm_scale,
+            renorm_offset=renorm_offset,
+            task_type=training_cfg.get("task_type", "classification"),
+        )
+        output_path = Path(args.output_parquet)
+        results = evaluator.evaluate_original_vs_translated(
+            test_loader, output_path,
+            export_full_sequence=getattr(args, "export_full_sequence", True),
+        )
+
     elif translator_type == "linear_regression":
         translator, yaib_runtime, test_loader, target_loader = _prepare_linear_regression(
             config,
@@ -1674,12 +2392,12 @@ def translate_and_eval(args):
         input_size = data_shape[-1]
         translator = IdentityTranslator(input_size=input_size)
 
-    if translator_type not in {"linear_regression", "transformer", "shared_latent", "retrieval"} and args.translator_checkpoint:
+    if translator_type not in {"linear_regression", "transformer", "affine", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only", "finetune_lstm"} and args.translator_checkpoint:
         checkpoint = torch.load(args.translator_checkpoint, map_location="cpu")
         translator.load_state_dict(checkpoint["translator_state_dict"], strict=False)
         logging.info(f"Loaded translator from {args.translator_checkpoint}")
 
-    if translator_type not in ("transformer", "shared_latent", "retrieval"):
+    if translator_type not in ("transformer", "affine", "shared_latent", "retrieval", "dann", "coral", "codats", "cluda", "raincoat", "acon", "stats_only", "finetune_lstm"):
         evaluator = TranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -1748,6 +2466,180 @@ def train_and_eval(args):
     translate_and_eval(args)
 
 
+def run_e2e_baseline(args):
+    """Train and evaluate an end-to-end DA baseline (CLUDA, RAINCOAT, ACON)."""
+    config = load_config(Path(args.config))
+    config["_config_path"] = str(args.config)  # for label_mode inference in adapter
+    device = config.get("device", "cuda")
+    training = config.get("training", {})
+    method = config.get("translator", {}).get("type", "e2e_cluda")
+
+    logging.info("=" * 60)
+    logging.info("End-to-end DA baseline: %s", method)
+    logging.info("=" * 60)
+
+    # --- Step 1: Set up E2E data adapter FIRST (needed for fair baseline) ---
+    # NOTE: After the source/target swap in the adapter, source=MIMIC, target=eICU.
+    # We train on MIMIC labels (source), align with eICU (target), eval on eICU test.
+    from .baselines.end_to_end.data_adapter import YAIBToE2EAdapter
+
+    adapter = YAIBToE2EAdapter(config)
+    source_train, source_val, source_test, target_train, target_val, target_test = adapter.get_loaders()
+
+    # Auto-detect number of input channels from data
+    num_channels = adapter.num_channels
+    training["num_input_channels"] = num_channels
+    logging.info("Detected %d input channels, seq_len=%d", num_channels, training.get("seq_len", 48))
+
+    # --- Step 1b: Compute no-adaptation baseline on the TARGET (eICU) test data ---
+    # CRITICAL: Both "Original" and "Translated" must be evaluated on identical data
+    # for a fair comparison. We run the frozen MIMIC LSTM on windowed eICU test data.
+    logging.info("Computing no-adaptation baseline (frozen MIMIC LSTM on E2E windowed eICU test data)...")
+    baseline_runtime = _build_runtime_from_config(
+        config, batch_size_override=training.get("batch_size", 64),
+    )
+    baseline_runtime.load_data()
+    baseline_runtime.load_baseline_model()
+    baseline_runtime._model = baseline_runtime._model.to(device)
+    for param in baseline_runtime._model.parameters():
+        param.requires_grad = False
+
+    # Evaluate frozen LSTM on the E2E windowed eICU test data (target_test)
+    baseline_runtime._model.eval()
+    import numpy as np
+    from sklearn.metrics import roc_auc_score, average_precision_score
+    all_probs = []
+    all_labels = []
+    with torch.no_grad():
+        for batch in target_test:
+            x, labels, static, vmask = batch
+            # x is (B, C, L) in E2E format — transpose to (B, L, C) for LSTM
+            x_lstm = x.transpose(1, 2).to(device)  # (B, L, C)
+            labels = labels.to(device)
+            vmask = vmask.to(device)
+
+            # Run frozen LSTM
+            logits = baseline_runtime._model(x_lstm)  # (B, L, num_classes) or (B, num_classes)
+            if logits.dim() == 3:
+                probs = torch.softmax(logits, dim=-1)[:, :, 1]  # (B, L)
+            else:
+                probs = torch.softmax(logits, dim=-1)[:, 1]  # (B,)
+
+            if labels.dim() == 1:
+                # Per-stay: probs is (B, L) but we need one prob per stay.
+                # Use the last valid timestep's prediction (matches YAIB eval).
+                valid = labels >= 0
+                if valid.sum() > 0 and probs.dim() == 2:
+                    # Find the last valid timestep index for each sample
+                    # vmask is (B, L): True for non-padded timesteps
+                    last_valid_idx = vmask.long().cumsum(dim=1).argmax(dim=1)  # (B,)
+                    per_stay_probs = probs[torch.arange(probs.size(0), device=probs.device), last_valid_idx]
+                    all_probs.append(per_stay_probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
+                elif valid.sum() > 0:
+                    all_probs.append(probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
+            else:
+                # Per-timestep
+                valid = vmask & (labels >= 0)
+                if valid.sum() > 0:
+                    all_probs.append(probs[valid].cpu().numpy())
+                    all_labels.append(labels[valid].cpu().numpy())
+
+    all_probs_np = np.concatenate(all_probs)
+    all_labels_np = np.concatenate(all_labels)
+    try:
+        orig_auroc = roc_auc_score(all_labels_np, all_probs_np)
+    except ValueError:
+        orig_auroc = 0.5
+    try:
+        orig_aucpr = average_precision_score(all_labels_np, all_probs_np)
+    except ValueError:
+        orig_aucpr = 0.0
+    original_metrics = {"AUCROC": orig_auroc, "AUCPR": orig_aucpr}
+    logging.info("No-adaptation baseline (frozen MIMIC LSTM on eICU test): AUROC=%.4f AUCPR=%.4f",
+                 orig_auroc, orig_aucpr)
+
+    # --- Step 2: Create model + trainer ---
+    # Source=MIMIC (labeled), target=eICU (alignment + eval). target_val for early stopping.
+    use_source_val_es = training.get("use_source_val_es", False)
+    val_loader_for_es = None if use_source_val_es else target_val
+    if use_source_val_es:
+        logging.info("[E2E] Using SOURCE (MIMIC) validation for early stopping (use_source_val_es=true)")
+    if method == "e2e_cluda":
+        from .baselines.end_to_end.cluda_model import CLUDAModel, CLUDATrainer
+        model = CLUDAModel(config)
+        trainer = CLUDATrainer(model, source_train, target_train, source_val, config, device,
+                               target_val_loader=val_loader_for_es)
+    elif method == "e2e_raincoat":
+        from .baselines.end_to_end.raincoat_model import RAINCOATModel, RAINCOATTrainer
+        model = RAINCOATModel(config)
+        trainer = RAINCOATTrainer(model, source_train, target_train, source_val, config, device,
+                                  target_val_loader=val_loader_for_es)
+    elif method == "e2e_acon":
+        from .baselines.end_to_end.acon_model import ACONModel, ACONTrainer
+        model = ACONModel(config)
+        trainer = ACONTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=val_loader_for_es)
+    elif method == "e2e_dann":
+        from .baselines.end_to_end.dann_e2e_model import DANNModel, DANNTrainer
+        model = DANNModel(config)
+        trainer = DANNTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=val_loader_for_es)
+    elif method == "e2e_coral":
+        from .baselines.end_to_end.coral_e2e_model import CORALModel, CORALTrainer
+        model = CORALModel(config)
+        trainer = CORALTrainer(model, source_train, target_train, source_val, config, device,
+                               target_val_loader=val_loader_for_es)
+    elif method == "e2e_codats":
+        from .baselines.end_to_end.codats_e2e_model import CoDATSModel, CoDATSTrainer
+        model = CoDATSModel(config)
+        trainer = CoDATSTrainer(model, source_train, target_train, source_val, config, device,
+                                target_val_loader=val_loader_for_es)
+    elif method == "e2e_cdan":
+        from .baselines.end_to_end.cdan_model import CDANModel, CDANTrainer
+        model = CDANModel(config)
+        trainer = CDANTrainer(model, source_train, target_train, source_val, config, device,
+                              target_val_loader=val_loader_for_es)
+    else:
+        raise ValueError(f"Unknown E2E method: {method}. Use e2e_cluda, e2e_raincoat, e2e_acon, e2e_dann, e2e_coral, e2e_codats, or e2e_cdan.")
+
+    # --- Step 4: Train ---
+    trainer.train()
+
+    # --- Step 5: Evaluate E2E model on TARGET (eICU) test set ---
+    e2e_results = trainer.evaluate(target_test)
+    logging.info("E2E method results (on eICU test): %s", e2e_results)
+
+    # --- Step 6: Report results in the standard format ---
+    # The format must match what collect_result.py / gpu_scheduler parse:
+    #   EVALUATION RESULTS
+    #   Original Test Data: AUCROC, AUCPR, ...
+    #   Translated Test Data: AUCROC, AUCPR, ...
+    #   Difference: AUCROC, AUCPR, ...
+    translated_metrics = {
+        "AUCROC": e2e_results["auroc"],
+        "AUCPR": e2e_results["aucpr"],
+        "loss": e2e_results["loss"],
+    }
+
+    logging.info("=" * 80)
+    logging.info("EVALUATION RESULTS")
+    logging.info("=" * 80)
+    logging.info("Original Test Data:")
+    for metric, value in original_metrics.items():
+        logging.info("  %s: %.4f", metric, value)
+    logging.info("Translated Test Data:")
+    for metric, value in translated_metrics.items():
+        logging.info("  %s: %.4f", metric, value)
+    logging.info("Difference:")
+    for metric in original_metrics.keys():
+        if metric in translated_metrics:
+            diff = translated_metrics[metric] - original_metrics[metric]
+            logging.info("  %s: %+0.4f", metric, diff)
+    logging.info("=" * 80)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Translator Training Pipeline")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -1770,7 +2662,12 @@ def main():
     train_eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
     train_eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     train_eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
+
+    e2e_parser = subparsers.add_parser("run_e2e_baseline", help="Train and evaluate end-to-end DA baseline (CLUDA, RAINCOAT, ACON)")
+    e2e_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
+    e2e_parser.add_argument("--output_parquet", type=str, required=True, help="Output path for results parquet")
+    e2e_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+
     args = parser.parse_args()
 
     # Load config early to get log_file setting
@@ -1789,6 +2686,8 @@ def main():
         translate_and_eval(args)
     elif args.command == "train_and_eval":
         train_and_eval(args)
+    elif args.command == "run_e2e_baseline":
+        run_e2e_baseline(args)
     else:
         parser.print_help()
 

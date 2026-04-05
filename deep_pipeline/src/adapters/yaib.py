@@ -261,21 +261,21 @@ class YAIBRuntime:
                     f"test={len(self._data[DataSplit.test][DataSegment.features])} rows")
         return self._data
     
-    def load_baseline_model(self):
+    def load_baseline_model(self, freeze: bool = True):
         if self._model is not None:
             return self._model
-        
-        
+
+
         from icu_benchmarks.models import DLModel, MLModelClassifier, MLModelRegression
         from icu_benchmarks.models.dl_models import GRUNet, LSTMNet, TemporalConvNet, Transformer
-        
+
         model_map = {
             "GRU": GRUNet,
             "LSTM": LSTMNet,
             "TCN": TemporalConvNet,
             "Transformer": Transformer,
         }
-        
+
         model_class = model_map.get(self.model_name)
         if model_class is None and hasattr(yaib_models, self.model_name):
             model_class = getattr(yaib_models, self.model_name)
@@ -289,15 +289,23 @@ class YAIBRuntime:
         self._model = load_model(model_class, self.baseline_model_dir, pl_model=True)
 
         if isinstance(self._model, LightningModule):
-            for param in self._model.parameters():
-                param.requires_grad = False
-            self._model.eval()
+            if freeze:
+                for param in self._model.parameters():
+                    param.requires_grad = False
+                self._model.eval()
+            else:
+                # Keep model trainable — used for fine-tuning upper bound baseline
+                for param in self._model.parameters():
+                    param.requires_grad = True
+                self._model.train()
+                logging.info("Baseline model loaded UNFROZEN (fine-tune mode)")
         else:
             self._is_ml_model = True
             if not hasattr(self._model, "requires_backprop"):
                 self._model.requires_backprop = False
-        
-        logging.info(f"Baseline model loaded and frozen: {type(self._model).__name__}")
+
+        if freeze:
+            logging.info(f"Baseline model loaded and frozen: {type(self._model).__name__}")
         return self._model
     
     def create_dataset(self, split: str, ram_cache: bool = True) -> PredictionPolarsDataset:

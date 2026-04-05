@@ -5351,3 +5351,25 @@ experiments:
     loss: -0.1103
     brier: -0.0309
     ece: -0.0242
+
+# ---------------------------------------------------------------
+# Speedup branch validation: isolate which changes affect results
+# Exp A (Change 3): pin_memory + persistent_workers + non_blocking  -> test/pinmem-validation
+# Exp B (Other changes): val_every_n_epochs + timing logs           -> test/speedup-other-changes
+# Both use mortality_retr_v4_mmd config. Pretrain checkpoints pre-copied.
+# ---------------------------------------------------------------
+- name: val_pinmem_treat
+  config: configs/val_pinmem_treat.json
+  output: runs/val_pinmem_treat/eval.parquet
+  status: pending
+  server: local
+  branch: test/pinmem-validation
+  notes: Change3 only - pin_memory + persistent_workers + non_blocking
+
+- name: val_other_changes
+  config: configs/val_other_changes.json
+  output: runs/val_other_changes/eval.parquet
+  status: pending
+  server: local
+  branch: test/speedup-other-changes
+  notes: Other changes only - val_every_n_epochs default=1 + timing logs. Expected to match master.

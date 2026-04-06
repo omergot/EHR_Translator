@@ -46,6 +46,14 @@ class DatasetConfig:
     # Whether to drop last incomplete batch during training (matches AdaTime's drop_last)
     drop_last: bool = True
 
+    # CNN architecture params (must match AdaTime's per-dataset configs exactly)
+    kernel_size: int = 5
+    stride: int = 1
+    mid_channels: int = 64
+    final_out_channels: int = 128
+    dropout: float = 0.5
+    features_len: int = 1
+
 
 DATASET_CONFIGS = {
     "HAR": DatasetConfig(
@@ -95,6 +103,11 @@ DATASET_CONFIGS = {
             ("0", "11"), ("7", "18"), ("9", "14"), ("12", "5"), ("16", "1"),
             ("3", "19"), ("18", "12"), ("13", "17"), ("5", "15"), ("6", "2"),
         ],
+        # AdaTime EEG-specific CNN params (configs/data_model_configs.py class EEG)
+        kernel_size=25,
+        stride=6,
+        mid_channels=32,
+        dropout=0.2,
     ),
     "MFD": DatasetConfig(
         name="FD",  # Folder name in AdaTime data directory
@@ -106,6 +119,9 @@ DATASET_CONFIGS = {
             ("0", "1"), ("0", "3"), ("1", "0"), ("1", "2"), ("1", "3"),
             ("2", "1"), ("2", "3"), ("3", "0"), ("3", "1"), ("3", "2"),
         ],
+        # AdaTime FD-specific CNN params (configs/data_model_configs.py class FD)
+        kernel_size=32,
+        stride=6,
     ),
 }
 

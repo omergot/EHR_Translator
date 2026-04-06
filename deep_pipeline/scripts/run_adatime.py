@@ -379,6 +379,7 @@ def run_scenario(
                 logger.info(
                     "Using ChunkedAdaTimeCNNRetrievalTrainer (chunk_size=%d)", chunk_size,
                 )
+                ctx_aware = config.get("context_aware", False)
                 trainer = ChunkedAdaTimeCNNRetrievalTrainer(
                     frozen_model=frozen_model,
                     translator=translator,
@@ -399,6 +400,7 @@ def run_scenario(
                     early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
                     run_dir=str(run_dir / "translator"),
                     device=device,
+                    context_aware=ctx_aware,
                 )
 
                 trainer.train(
@@ -422,6 +424,7 @@ def run_scenario(
                     device=device,
                     chunk_size=chunk_size,
                     k_neighbors=training_cfg.get("k_neighbors", 8),
+                    context_aware=ctx_aware,
                 )
                 results["translator_cnn_full"] = translator_metrics
                 logger.info(
@@ -885,6 +888,18 @@ def main():
         "--d-latent", type=int, default=None,
         help="Override translator d_latent (and d_model) dimension.",
     )
+    parser.add_argument(
+        "--lambda-fidelity", type=float, default=None,
+        help="Override training lambda_fidelity (default: 0.01).",
+    )
+    parser.add_argument(
+        "--context-aware", action="store_true",
+        help=(
+            "Enable context-aware chunking: each chunk's encoder sees the previous "
+            "chunk as left context (2*chunk_size input, only current chunk output kept). "
+            "Only used with --full-length."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -929,6 +944,10 @@ def main():
     if args.d_latent is not None:
         config.setdefault("translator", {})["d_latent"] = args.d_latent
         config.setdefault("translator", {})["d_model"] = args.d_latent  # keep d_model == d_latent
+    if args.lambda_fidelity is not None:
+        config.setdefault("training", {})["lambda_fidelity"] = args.lambda_fidelity
+    if args.context_aware:
+        config["context_aware"] = True
 
     # Resolve default data path
     if "data_path" not in config or not Path(config["data_path"]).exists():

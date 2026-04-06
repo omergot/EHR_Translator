@@ -92,7 +92,7 @@ def build_memory_bank(
 
     with torch.no_grad():
         for batch in target_loader:
-            batch = tuple(b.to(device) for b in batch)
+            batch = tuple(b.to(device, non_blocking=True) for b in batch)
             parts = schema_resolver.extract(batch)
             latent = encoder.encode(
                 parts["X_val"], parts["X_miss"], parts["t_abs"],
@@ -476,8 +476,10 @@ class RetrievalTranslator(nn.Module):
         temporal_attention_mode: str = "causal",
         temporal_attention_window: int = 0,
         output_mode: str = "residual",
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
+        self.gradient_checkpointing = gradient_checkpointing
         if d_time % 2 != 0:
             raise ValueError("d_time must be even for sin/cos encoding")
 
@@ -592,17 +594,44 @@ class RetrievalTranslator(nn.Module):
 
         # Encoder blocks
         for i, block in enumerate(self.enc_blocks):
-            h, _ = block(h, m_pad)
-            gamma = ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
-            beta = ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
-            h = gamma * h + beta
-            h = h.masked_fill(m_pad[:, :, None, None], 0.0)
+            if self.gradient_checkpointing and self.training:
+                gamma = ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+                h = torch.utils.checkpoint.checkpoint(
+                    self._enc_block_with_film, block, h, m_pad, gamma, beta,
+                    use_reentrant=False,
+                )
+            else:
+                h, _ = block(h, m_pad)
+                gamma = ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+                h = gamma * h + beta
+                h = h.masked_fill(m_pad[:, :, None, None], 0.0)
 
         # Pool over features → (B, T, d_model), then project to latent
         h_pooled = h.mean(dim=2)  # (B, T, d_model)
         latent = self.to_latent(h_pooled)  # (B, T, d_latent)
         latent = latent.masked_fill(m_pad[:, :, None], 0.0)
         return latent
+
+    @staticmethod
+    def _enc_block_with_film(block, h, m_pad, gamma, beta):
+        """Encoder block + FiLM, wrapped for gradient checkpointing."""
+        h, _ = block(h, m_pad)
+        h = gamma * h + beta
+        return h.masked_fill(m_pad[:, :, None, None], 0.0)
+
+    @staticmethod
+    def _cross_block_fn(block, h, ctx_proj, m_pad):
+        """Cross-attention block, wrapped for gradient checkpointing."""
+        return block(h, ctx_proj, m_pad)
+
+    @staticmethod
+    def _dec_block_with_film(block, h, m_pad, gamma, beta):
+        """Decoder block + FiLM, wrapped for gradient checkpointing."""
+        h, _ = block(h, m_pad)
+        h = gamma * h + beta
+        return h.masked_fill(m_pad[:, :, None, None], 0.0)
 
     def decode_with_context(
         self,
@@ -631,7 +660,13 @@ class RetrievalTranslator(nn.Module):
 
         # Cross-attention blocks
         for block in self.cross_blocks:
-            h = block(h, ctx_proj, m_pad)
+            if self.gradient_checkpointing and self.training:
+                h = torch.utils.checkpoint.checkpoint(
+                    self._cross_block_fn, block, h, ctx_proj, m_pad,
+                    use_reentrant=False,
+                )
+            else:
+                h = block(h, ctx_proj, m_pad)
 
         # h is now (B, T, d_model) enriched with neighbor information
         # Proceed to standard decoder: broadcast to features
@@ -644,10 +679,18 @@ class RetrievalTranslator(nn.Module):
         dec_ctx = self.dec_film(x_static).view(B, self.n_dec_layers, 2, self.d_model)
 
         for i, block in enumerate(self.dec_blocks):
-            h, _ = block(h, m_pad)
-            gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
-            beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
-            h = gamma * h + beta
+            if self.gradient_checkpointing and self.training:
+                gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+                h = torch.utils.checkpoint.checkpoint(
+                    self._dec_block_with_film, block, h, m_pad, gamma, beta,
+                    use_reentrant=False,
+                )
+            else:
+                h, _ = block(h, m_pad)
+                gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+                h = gamma * h + beta
             h = h.masked_fill(m_pad[:, :, None, None], 0.0)
 
         out = self.output_head(h).squeeze(-1)  # (B, T, F)
@@ -675,7 +718,13 @@ class RetrievalTranslator(nn.Module):
         # Create zero context (no neighbors) — cross-attn sees only zeros
         zero_context = torch.zeros(B, T, 1, self.d_model, device=latent.device, dtype=latent.dtype)
         for block in self.cross_blocks:
-            h = block(h, zero_context, m_pad)
+            if self.gradient_checkpointing and self.training:
+                h = torch.utils.checkpoint.checkpoint(
+                    self._cross_block_fn, block, h, zero_context, m_pad,
+                    use_reentrant=False,
+                )
+            else:
+                h = block(h, zero_context, m_pad)
 
         # Standard decoder path
         h = self.from_latent(h)  # (B, T, d_model)
@@ -686,9 +735,17 @@ class RetrievalTranslator(nn.Module):
         dec_ctx = self.dec_film(x_static).view(B, self.n_dec_layers, 2, self.d_model)
 
         for i, block in enumerate(self.dec_blocks):
-            h, _ = block(h, m_pad)
-            gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
-            beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+            if self.gradient_checkpointing and self.training:
+                gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
+                h = torch.utils.checkpoint.checkpoint(
+                    self._dec_block_with_film, block, h, m_pad, gamma, beta,
+                    use_reentrant=False,
+                )
+            else:
+                h, _ = block(h, m_pad)
+                gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
+                beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
             h = gamma * h + beta
             h = h.masked_fill(m_pad[:, :, None, None], 0.0)
 

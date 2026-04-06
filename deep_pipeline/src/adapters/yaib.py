@@ -388,6 +388,8 @@ class YAIBRuntime:
             shuffle=shuffle,
             num_workers=4,
             drop_last=drop_last,
+            pin_memory=True,
+            persistent_workers=True,
         )
         self._log_dataset_stats(dataset, split)
         self._log_split_hash(dataset_to_use, split, subset_fraction)

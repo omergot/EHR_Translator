@@ -200,5 +200,6 @@ def apply_bucket_batching(
         batch_sampler=sampler,
         num_workers=loader.num_workers,
         collate_fn=variable_length_collate,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
     )

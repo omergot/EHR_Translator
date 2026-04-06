@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint
 
 from src.core.translator import AxialBlock
 
@@ -408,10 +409,12 @@ class CrossAttentionBlock(nn.Module):
         kv = context.reshape(B * T, KW, d_model)
 
         # Zero out all-padded positions to avoid NaN in attention
+        # Use non-inplace masked_fill (inplace indexing breaks gradient checkpointing)
         pad_flat = m_pad.bool().reshape(B * T)  # True = padded
         if pad_flat.any():
-            q[pad_flat] = 0.0
-            kv[pad_flat] = 0.0
+            pad_mask = pad_flat[:, None, None]  # (B*T, 1, 1)
+            q = q.masked_fill(pad_mask, 0.0)
+            kv = kv.masked_fill(pad_mask, 0.0)
 
         cross_out, _ = self.cross_attn(q, kv, kv)  # (B*T, 1, d_model)
         cross_out = cross_out.reshape(B, T, d_model)
@@ -426,10 +429,10 @@ class CrossAttentionBlock(nn.Module):
             )  # True = blocked
 
         key_padding_mask = m_pad.bool()  # (B, T)
-        # Guard all-padded rows
+        # Guard all-padded rows (non-inplace for gradient checkpointing compat)
         all_padded = key_padding_mask.all(dim=-1)  # (B,)
         if all_padded.any():
-            h[all_padded] = 0.0
+            h = h.masked_fill(all_padded[:, None, None], 0.0)
 
         self_out, _ = self.self_attn(
             h, h, h,

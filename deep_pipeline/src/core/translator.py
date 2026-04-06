@@ -381,9 +381,11 @@ class AxialBlock(nn.Module):
                 bad = (~torch.isfinite(h)).any().item()
                 raise RuntimeError(f"h has non-finite values: {bad}")
         # Guard against all-padded rows (can trigger CUDA kernel faults in some MHA kernels).
+        # Use non-inplace ops for gradient checkpointing compatibility.
         all_pad = key_padding_mask.all(dim=1)
         if all_pad.any():
-            h_temp[all_pad] = 0
+            h_temp = h_temp.masked_fill(all_pad[:, None, None], 0.0)
+            key_padding_mask = key_padding_mask.clone()
             key_padding_mask[all_pad, 0] = False
             if os.environ.get("YAIB_TRANSLATOR_DEBUG") == "1":
                 logging.warning("All-padded sequences in temporal attention: %d", int(all_pad.sum().item()))

@@ -54,6 +54,9 @@ class DatasetConfig:
     dropout: float = 0.5
     features_len: int = 1
 
+    # Training params (from AdaTime's configs/hparams.py)
+    batch_size: int = 32  # All datasets except SSC which uses 128
+
 
 DATASET_CONFIGS = {
     "HAR": DatasetConfig(
@@ -108,6 +111,8 @@ DATASET_CONFIGS = {
         stride=6,
         mid_channels=32,
         dropout=0.2,
+        # AdaTime EEG uses batch_size=128 (configs/hparams.py class EEG)
+        batch_size=128,
     ),
     "MFD": DatasetConfig(
         name="FD",  # Folder name in AdaTime data directory

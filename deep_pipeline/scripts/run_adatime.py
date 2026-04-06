@@ -285,10 +285,35 @@ def run_scenario(
             logger.info("Loading existing frozen source CNN from %s", source_cnn_ckpt)
             frozen_model = load_frozen_source_cnn(str(source_cnn_ckpt), device=device)
         else:
+            # Use AdaTime's per-dataset batch size for CNN training (may differ from
+            # translator batch size which is smaller to fit chunked sequences in memory)
+            cnn_batch_size = ds_config.batch_size
+            if cnn_batch_size != batch_size:
+                logger.info(
+                    "CNN training uses batch_size=%d (AdaTime default), translator uses %d",
+                    cnn_batch_size, batch_size,
+                )
+                cnn_loaders = create_dataloaders(
+                    data_path=data_path,
+                    dataset_name=dataset_name,
+                    source_id=source_id,
+                    target_id=target_id,
+                    batch_size=cnn_batch_size,
+                    val_fraction=config.get("val_fraction", 0.0),
+                    seed=seed,
+                    max_seq_len=max_seq_len,
+                    full_length=cfg_full_length,
+                )
+                cnn_source_train = cnn_loaders["source_train"]
+                cnn_source_val = cnn_loaders["source_val"]
+            else:
+                cnn_source_train = loaders["source_train"]
+                cnn_source_val = loaders["source_val"]
+
             logger.info("Training source CNN on source domain (%s)...", source_id)
             frozen_model = train_source_cnn(
-                source_train_loader=loaders["source_train"],
-                source_val_loader=loaders["source_val"],
+                source_train_loader=cnn_source_train,
+                source_val_loader=cnn_source_val,
                 input_channels=ds_config.input_channels,
                 num_classes=ds_config.num_classes,
                 mid_channels=cnn_cfg.get("mid_channels", ds_config.mid_channels),

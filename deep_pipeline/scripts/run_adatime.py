@@ -395,6 +395,7 @@ def run_scenario(
                 logger.info(
                     "Using ChunkedAdaTimeCNNRetrievalTrainer (chunk_size=%d)", chunk_size,
                 )
+                ctx_aware = config.get("context_aware", False)
                 trainer = ChunkedAdaTimeCNNRetrievalTrainer(
                     frozen_model=frozen_model,
                     translator=translator,
@@ -419,6 +420,7 @@ def run_scenario(
                     device=device,
                     optimizer_type=training_cfg.get("optimizer_type", "adamw"),
                     optimizer_betas=tuple(training_cfg.get("optimizer_betas", [0.9, 0.999])),
+                    context_aware=ctx_aware,
                 )
 
                 trainer.train(
@@ -442,6 +444,7 @@ def run_scenario(
                     device=device,
                     chunk_size=chunk_size,
                     k_neighbors=training_cfg.get("k_neighbors", 8),
+                    context_aware=ctx_aware,
                 )
                 results["translator_cnn_full"] = translator_metrics
                 logger.info(
@@ -950,6 +953,14 @@ def main():
         help="AdaTime protocol: use last epoch model instead of best-val checkpoint. "
              "Combined with val_fraction=0.0 this exactly matches AdaTime's evaluation.",
     )
+    parser.add_argument(
+        "--context-aware", action="store_true",
+        help=(
+            "Enable context-aware chunking: each chunk's encoder sees the previous "
+            "chunk as left context (2*chunk_size input, only current chunk output kept). "
+            "Only used with --full-length."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -1002,6 +1013,8 @@ def main():
         config.setdefault("training", {})["early_stopping_patience"] = args.patience
     if args.last_epoch:
         config.setdefault("training", {})["use_last_epoch"] = True
+    if args.context_aware:
+        config["context_aware"] = True
 
     # Resolve default data path
     if "data_path" not in config or not Path(config["data_path"]).exists():

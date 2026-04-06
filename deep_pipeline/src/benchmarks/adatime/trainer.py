@@ -1158,6 +1158,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         device: str = "cuda",
         optimizer_type: str = "adamw",
         optimizer_betas: tuple = (0.9, 0.999),
+        context_aware: bool = False,
     ):
         """Initialize the chunked CNN retrieval trainer.
 
@@ -1169,7 +1170,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                 (for Phase 1 pretrain and memory bank, processed as chunks)
             num_classes: Number of output classes
             chunk_size: Size of each chunk (default 128). Source sequences are split into
-                non-overlapping chunks of this size. Partial final chunks are dropped.
+                non-overlapping chunks of this size. Partial final chunks are padded.
             learning_rate: Translator optimizer learning rate
             weight_decay: Optimizer weight decay
             lambda_recon: Reconstruction loss weight (Phase 1)
@@ -1186,6 +1187,9 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             device: Device ('cuda' or 'cpu')
             optimizer_type: "adam" or "adamw"
             optimizer_betas: Optimizer beta parameters
+            context_aware: If True, each chunk's encoder sees the previous chunk as left
+                context (2*chunk_size input, only current chunk output kept). This lets the
+                encoder's self-attention see across chunk boundaries.
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -1193,6 +1197,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         self.source_train_loader = source_train_loader
         self.num_classes = num_classes
         self.chunk_size = chunk_size
+        self.context_aware = context_aware
         self.device = device
 
         # Loss weights
@@ -1236,6 +1241,9 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         # Compute feature bounds from SOURCE data chunks
         self._compute_feature_bounds_from_source()
 
+        if self.context_aware:
+            logger.info("Context-aware chunking ENABLED: encoder sees previous chunk as left context")
+
         # State
         self.best_val_metric = 0.0
         self.best_state = None
@@ -1253,20 +1261,29 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             x: (B, T, C) full-length sequences
 
         Returns:
-            chunks: (B * n_chunks, chunk_size, C) where n_chunks = T // chunk_size
-                Partial final chunk is dropped.
+            chunks: (B * n_chunks, chunk_size, C) where partial final chunk is
+                zero-padded to chunk_size (not dropped).
         """
         B, T, C = x.shape
-        n_chunks = T // self.chunk_size
-        if n_chunks == 0:
+        n_full_chunks = T // self.chunk_size
+        remainder = T % self.chunk_size
+
+        if n_full_chunks == 0 and remainder == 0:
             raise ValueError(
                 f"Sequence length {T} is shorter than chunk_size {self.chunk_size}. "
                 f"Use a smaller chunk_size."
             )
-        # Take only full chunks
-        x_trimmed = x[:, :n_chunks * self.chunk_size, :]  # (B, n_chunks*chunk_size, C)
+
+        if remainder > 0:
+            # Pad last partial chunk to full chunk_size
+            pad_size = self.chunk_size - remainder
+            x = F.pad(x, (0, 0, 0, pad_size))  # pad timestep dim: (B, T+pad, C)
+            n_chunks = n_full_chunks + 1
+        else:
+            n_chunks = n_full_chunks
+
         # Reshape to chunks
-        chunks = x_trimmed.reshape(B, n_chunks, self.chunk_size, C)
+        chunks = x.reshape(B, n_chunks, self.chunk_size, C)
         # Flatten batch and chunk dims: (B * n_chunks, chunk_size, C)
         return chunks.reshape(B * n_chunks, self.chunk_size, C)
 
@@ -1280,8 +1297,9 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
     ) -> torch.Tensor:
         """Translate a batch of full-length sequences by chunking.
 
-        Each sequence is split into chunks. Each chunk is independently
-        translated. Translated chunks are concatenated back.
+        Each sequence is split into chunks (padding the last partial chunk).
+        When context_aware=True, each chunk's encoder also sees the previous
+        chunk as left context, but only the current chunk's output is kept.
 
         Args:
             x: (B, T, C) full-length sequences
@@ -1291,43 +1309,136 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             x_static: (B, S) static features
 
         Returns:
-            x_translated: (B, n_chunks * chunk_size, C) translated sequences
+            x_translated: (B, T, C) translated sequences (same length as input)
         """
-        B, T, C = x.shape
-        n_chunks = T // self.chunk_size
+        B, T_original, C = x.shape
+        n_full_chunks = T_original // self.chunk_size
+        remainder = T_original % self.chunk_size
+        n_chunks = n_full_chunks + (1 if remainder > 0 else 0)
 
-        # Split into chunks: (B * n_chunks, chunk_size, C)
-        x_chunks = self._split_into_chunks(x)
-        x_miss_chunks = self._split_into_chunks(x_miss)
-        t_abs_chunks = t_abs_seq[:, :n_chunks * self.chunk_size].reshape(
-            B * n_chunks, self.chunk_size
-        )
-        m_pad_chunks = m_pad[:, :n_chunks * self.chunk_size].reshape(
-            B * n_chunks, self.chunk_size
-        )
-        # Repeat static features for each chunk
-        x_static_chunks = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
-            B * n_chunks, x_static.shape[-1]
-        )
+        if not self.context_aware:
+            # ── Standard (non-context-aware) path: all chunks at once ──
+            # Split into chunks (pads last partial chunk): (B * n_chunks, chunk_size, C)
+            x_chunks = self._split_into_chunks(x)
+            x_miss_chunks = self._split_into_chunks(x_miss)
 
-        # Encode all chunks at once
-        latent_chunks = self.translator.encode(
-            x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
-        )
+            # Pad t_abs and m_pad to match
+            if remainder > 0:
+                pad_size = self.chunk_size - remainder
+                t_abs_padded = F.pad(t_abs_seq, (0, pad_size))
+                m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)  # True = padded
+            else:
+                t_abs_padded = t_abs_seq
+                m_pad_padded = m_pad
+            t_abs_chunks = t_abs_padded.reshape(B * n_chunks, self.chunk_size)
+            m_pad_chunks = m_pad_padded.reshape(B * n_chunks, self.chunk_size)
 
-        # Retrieve from chunk-level latent bank.
-        # context: (B*n_chunks, chunk_size, K, d_latent)
-        context = self._query_chunk_bank(latent_chunks.detach())
+            # Repeat static features for each chunk
+            x_static_chunks = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
+                B * n_chunks, x_static.shape[-1]
+            )
 
-        # Translate chunks
-        x_translated_chunks, _ = self.translator.forward_with_retrieval(
-            x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
-            context, latent=latent_chunks,
-        )
+            # Encode all chunks at once
+            latent_chunks = self.translator.encode(
+                x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
+            )
 
-        # Reshape back: (B * n_chunks, chunk_size, C) -> (B, n_chunks * chunk_size, C)
-        x_translated = x_translated_chunks.reshape(B, n_chunks * self.chunk_size, C)
-        return x_translated
+            # Retrieve from chunk-level latent bank
+            context = self._query_chunk_bank(latent_chunks.detach())
+
+            # Translate chunks
+            x_translated_chunks, _ = self.translator.forward_with_retrieval(
+                x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
+                context, latent=latent_chunks,
+            )
+
+            # Reshape back and strip padding
+            x_translated = x_translated_chunks.reshape(B, n_chunks * self.chunk_size, C)
+            if remainder > 0:
+                x_translated = x_translated[:, :T_original, :]
+            return x_translated
+
+        else:
+            # ── Context-aware path: each chunk sees previous chunk as left context ──
+            # Pad the full sequence so all chunks are chunk_size aligned
+            if remainder > 0:
+                pad_size = self.chunk_size - remainder
+                x_padded = F.pad(x, (0, 0, 0, pad_size))
+                x_miss_padded = F.pad(x_miss, (0, 0, 0, pad_size))
+                t_abs_padded = F.pad(t_abs_seq, (0, pad_size))
+                m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)
+            else:
+                x_padded = x
+                x_miss_padded = x_miss
+                t_abs_padded = t_abs_seq
+                m_pad_padded = m_pad
+
+            T_padded = n_chunks * self.chunk_size
+            ctx_size = self.chunk_size  # left context = one full chunk
+
+            translated_chunks = []
+            for i in range(n_chunks):
+                chunk_start = i * self.chunk_size
+                chunk_end = chunk_start + self.chunk_size
+                ctx_start = max(0, chunk_start - ctx_size)
+
+                # Extract context + current chunk window
+                x_win = x_padded[:, ctx_start:chunk_end, :]       # (B, win_len, C)
+                x_miss_win = x_miss_padded[:, ctx_start:chunk_end, :]
+                t_abs_win = t_abs_padded[:, ctx_start:chunk_end]
+                m_pad_win = m_pad_padded[:, ctx_start:chunk_end]
+
+                win_len = x_win.shape[1]
+                x_static_exp = x_static  # (B, S) — no expansion needed
+
+                # Encode the full window (context + current chunk)
+                latent_win = self.translator.encode(
+                    x_win, x_miss_win, t_abs_win, m_pad_win, x_static_exp,
+                )
+
+                # Retrieve using only the current chunk's latent (last chunk_size timesteps)
+                latent_chunk = latent_win[:, -self.chunk_size:, :]
+                context = self._query_chunk_bank(latent_chunk.detach())
+
+                # Translate the full window
+                x_trans_win, _ = self.translator.forward_with_retrieval(
+                    x_win, x_miss_win, t_abs_win, m_pad_win, x_static_exp,
+                    # Context needs to match win_len, not just chunk_size.
+                    # Pad context on the left with zeros for the context timesteps.
+                    self._expand_context_for_window(context, win_len),
+                    latent=latent_win,
+                )
+
+                # Keep only the current chunk portion (last chunk_size timesteps)
+                translated_chunks.append(x_trans_win[:, -self.chunk_size:, :])
+
+            # Concatenate and strip padding
+            x_translated = torch.cat(translated_chunks, dim=1)  # (B, T_padded, C)
+            if remainder > 0:
+                x_translated = x_translated[:, :T_original, :]
+            return x_translated
+
+    def _expand_context_for_window(
+        self, context: torch.Tensor, win_len: int,
+    ) -> torch.Tensor:
+        """Expand chunk-level context to match a larger window length.
+
+        Context is (B, chunk_size, K, d). For the context-aware window of
+        win_len > chunk_size, we prepend zero-context for the left-context timesteps.
+
+        Args:
+            context: (B, chunk_size, K, d_latent) retrieved context for the current chunk
+            win_len: Total window length (context_len + chunk_size)
+
+        Returns:
+            expanded: (B, win_len, K, d_latent)
+        """
+        if win_len == context.shape[1]:
+            return context
+        B, T_ctx, K, d = context.shape
+        prefix_len = win_len - T_ctx
+        prefix = torch.zeros(B, prefix_len, K, d, device=context.device, dtype=context.dtype)
+        return torch.cat([prefix, context], dim=1)
 
     def _build_chunk_loader(self, full_length_loader: DataLoader) -> DataLoader:
         """Build a DataLoader that yields individual chunks instead of full sequences.
@@ -1351,18 +1462,26 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             for batch in full_length_loader:
                 x, y_seq, pad_mask, static = batch  # (B, T, C), (B, T), (B, T), (B, S)
                 B, T, C = x.shape
-                n_chunks = T // self.chunk_size
+                n_full = T // self.chunk_size
+                remainder = T % self.chunk_size
+                n_chunks = n_full + (1 if remainder > 0 else 0)
                 if n_chunks == 0:
                     continue
-                # Split: (B * n_chunks, chunk_size, C)
+                # Split: (B * n_chunks, chunk_size, C) — pads last partial chunk
                 x_chunked = self._split_into_chunks(x)
                 # Labels: use per-sequence label for all chunks of that sequence
                 y_seq_label = y_seq[:, 0]  # (B,)
                 y_repeated = y_seq_label.unsqueeze(1).expand(B, n_chunks).reshape(B * n_chunks)
                 y_chunks_seq = y_repeated.unsqueeze(1).expand(B * n_chunks, self.chunk_size)
-                # Pad mask: all True = all valid (AdaTime convention: True=valid)
-                # schema_resolver.extract() inverts: m_pad = ~pad_mask → all False (no padding)
+                # Pad mask: True = valid for full chunks, last chunk has partial padding
                 pad_chunks = torch.ones(B * n_chunks, self.chunk_size, dtype=torch.bool)
+                if remainder > 0:
+                    # Mark padded timesteps in the last chunk of each sequence as invalid
+                    pad_size = self.chunk_size - remainder
+                    # Last chunk for each sequence is at indices n_chunks-1, 2*n_chunks-1, etc.
+                    for b in range(B):
+                        last_chunk_idx = b * n_chunks + (n_chunks - 1)
+                        pad_chunks[last_chunk_idx, remainder:] = False
                 # Static: repeat for each chunk
                 static_chunks = static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
                     B * n_chunks, static.shape[-1]
@@ -1622,23 +1741,21 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             y = parts["y"][:, 0]          # (B,) per-sequence label
 
             B, T, C = x_val.shape
-            n_chunks = T // self.chunk_size
-            if n_chunks == 0:
+            if T < self.chunk_size:
                 continue
 
             # Translate full sequence via chunking
             x_translated = self._translate_sequence_chunked(
                 x_val, x_miss, t_abs, m_pad, x_static,
             )
-            # x_translated: (B, n_chunks * chunk_size, C)
+            # x_translated: (B, T, C) — same length as input (padding stripped)
 
             # Task loss: cross-entropy through frozen source CNN
             # CNN uses AdaptiveAvgPool1d so any length works
             task_loss = F.cross_entropy(self.frozen_model(x_translated), y)
 
-            # Fidelity loss: compare translated chunks to original (trimmed to same length)
-            x_val_trimmed = x_val[:, :n_chunks * self.chunk_size, :]
-            fidelity_loss = self._fidelity_loss(x_translated, x_val_trimmed)
+            # Fidelity loss: translated vs original (same length now)
+            fidelity_loss = self._fidelity_loss(x_translated, x_val)
 
             # Range loss
             range_loss = self._range_loss(x_translated)
@@ -1704,8 +1821,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                 y = parts["y"][:, 0]
 
                 B, T, C = x_val.shape
-                n_chunks = T // self.chunk_size
-                if n_chunks == 0:
+                if T < self.chunk_size:
                     continue
 
                 x_translated = self._translate_sequence_chunked(

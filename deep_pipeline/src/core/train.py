@@ -2693,8 +2693,7 @@ class RetrievalTranslatorTrainer:
             [f"{v:.3f}" for v in top_vals.tolist()],
         )
 
-    def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader,
-              val_every_n_epochs: int = 1) -> None:
+    def train(self, epochs: int, train_loader: DataLoader, val_loader: DataLoader) -> None:
         # Phase 1: Autoencoder pretraining on MIMIC
         pretrain_path = self.run_dir / "pretrain_checkpoint.pt"
         if pretrain_path.exists():
@@ -2793,15 +2792,7 @@ class RetrievalTranslatorTrainer:
         for epoch in range(start_epoch, epochs):
             t_epoch = _time.time()
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
-
-            should_validate = (
-                epoch == 0 or epoch == epochs - 1
-                or (epoch + 1) % val_every_n_epochs == 0
-            )
-            if should_validate:
-                val_metrics = self._validate(val_loader)
-            else:
-                val_metrics = None
+            val_metrics = self._validate(val_loader)
 
             epoch_time = _time.time() - t_epoch
             cur_lr = self.optimizer.param_groups[0]["lr"]
@@ -2814,16 +2805,13 @@ class RetrievalTranslatorTrainer:
                 train_metrics.get("target_task", 0.0), train_metrics.get("label_pred", 0.0),
                 cur_lr,
             )
-            if val_metrics is not None:
-                logging.info(
-                    "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
-                    epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
-                    val_metrics.get("align", 0.0), val_metrics["recon"], val_metrics["range"],
-                    val_metrics["smooth"], val_metrics["importance_reg"],
-                    val_metrics.get("target_task", 0.0), val_metrics.get("label_pred", 0.0),
-                )
-            else:
-                logging.info("Epoch %d/%d - skipping validation (val_every=%d)", epoch + 1, epochs, val_every_n_epochs)
+            logging.info(
+                "Epoch %d/%d - val: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f",
+                epoch + 1, epochs, val_metrics["total"], val_metrics["task"],
+                val_metrics.get("align", 0.0), val_metrics["recon"], val_metrics["range"],
+                val_metrics["smooth"], val_metrics["importance_reg"],
+                val_metrics.get("target_task", 0.0), val_metrics.get("label_pred", 0.0),
+            )
 
             self._log_retrieval_metrics(epoch + 1)
 
@@ -2832,11 +2820,8 @@ class RetrievalTranslatorTrainer:
                 "lr": cur_lr,
                 "bank_last_refresh_epoch": self._last_refresh_epoch,
                 **{f"train_{k}": v for k, v in train_metrics.items()},
-                **(({f"val_{k}": v for k, v in val_metrics.items()}) if val_metrics is not None else {}),
+                **{f"val_{k}": v for k, v in val_metrics.items()},
             })
-
-            if val_metrics is None:
-                continue  # skip early stopping, checkpointing, refresh for skipped-validation epochs
 
             # Step LR scheduler
             if self.scheduler is not None:

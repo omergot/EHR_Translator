@@ -204,16 +204,21 @@ def evaluate_with_chunked_translator(
     device: str = "cuda",
     chunk_size: int = 128,
     k_neighbors: int = 8,
+    context_aware: bool = False,
     # Legacy parameters (kept for backward compat but not used)
     memory_bank=None,
     retrieval_window: int = 4,
 ) -> Dict[str, float]:
     """Evaluate full-length sequences translated via chunking through frozen source CNN.
 
-    Each full-length sequence is split into chunk_size chunks. Each chunk is
-    independently translated by the retrieval translator using the chunk-level
-    latent bank. Translated chunks are concatenated and passed through the frozen
-    CNN (AdaptiveAvgPool1d handles any sequence length).
+    Each full-length sequence is split into chunk_size chunks. The last partial
+    chunk is zero-padded (not dropped). Each chunk is translated by the retrieval
+    translator using the chunk-level latent bank. Translated chunks are concatenated,
+    padding stripped, and passed through the frozen CNN (AdaptiveAvgPool1d handles
+    any sequence length).
+
+    When context_aware=True, each chunk's encoder sees the previous chunk as left
+    context (2*chunk_size input), but only the current chunk's output is kept.
 
     Args:
         frozen_model: Frozen source CNN classifier
@@ -225,6 +230,7 @@ def evaluate_with_chunked_translator(
         device: Device
         chunk_size: Chunk size (must match training chunk_size)
         k_neighbors: Number of retrieval neighbors
+        context_aware: If True, each chunk sees previous chunk as left context
 
     Returns:
         dict with accuracy, f1, auroc, loss, n_samples
@@ -236,6 +242,37 @@ def evaluate_with_chunked_translator(
     all_probs = []
     total_loss = 0.0
     total_samples = 0
+
+    def _query_bank(query_latent):
+        """Query chunk-level bank: mean-pool query, find K nearest."""
+        B_c, T_q, d = query_latent.shape
+        K = k_neighbors
+        query_mean = query_latent.mean(dim=1)  # (B_c, d)
+
+        CHUNK_Q = 512
+        topk_indices = torch.zeros(B_c, K, dtype=torch.long, device=device)
+        for start in range(0, B_c, CHUNK_Q):
+            end = min(start + CHUNK_Q, B_c)
+            q_chunk = query_mean[start:end]
+            diff = q_chunk.unsqueeze(1) - chunk_bank_latents.unsqueeze(0)
+            dists = diff.pow(2).sum(dim=-1)
+            _, top_idx = dists.topk(K, dim=-1, largest=False)
+            topk_indices[start:end] = top_idx
+
+        bank_seqs = chunk_bank_sequences  # (N, T_bank, d) on CPU
+        gathered = bank_seqs[topk_indices.cpu()].to(device)  # (B_c, K, T_bank, d)
+        gathered_mean = gathered.mean(dim=2)  # (B_c, K, d)
+        context = gathered_mean.unsqueeze(1).expand(B_c, T_q, K, d)
+        return context
+
+    def _expand_context_for_window(context, win_len):
+        """Expand chunk-level context to match a larger window length."""
+        if win_len == context.shape[1]:
+            return context
+        B_c, T_ctx, K, d = context.shape
+        prefix_len = win_len - T_ctx
+        prefix = torch.zeros(B_c, prefix_len, K, d, device=context.device, dtype=context.dtype)
+        return torch.cat([prefix, context], dim=1)
 
     with torch.no_grad():
         for batch in data_loader:
@@ -250,58 +287,95 @@ def evaluate_with_chunked_translator(
             y = parts["y"][:, 0]
 
             B, T, C = x_val.shape
-            n_chunks = T // chunk_size
-            if n_chunks == 0:
+            if T < chunk_size:
                 # Fallback: pass full sequence directly
                 logits = frozen_model(x_val)
             elif chunk_bank_latents is not None:
-                # Split into chunks
-                x_trimmed = x_val[:, :n_chunks * chunk_size, :]
-                x_miss_trimmed = x_miss[:, :n_chunks * chunk_size, :]
-                t_abs_trimmed = t_abs[:, :n_chunks * chunk_size]
-                m_pad_trimmed = m_pad[:, :n_chunks * chunk_size]
+                n_full_chunks = T // chunk_size
+                remainder = T % chunk_size
+                n_chunks = n_full_chunks + (1 if remainder > 0 else 0)
 
-                x_chunks = x_trimmed.reshape(B * n_chunks, chunk_size, C)
-                x_miss_c = x_miss_trimmed.reshape(B * n_chunks, chunk_size, C)
-                t_abs_c = t_abs_trimmed.reshape(B * n_chunks, chunk_size)
-                m_pad_c = m_pad_trimmed.reshape(B * n_chunks, chunk_size)
-                x_static_c = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
-                    B * n_chunks, x_static.shape[-1]
-                )
+                if not context_aware:
+                    # ── Standard path: pad last chunk, translate all at once ──
+                    if remainder > 0:
+                        pad_size = chunk_size - remainder
+                        x_padded = F.pad(x_val, (0, 0, 0, pad_size))
+                        x_miss_padded = F.pad(x_miss, (0, 0, 0, pad_size))
+                        t_abs_padded = F.pad(t_abs, (0, pad_size))
+                        m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)
+                    else:
+                        x_padded = x_val
+                        x_miss_padded = x_miss
+                        t_abs_padded = t_abs
+                        m_pad_padded = m_pad
 
-                # Encode: (B*n_chunks, T, d_latent)
-                latent = translator.encode(x_chunks, x_miss_c, t_abs_c, m_pad_c, x_static_c)
+                    x_chunks = x_padded.reshape(B * n_chunks, chunk_size, C)
+                    x_miss_c = x_miss_padded.reshape(B * n_chunks, chunk_size, C)
+                    t_abs_c = t_abs_padded.reshape(B * n_chunks, chunk_size)
+                    m_pad_c = m_pad_padded.reshape(B * n_chunks, chunk_size)
+                    x_static_c = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
+                        B * n_chunks, x_static.shape[-1]
+                    )
 
-                # Query chunk-level bank: mean-pool query, find K nearest
-                query_mean = latent.mean(dim=1)  # (B*n_chunks, d_latent)
-                B_c = B * n_chunks
-                K = k_neighbors
-                N = chunk_bank_latents.shape[0]
-                d = chunk_bank_latents.shape[-1]
+                    latent = translator.encode(x_chunks, x_miss_c, t_abs_c, m_pad_c, x_static_c)
+                    context = _query_bank(latent)
 
-                CHUNK_Q = 512
-                topk_indices = torch.zeros(B_c, K, dtype=torch.long, device=device)
-                for start in range(0, B_c, CHUNK_Q):
-                    end = min(start + CHUNK_Q, B_c)
-                    q_chunk = query_mean[start:end]
-                    diff = q_chunk.unsqueeze(1) - chunk_bank_latents.unsqueeze(0)
-                    dists = diff.pow(2).sum(dim=-1)
-                    _, top_idx = dists.topk(K, dim=-1, largest=False)
-                    topk_indices[start:end] = top_idx
+                    x_translated_c, _ = translator.forward_with_retrieval(
+                        x_chunks, x_miss_c, t_abs_c, m_pad_c, x_static_c, context, latent=latent,
+                    )
 
-                # Gather source chunk latent sequences
-                bank_seqs = chunk_bank_sequences  # (N, T_bank, d) on CPU
-                gathered = bank_seqs[topk_indices.cpu()].to(device)  # (B_c, K, T_bank, d)
-                gathered_mean = gathered.mean(dim=2)  # (B_c, K, d)
-                context = gathered_mean.unsqueeze(1).expand(B_c, chunk_size, K, d)  # (B_c, T, K, d)
+                    x_translated = x_translated_c.reshape(B, n_chunks * chunk_size, C)
+                    if remainder > 0:
+                        x_translated = x_translated[:, :T, :]
+                    logits = frozen_model(x_translated)
 
-                x_translated_c, _ = translator.forward_with_retrieval(
-                    x_chunks, x_miss_c, t_abs_c, m_pad_c, x_static_c, context, latent=latent,
-                )
+                else:
+                    # ── Context-aware path: per-chunk with left context ──
+                    if remainder > 0:
+                        pad_size = chunk_size - remainder
+                        x_padded = F.pad(x_val, (0, 0, 0, pad_size))
+                        x_miss_padded = F.pad(x_miss, (0, 0, 0, pad_size))
+                        t_abs_padded = F.pad(t_abs, (0, pad_size))
+                        m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)
+                    else:
+                        x_padded = x_val
+                        x_miss_padded = x_miss
+                        t_abs_padded = t_abs
+                        m_pad_padded = m_pad
 
-                # Concatenate chunks: (B, n_chunks * chunk_size, C)
-                x_translated = x_translated_c.reshape(B, n_chunks * chunk_size, C)
-                logits = frozen_model(x_translated)
+                    ctx_size = chunk_size
+                    translated_chunks = []
+                    for i in range(n_chunks):
+                        chunk_start = i * chunk_size
+                        chunk_end = chunk_start + chunk_size
+                        ctx_start = max(0, chunk_start - ctx_size)
+
+                        x_win = x_padded[:, ctx_start:chunk_end, :]
+                        x_miss_win = x_miss_padded[:, ctx_start:chunk_end, :]
+                        t_abs_win = t_abs_padded[:, ctx_start:chunk_end]
+                        m_pad_win = m_pad_padded[:, ctx_start:chunk_end]
+
+                        win_len = x_win.shape[1]
+
+                        latent_win = translator.encode(
+                            x_win, x_miss_win, t_abs_win, m_pad_win, x_static,
+                        )
+
+                        latent_chunk = latent_win[:, -chunk_size:, :]
+                        context = _query_bank(latent_chunk)
+
+                        x_trans_win, _ = translator.forward_with_retrieval(
+                            x_win, x_miss_win, t_abs_win, m_pad_win, x_static,
+                            _expand_context_for_window(context, win_len),
+                            latent=latent_win,
+                        )
+
+                        translated_chunks.append(x_trans_win[:, -chunk_size:, :])
+
+                    x_translated = torch.cat(translated_chunks, dim=1)
+                    if remainder > 0:
+                        x_translated = x_translated[:, :T, :]
+                    logits = frozen_model(x_translated)
             else:
                 logits = frozen_model(x_val)
 

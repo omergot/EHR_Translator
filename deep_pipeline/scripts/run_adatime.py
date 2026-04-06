@@ -379,6 +379,7 @@ def run_scenario(
                 logger.info(
                     "Using ChunkedAdaTimeCNNRetrievalTrainer (chunk_size=%d)", chunk_size,
                 )
+                ctx_aware = config.get("context_aware", False)
                 trainer = ChunkedAdaTimeCNNRetrievalTrainer(
                     frozen_model=frozen_model,
                     translator=translator,
@@ -399,6 +400,8 @@ def run_scenario(
                     early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
                     run_dir=str(run_dir / "translator"),
                     device=device,
+                    context_aware=ctx_aware,
+                    best_metric=training_cfg.get("best_metric", "val_acc"),
                 )
 
                 trainer.train(
@@ -422,6 +425,7 @@ def run_scenario(
                     device=device,
                     chunk_size=chunk_size,
                     k_neighbors=training_cfg.get("k_neighbors", 8),
+                    context_aware=ctx_aware,
                 )
                 results["translator_cnn_full"] = translator_metrics
                 logger.info(
@@ -450,6 +454,7 @@ def run_scenario(
                     early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
                     run_dir=str(run_dir / "translator"),
                     device=device,
+                    best_metric=training_cfg.get("best_metric", "val_acc"),
                 )
 
                 # Phase 2: translator trains on TARGET data, validated on TARGET data
@@ -889,6 +894,27 @@ def main():
         "--lambda-fidelity", type=float, default=None,
         help="Override training lambda_fidelity (default: 0.01).",
     )
+    parser.add_argument(
+        "--context-aware", action="store_true",
+        help=(
+            "Enable context-aware chunking: each chunk's encoder sees the previous "
+            "chunk as left context (2*chunk_size input, only current chunk output kept). "
+            "Only used with --full-length."
+        ),
+    )
+    parser.add_argument(
+        "--best-metric", type=str, default="val_acc",
+        choices=["val_acc", "val_loss"],
+        help="Metric for best checkpoint selection (default: val_acc).",
+    )
+    parser.add_argument(
+        "--patience", type=int, default=None,
+        help="Override early stopping patience.",
+    )
+    parser.add_argument(
+        "--val-fraction", type=float, default=None,
+        help="Override val_fraction (fraction of train data held out for validation).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -935,6 +961,14 @@ def main():
         config.setdefault("translator", {})["d_model"] = args.d_latent  # keep d_model == d_latent
     if args.lambda_fidelity is not None:
         config.setdefault("training", {})["lambda_fidelity"] = args.lambda_fidelity
+    if args.context_aware:
+        config["context_aware"] = True
+    if args.best_metric != "val_acc":
+        config.setdefault("training", {})["best_metric"] = args.best_metric
+    if args.patience is not None:
+        config.setdefault("training", {})["early_stopping_patience"] = args.patience
+    if args.val_fraction is not None:
+        config["val_fraction"] = args.val_fraction
 
     # Resolve default data path
     if "data_path" not in config or not Path(config["data_path"]).exists():

@@ -1,8 +1,8 @@
 # Experiment History
 
-## AdaTime Non-Medical Benchmark (Apr 4-5, 2026)
+## AdaTime Non-Medical Benchmark (Apr 4-6, 2026) — COMPLETE
 
-**Branch**: `agent-aaf98fa7` worktree (not yet merged to da-baselines-v2)
+**Code**: merged to `master` (commit `966af85`)
 **Datasets**: HAR (9ch, 128ts), HHAR (3ch, 128ts), WISDM (3ch, 128ts), SSC (1ch, 3000ts), MFD (1ch, 5120ts)
 **Model**: AdaTime 1D-CNN frozen on source domain; retrieval translator adapts target→source-like input
 **Protocol**: val_fraction=0.0, last-epoch CNN (AdaTime convention), PyTorch 2.4.1+cu121
@@ -14,19 +14,27 @@
 | HAR | 9 | 83.0 | **90.4** | **+7.4** | 65.9 (PyTorch gap¹) |
 | HHAR | 3 | 61.2 | **83.2** | **+22.0** | 63.1 ✓ |
 | WISDM | 3 | 49.2 | **63.4** | **+14.2** | 48.6 ✓ |
-| SSC (full) | 1 | 51.9 | 54.9 | +3.0 | 51.7 ✓ |
-| MFD (128-step) | 1 | 73.5 | 90.7 | +17.2 | unknown |
-| MFD (full, 5120-step) | 1 | PENDING | — | — | — |
+| SSC chunk128 (full) | 1 | 51.9 | 54.9 | +3.0 | 51.7 ✓ |
+| **SSC chunk256 (full)** | 1 | 51.9 | **58.1** | **+6.2** | 51.7 ✓ |
+| SSC chunk512 (full) | 1 | 52.0 | 58.0 | +6.0 | 51.7 ✓ |
+| SSC d_lat=64 (full) | 1 | 51.9 | 53.8 | +1.9 | 51.7 ✓ |
+| MFD (128-step downsampled) | 1 | 73.5 | 90.7 | +17.2 | unknown |
+| **MFD (full, 5120-step)** | 1 | **69.8** | **87.2** | **+17.4** | unknown |
 
 ¹ PyTorch 2.4 trains HAR CNN better than AdaTime's PyTorch 1.7 (82.98 vs published 65.9)
 
 3-dataset mean (HAR/HHAR/WISDM): Translator **79.0** vs AdaTime DIRT-T **78.8** (best E2E) — we beat it with frozen model.
 
-Key findings:
+### SSC Chunk-Size Ablation (Apr 5-6)
+
+chunk256 (+6.2) doubles chunk128 (+3.0). chunk512 (+6.0) shows diminishing returns. d_latent=64 hurts (+1.9). Confirms temporal context per chunk was the main SSC bottleneck, not 1-channel or latent capacity. The catastrophic 0→11 failure (-0.184 at chunk128) becomes +0.048 at chunk256.
+
+### Key findings:
 - Translator beats all 12 AdaTime E2E baselines in mean MF1 across HAR/HHAR/WISDM (79.0)
 - HHAR/WISDM comparisons are direct (source-only matches published); HAR confounded by PyTorch version
-- 29W/0T/1L across 30 scenarios vs 1 loss for DANN (catastrophic collapse on MFD)
-- Dimensionality scaling: gains grow with input channels (EHR at 48-100 features is optimal)
+- 29W/0T/1L across 30 HAR/HHAR/WISDM scenarios; MFD 9W/1L
+- MFD full-length (+17.4) confirms downsampled (+17.2) — strongest non-medical result
+- SSC chunk256 is the recommended config (+6.2 MF1). Chunk size ablation is a paper contribution.
 - Single config used for all 50 scenarios; AdaTime methods used 100 HP trials + 3 seeds
 
 Result files: `experiments/results/adatime_cnn_fixed_results.json`, `adatime_cnn_ssc_mfd_fixed.json`, `runs/adatime_cnn/SSC_full/all_results.json`

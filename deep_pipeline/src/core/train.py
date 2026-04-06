@@ -2276,8 +2276,11 @@ class RetrievalTranslatorTrainer:
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
             _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
-            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
-                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+            _gc_enabled = getattr(self.translator, "gradient_checkpointing", False)
+            _do_grad_diag = not _gc_enabled and (
+                (epoch == 0 and n_batches <= 3) or
+                (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+            )
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path with retrieval ──

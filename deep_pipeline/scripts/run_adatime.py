@@ -885,6 +885,10 @@ def main():
         "--d-latent", type=int, default=None,
         help="Override translator d_latent (and d_model) dimension.",
     )
+    parser.add_argument(
+        "--lambda-fidelity", type=float, default=None,
+        help="Override training lambda_fidelity (default: 0.01).",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -929,6 +933,8 @@ def main():
     if args.d_latent is not None:
         config.setdefault("translator", {})["d_latent"] = args.d_latent
         config.setdefault("translator", {})["d_model"] = args.d_latent  # keep d_model == d_latent
+    if args.lambda_fidelity is not None:
+        config.setdefault("training", {})["lambda_fidelity"] = args.lambda_fidelity
 
     # Resolve default data path
     if "data_path" not in config or not Path(config["data_path"]).exists():

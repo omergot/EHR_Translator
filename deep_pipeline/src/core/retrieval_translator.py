@@ -749,7 +749,7 @@ class RetrievalTranslator(nn.Module):
                 h, _ = block(h, m_pad)
                 gamma = dec_ctx[:, i, 0, :].unsqueeze(1).unsqueeze(1)
                 beta = dec_ctx[:, i, 1, :].unsqueeze(1).unsqueeze(1)
-            h = gamma * h + beta
+                h = gamma * h + beta
             h = h.masked_fill(m_pad[:, :, None, None], 0.0)
 
         out = self.output_head(h).squeeze(-1)  # (B, T, F)

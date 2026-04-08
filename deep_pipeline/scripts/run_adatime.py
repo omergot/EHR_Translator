@@ -398,6 +398,7 @@ def run_scenario(
                     num_classes=ds_config.num_classes,
                     chunk_size=chunk_size,
                     learning_rate=training_cfg.get("lr", 5e-4),
+                    weight_decay=training_cfg.get("weight_decay", 1e-5),
                     lambda_recon=training_cfg.get("lambda_recon", 0.1),
                     lambda_range=training_cfg.get("lambda_range", 0.1),
                     lambda_smooth=training_cfg.get("lambda_smooth", 0.0),
@@ -411,6 +412,8 @@ def run_scenario(
                     use_last_epoch=training_cfg.get("use_last_epoch", False),
                     run_dir=str(run_dir / "translator"),
                     device=device,
+                    optimizer_type=training_cfg.get("optimizer_type", "adamw"),
+                    optimizer_betas=tuple(training_cfg.get("optimizer_betas", [0.9, 0.999])),
                 )
 
                 trainer.train(
@@ -450,6 +453,7 @@ def run_scenario(
                     source_train_loader=loaders["source_train"],  # Phase 1 + memory bank on SOURCE
                     num_classes=ds_config.num_classes,
                     learning_rate=training_cfg.get("lr", 5e-4),
+                    weight_decay=training_cfg.get("weight_decay", 1e-5),
                     lambda_recon=training_cfg.get("lambda_recon", 0.1),
                     lambda_range=training_cfg.get("lambda_range", 0.1),
                     lambda_smooth=training_cfg.get("lambda_smooth", 0.0),
@@ -465,6 +469,8 @@ def run_scenario(
                     run_dir=str(run_dir / "translator"),
                     pretrain_fallback_dir=str(Path(config["source_cnn_base_dir"]) / "translator") if config.get("source_cnn_base_dir") else None,
                     device=device,
+                    optimizer_type=training_cfg.get("optimizer_type", "adamw"),
+                    optimizer_betas=tuple(training_cfg.get("optimizer_betas", [0.9, 0.999])),
                 )
 
                 # Phase 2: translator trains on TARGET data, validated on TARGET data
@@ -617,6 +623,7 @@ def run_scenario(
                 target_train_loader=loaders["target_train"],
                 num_classes=ds_config.num_classes,
                 learning_rate=training_cfg.get("lr", 5e-4),
+                weight_decay=training_cfg.get("weight_decay", 1e-5),
                 lambda_recon=training_cfg.get("lambda_recon", 0.1),
                 lambda_range=training_cfg.get("lambda_range", 0.1),
                 lambda_smooth=training_cfg.get("lambda_smooth", 0.0),
@@ -629,6 +636,8 @@ def run_scenario(
                 early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
                 run_dir=str(run_dir / "translator"),
                 device=device,
+                optimizer_type=training_cfg.get("optimizer_type", "adamw"),
+                optimizer_betas=tuple(training_cfg.get("optimizer_betas", [0.9, 0.999])),
             )
 
             trainer.train(

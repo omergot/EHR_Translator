@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import GradScaler
-from torch.optim import AdamW
+from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 
 from src.core.retrieval_translator import (
@@ -64,6 +64,8 @@ class AdaTimeRetrievalTrainer:
         use_last_epoch: bool = False,
         run_dir: str = "runs/adatime",
         device: str = "cuda",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -92,8 +94,10 @@ class AdaTimeRetrievalTrainer:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
@@ -500,6 +504,8 @@ class AdaTimeCNNRetrievalTrainer:
         run_dir: str = "runs/adatime_cnn",
         pretrain_fallback_dir: str = None,
         device: str = "cuda",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         """Initialize the CNN-based retrieval trainer.
 
@@ -529,6 +535,8 @@ class AdaTimeCNNRetrievalTrainer:
                 when it doesn't exist in run_dir. Used by variant runs to reuse pretrain
                 from the base experiment.
             device: Device ('cuda' or 'cpu')
+            optimizer_type: "adam" or "adamw"
+            optimizer_betas: Optimizer beta parameters
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -558,8 +566,10 @@ class AdaTimeCNNRetrievalTrainer:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer for translator
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
@@ -1146,6 +1156,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         use_last_epoch: bool = False,
         run_dir: str = "runs/adatime_cnn",
         device: str = "cuda",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         """Initialize the chunked CNN retrieval trainer.
 
@@ -1172,6 +1184,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             early_stopping_patience: Epochs without improvement before stopping
             run_dir: Directory for checkpoints
             device: Device ('cuda' or 'cpu')
+            optimizer_type: "adam" or "adamw"
+            optimizer_betas: Optimizer beta parameters
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -1200,8 +1214,10 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer for translator
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 

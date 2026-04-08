@@ -91,6 +91,22 @@ These rules prevent catastrophic failures. Violating any one can silently ruin r
 - **Remote sync gate**: Before queuing experiments on remote servers, verify that all relevant code changes have been pushed. Run `git log origin/<branch>..HEAD` to check for unpushed commits.
 - **Empirical estimates**: When estimating resource usage (GPU VRAM, disk, compute time), prefer actual measurements from prior runs (`nvidia-smi`, log files) over theoretical calculations. Flag when estimates are theoretical.
 
+## SSH & Server Access
+
+SSH aliases (in `~/.ssh/config`):
+- `ssh 3090` → `omerg@132.68.35.177` (RTX 3090, PyTorch 2.6+cu118)
+- `ssh a6000` → `omerg@132.68.39.40` (A6000×8, PyTorch 2.6+cu118)
+- Athena: use `athena_submit.py` — or `ssh omer.gotfrid@athena-login` directly
+
+**All three local servers are now equivalent** (PyTorch 2.6+cu118). Results are directly comparable.
+
+## Multi-Server Workflows
+
+- **Push before remote queue**: After any code change, confirm commits are pushed before queueing remote experiments. Hook on `queue.yaml` will warn. Manual check: `git log origin/<branch>..HEAD`.
+- **SSH variable expansion**: When writing remote shell commands, pass variables explicitly. Do not rely on the remote shell inheriting local env vars.
+- **Bootstrap CIs**: Default to 500 replicates on large datasets (not 2000). Prior successful runs used 500.
+- **Experiment auto-validation**: The scheduler auto-validates results on completion and writes `experiments/results/{name}.needs_diagnosis` for failures. SessionStart hook and `--status` hook alert on pending diagnoses.
+
 ## Config Structure
 
 JSON configs with two main sections:

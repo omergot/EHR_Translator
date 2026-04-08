@@ -235,8 +235,12 @@ def run_scenario(
                 f"runs/adatime_cnn/{dataset_name}/",
                 f"runs/adatime_cnn/{dataset_name}_full/",
             ))
+        # For variant runs, use a separate translator dir but share source CNN from base dir.
+        # The "source_cnn_base_dir" config key allows reusing CNNs across experiments.
+        source_cnn_base = config.get("source_cnn_base_dir", None)
     else:
         run_dir = Path(config["output"]["run_dir"])
+        source_cnn_base = None
 
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -280,6 +284,13 @@ def run_scenario(
         # ── CNN mode: train/load frozen CNN on SOURCE domain ──
         source_cnn_ckpt = run_dir / "source_cnn.pt"
         cnn_cfg = config.get("source_cnn", {})
+
+        # For variant runs, fall back to base dir for source CNN
+        if not source_cnn_ckpt.exists() and source_cnn_base is not None:
+            base_ckpt = Path(source_cnn_base) / "source_cnn.pt"
+            if base_ckpt.exists():
+                logger.info("Source CNN not in variant dir, using base: %s", base_ckpt)
+                source_cnn_ckpt = base_ckpt
 
         if source_cnn_ckpt.exists() and not target_only:
             logger.info("Loading existing frozen source CNN from %s", source_cnn_ckpt)
@@ -397,6 +408,7 @@ def run_scenario(
                     retrieval_window=training_cfg.get("retrieval_window", 4),
                     memory_refresh_epochs=training_cfg.get("memory_refresh_epochs", 5),
                     early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
+                    use_last_epoch=training_cfg.get("use_last_epoch", False),
                     run_dir=str(run_dir / "translator"),
                     device=device,
                 )
@@ -448,7 +460,10 @@ def run_scenario(
                     retrieval_window=training_cfg.get("retrieval_window", 4),
                     memory_refresh_epochs=training_cfg.get("memory_refresh_epochs", 5),
                     early_stopping_patience=training_cfg.get("early_stopping_patience", 10),
+                    best_metric=training_cfg.get("best_metric", "val_acc"),
+                    use_last_epoch=training_cfg.get("use_last_epoch", False),
                     run_dir=str(run_dir / "translator"),
+                    pretrain_fallback_dir=str(Path(config["source_cnn_base_dir"]) / "translator") if config.get("source_cnn_base_dir") else None,
                     device=device,
                 )
 
@@ -767,9 +782,16 @@ def run_all_scenarios(
     """
     dataset_name = config_base["dataset"]
     ds_config = get_dataset_config(dataset_name)
-    dir_tag = f"{dataset_name}_full{variant}" if full_length else dataset_name
+    if full_length:
+        dir_tag = f"{dataset_name}_full{variant}"
+    elif variant:
+        dir_tag = f"{dataset_name}{variant}"
+    else:
+        dir_tag = dataset_name
     if full_length:
         base_run_root = f"runs/adatime_cnn/{dir_tag}"
+    elif variant:
+        base_run_root = f"runs/adatime_cnn/{dir_tag}" if use_cnn else f"runs/adatime/{dir_tag}"
     else:
         base_run_root = "runs/adatime_cnn" if use_cnn else "runs/adatime"
 
@@ -778,9 +800,17 @@ def run_all_scenarios(
         config = {**config_base}
         config["source_id"] = src_id
         config["target_id"] = trg_id
-        config["output"] = {
-            "run_dir": f"runs/adatime_cnn/{dir_tag}/{src_id}_to_{trg_id}",
-        }
+        if variant and not full_length:
+            config["output"] = {
+                "run_dir": f"{base_run_root}/{src_id}_to_{trg_id}",
+            }
+            # Point to original (non-variant) dir for source CNN reuse
+            orig_base = "runs/adatime_cnn" if use_cnn else "runs/adatime"
+            config["source_cnn_base_dir"] = f"{orig_base}/{dataset_name}/{src_id}_to_{trg_id}"
+        else:
+            config["output"] = {
+                "run_dir": f"runs/adatime_cnn/{dir_tag}/{src_id}_to_{trg_id}",
+            }
         scenario_results = run_scenario(
             config, include_dann=include_dann, use_cnn=use_cnn, full_length=full_length,
         )
@@ -829,7 +859,7 @@ def run_all_scenarios(
     # Also save a copy to experiments/results/ for easy access
     exp_results_dir = Path("experiments/results")
     exp_results_dir.mkdir(parents=True, exist_ok=True)
-    suffix = "_full" if full_length else ""
+    suffix = ("_full" + (variant if variant else "")) if full_length else (variant if variant else "")
     exp_results_path = exp_results_dir / f"adatime_cnn_{dataset_name.lower()}{suffix}.json"
     with open(exp_results_path, "w") as f:
         json.dump(serializable, f, indent=2)
@@ -848,8 +878,8 @@ def main():
     parser.add_argument("--data-path", type=str, default=None, help="Override data path")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=30, help="Translator training epochs")
-    parser.add_argument("--pretrain-epochs", type=int, default=10)
+    parser.add_argument("--epochs", type=int, default=None, help="Translator training epochs (overrides config)")
+    parser.add_argument("--pretrain-epochs", type=int, default=None)
     parser.add_argument("--max-seq-len", type=int, default=None, help="Downsample long sequences to this length")
     parser.add_argument("--all-scenarios", action="store_true", help="Run all scenarios for dataset")
     parser.add_argument("--target-only", action="store_true", help="Only train and eval target model")
@@ -889,6 +919,23 @@ def main():
         "--lambda-fidelity", type=float, default=None,
         help="Override training lambda_fidelity (default: 0.01).",
     )
+    parser.add_argument(
+        "--best-metric", type=str, default=None, choices=["val_acc", "val_loss"],
+        help=(
+            "Metric for early stopping and best model selection. "
+            "'val_acc' (default, higher is better) or 'val_loss' (lower is better). "
+            "val_loss is recommended for small test sets where accuracy is too coarse."
+        ),
+    )
+    parser.add_argument(
+        "--patience", type=int, default=None,
+        help="Override early_stopping_patience (default: 10). Use 0 to disable.",
+    )
+    parser.add_argument(
+        "--last-epoch", action="store_true",
+        help="AdaTime protocol: use last epoch model instead of best-val checkpoint. "
+             "Combined with val_fraction=0.0 this exactly matches AdaTime's evaluation.",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -926,7 +973,7 @@ def main():
         config["data_path"] = args.data_path
     if args.max_seq_len is not None:
         config["max_seq_len"] = args.max_seq_len
-    if args.epochs:
+    if args.epochs is not None:
         config.setdefault("training", {})["epochs"] = args.epochs
     if args.pretrain_epochs is not None:
         config.setdefault("training", {})["pretrain_epochs"] = args.pretrain_epochs
@@ -935,6 +982,12 @@ def main():
         config.setdefault("translator", {})["d_model"] = args.d_latent  # keep d_model == d_latent
     if args.lambda_fidelity is not None:
         config.setdefault("training", {})["lambda_fidelity"] = args.lambda_fidelity
+    if args.best_metric is not None:
+        config.setdefault("training", {})["best_metric"] = args.best_metric
+    if args.patience is not None:
+        config.setdefault("training", {})["early_stopping_patience"] = args.patience
+    if args.last_epoch:
+        config.setdefault("training", {})["use_last_epoch"] = True
 
     # Resolve default data path
     if "data_path" not in config or not Path(config["data_path"]).exists():

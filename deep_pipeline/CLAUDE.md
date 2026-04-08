@@ -114,6 +114,11 @@ All experiments are managed through `experiments/queue.yaml`. This is the single
 - Nighttime (21:00-09:00): max 3 GPUs. Can use GPU 2. GPU 3 only as last resort.
 - These rules are enforced by the scheduler automatically.
 - If launching a one-off manual experiment (debugging), use GPU 3 to avoid conflicts.
+- **CRITICAL — No GPU sharing between EHR and AdaTime experiments**: Running two training jobs on the same GPU risks OOM and makes both experiments slow/unreproducible. Before launching any manual experiment (`run_adatime.py` or `run.py` outside the scheduler), ALWAYS verify the target GPU is truly free:
+  ```bash
+  nvidia-smi; sleep 5; nvidia-smi
+  ```
+  Check both outputs — a GPU may appear idle between jobs (loading phase). Only use a GPU if it shows 0% utilization AND low memory in BOTH readings. Also run `python scripts/gpu_scheduler.py --status` to confirm the scheduler is not about to assign a job to that GPU.
 
 ### Queue Entry Format
 Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`, `server`, `branch`, `command`.

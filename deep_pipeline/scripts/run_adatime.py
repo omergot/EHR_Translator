@@ -321,6 +321,10 @@ def run_scenario(
                 cnn_source_train = loaders["source_train"]
                 cnn_source_val = loaders["source_val"]
 
+            # Pass optimizer betas from training config (AdaTime protocol: (0.5, 0.99))
+            training_cfg = config.get("training", {})
+            cnn_optimizer_betas = tuple(training_cfg.get("optimizer_betas", [0.9, 0.999]))
+
             logger.info("Training source CNN on source domain (%s)...", source_id)
             frozen_model = train_source_cnn(
                 source_train_loader=cnn_source_train,
@@ -339,6 +343,7 @@ def run_scenario(
                 device=device,
                 save_path=str(source_cnn_ckpt),
                 patience=cnn_cfg.get("patience", 10),
+                optimizer_betas=cnn_optimizer_betas,
             )
 
         if target_only:

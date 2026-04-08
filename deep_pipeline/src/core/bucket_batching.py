@@ -201,5 +201,10 @@ def apply_bucket_batching(
         num_workers=loader.num_workers,
         collate_fn=variable_length_collate,
         pin_memory=True,
-        persistent_workers=loader.num_workers > 0,
+        # persistent_workers disabled: batch_sampler + persistent_workers has a bug in
+        # PyTorch 2.4 (local, cu121) where worker iterator doesn't reset between epochs,
+        # causing stale indices / data corruption that compounds over 3500+ batches/epoch
+        # (AKI/Sepsis VLB). Not an issue on PyTorch 2.6 (3090, cu118). Mortality passes
+        # because it has ~35 batches/epoch and the corruption doesn't accumulate enough.
+        persistent_workers=False,
     )

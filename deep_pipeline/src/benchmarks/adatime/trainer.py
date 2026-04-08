@@ -61,6 +61,7 @@ class AdaTimeRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
+        use_last_epoch: bool = False,
         run_dir: str = "runs/adatime",
         device: str = "cuda",
     ):
@@ -85,6 +86,7 @@ class AdaTimeRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -442,9 +444,11 @@ class AdaTimeRetrievalTrainer:
                     break
 
         # Restore best model
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
             logger.info("Restored best model (val_acc=%.4f)", self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         # Verify frozen model integrity
         self._verify_frozen()
@@ -491,7 +495,10 @@ class AdaTimeCNNRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
+        best_metric: str = "val_acc",
+        use_last_epoch: bool = False,
         run_dir: str = "runs/adatime_cnn",
+        pretrain_fallback_dir: str = None,
         device: str = "cuda",
     ):
         """Initialize the CNN-based retrieval trainer.
@@ -514,7 +521,13 @@ class AdaTimeCNNRetrievalTrainer:
             retrieval_window: Retrieval window size
             memory_refresh_epochs: Rebuild memory bank every N epochs
             early_stopping_patience: Epochs without improvement before stopping
+            best_metric: Metric for early stopping/best model selection.
+                "val_acc" (higher is better) or "val_loss" (lower is better).
+                val_loss is recommended for small test sets where accuracy is coarse.
             run_dir: Directory for checkpoints
+            pretrain_fallback_dir: Fallback directory to look for pretrain_checkpoint.pt
+                when it doesn't exist in run_dir. Used by variant runs to reuse pretrain
+                from the base experiment.
             device: Device ('cuda' or 'cpu')
         """
         self.frozen_model = frozen_model.to(device)
@@ -537,6 +550,9 @@ class AdaTimeCNNRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.best_metric = best_metric  # "val_acc" or "val_loss"
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
+        self.pretrain_fallback_dir = Path(pretrain_fallback_dir) if pretrain_fallback_dir else None
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -557,7 +573,9 @@ class AdaTimeCNNRetrievalTrainer:
         self._compute_feature_bounds_from_source()
 
         # State
-        self.best_val_metric = 0.0
+        # For val_acc: higher is better, init to 0.0
+        # For val_loss: lower is better, init to inf
+        self.best_val_metric = 0.0 if best_metric == "val_acc" else float("inf")
         self.best_state = None
         self.history = []
         self.memory_bank: Optional[MemoryBank] = None
@@ -671,6 +689,17 @@ class AdaTimeCNNRetrievalTrainer:
             self.translator.load_state_dict(state["translator"])
             logger.info("Loaded pretrain checkpoint from %s", pretrain_ckpt)
             return
+
+        # Fall back to base dir pretrain checkpoint (for variant runs)
+        if self.pretrain_fallback_dir is not None:
+            fallback_ckpt = self.pretrain_fallback_dir / "pretrain_checkpoint.pt"
+            if fallback_ckpt.exists():
+                state = torch.load(fallback_ckpt, map_location=self.device, weights_only=False)
+                self.translator.load_state_dict(state["translator"])
+                logger.info("Loaded pretrain checkpoint from fallback: %s", fallback_ckpt)
+                # Save a copy to the variant dir so future reruns find it locally
+                torch.save(state, pretrain_ckpt)
+                return
 
         for epoch in range(1, self.pretrain_epochs + 1):
             loss = self._pretrain_epoch()
@@ -888,15 +917,29 @@ class AdaTimeCNNRetrievalTrainer:
 
             self.history.append({"epoch": epoch, **train_losses, **val_metrics})
 
-            if val_metrics["val_acc"] > self.best_val_metric:
-                self.best_val_metric = val_metrics["val_acc"]
+            # Determine if current epoch is a new best
+            current_metric = val_metrics[self.best_metric]
+            if self.best_metric == "val_acc":
+                is_new_best = current_metric > self.best_val_metric
+            else:  # val_loss: lower is better
+                is_new_best = current_metric < self.best_val_metric
+
+            if is_new_best:
+                self.best_val_metric = current_metric
                 self.best_state = {k: v.clone() for k, v in self.translator.state_dict().items()}
                 patience_counter = 0
-                logger.info("  -> New best val_acc=%.4f", self.best_val_metric)
+                logger.info(
+                    "  -> New best %s=%.4f (val_acc=%.4f val_loss=%.4f)",
+                    self.best_metric, self.best_val_metric,
+                    val_metrics["val_acc"], val_metrics["val_loss"],
+                )
 
                 torch.save({
                     "translator": self.translator.state_dict(),
-                    "best_val_acc": self.best_val_metric,
+                    "best_val_acc": val_metrics["val_acc"],
+                    "best_val_loss": val_metrics["val_loss"],
+                    "best_metric": self.best_metric,
+                    "best_metric_value": self.best_val_metric,
                     "epoch": epoch,
                 }, self.run_dir / "best_checkpoint.pt")
             else:
@@ -905,18 +948,20 @@ class AdaTimeCNNRetrievalTrainer:
                     logger.info("Early stopping at epoch %d (patience=%d)", epoch, self.early_stopping_patience)
                     break
 
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
-            logger.info("Restored best model (val_acc=%.4f)", self.best_val_metric)
+            logger.info("Restored best model (%s=%.4f)", self.best_metric, self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         self._verify_frozen()
 
         torch.save({
             "translator": self.translator.state_dict(),
-            "best_val_acc": self.best_val_metric,
+            "best_val_acc": self.best_val_metric if self.best_metric == "val_acc" else 0.0,
             "history": self.history,
         }, self.run_dir / "final_checkpoint.pt")
-        logger.info("Training complete. Best val_acc=%.4f", self.best_val_metric)
+        logger.info("Training complete. Best %s=%.4f", self.best_metric, self.best_val_metric)
 
 
 class AdaTimeFrozenDANNTrainer:
@@ -1098,6 +1143,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
+        use_last_epoch: bool = False,
         run_dir: str = "runs/adatime_cnn",
         device: str = "cuda",
     ):
@@ -1148,6 +1194,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -1726,9 +1773,11 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                     logger.info("Early stopping at epoch %d (patience=%d)", epoch, self.early_stopping_patience)
                     break
 
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
             logger.info("Restored best model (val_acc=%.4f)", self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         self._verify_frozen()
 

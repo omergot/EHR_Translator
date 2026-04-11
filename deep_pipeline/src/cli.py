@@ -206,6 +206,8 @@ def _get_training_config(config: dict) -> dict:
         "use_torch_compile": training.get("use_torch_compile", False),
         # Gradient checkpointing: trade compute for memory to enable larger batch sizes
         "gradient_checkpointing": training.get("gradient_checkpointing", False),
+        # Ablation C9: zero out triplet time delta component
+        "disable_triplet_time_delta": training.get("disable_triplet_time_delta", False),
     }
 
 
@@ -1435,6 +1437,7 @@ def train_translator(args):
             temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
             output_mode=training_cfg.get("output_mode", "residual"),
             gradient_checkpointing=training_cfg.get("gradient_checkpointing", False),
+            disable_triplet_time_delta=training_cfg.get("disable_triplet_time_delta", False),
         )
 
         trainer = RetrievalTranslatorTrainer(
@@ -2041,6 +2044,7 @@ def translate_and_eval(args):
             temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
             output_mode=training_cfg.get("output_mode", "residual"),
             gradient_checkpointing=training_cfg.get("gradient_checkpointing", False),
+            disable_triplet_time_delta=training_cfg.get("disable_triplet_time_delta", False),
         )
 
         checkpoint_path = args.translator_checkpoint

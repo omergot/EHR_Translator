@@ -2296,18 +2296,22 @@ class RetrievalTranslatorTrainer:
                         _lp_logits = self.translator.predict_labels(src_latent.detach(), parts["M_pad"])
                         _ccr_label_probs = torch.sigmoid(_lp_logits.float())
 
-                # Per-timestep retrieval from memory bank
-                importance_w = self.translator.get_importance_weights()
-                context = query_memory_bank(
-                    src_latent.detach(),  # detach queries for retrieval (not for encoding)
-                    parts["M_pad"],
-                    self.memory_bank,
-                    k_neighbors=self.k_neighbors,
-                    retrieval_window=self.retrieval_window,
-                    importance_weights=importance_w.detach(),
-                    query_label_probs=_ccr_label_probs,
-                    ccr_alpha=self.ccr_alpha,
-                )
+                # Per-timestep retrieval from memory bank (skip if no cross-attention)
+                if self.translator.n_cross_layers > 0:
+                    importance_w = self.translator.get_importance_weights()
+                    context = query_memory_bank(
+                        src_latent.detach(),  # detach queries for retrieval (not for encoding)
+                        parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w.detach(),
+                        query_label_probs=_ccr_label_probs,
+                        ccr_alpha=self.ccr_alpha,
+                    )
+                else:
+                    B, T, D = src_latent.shape
+                    context = torch.zeros(B, T, 1, D, device=src_latent.device)
 
                 # Forward with retrieved context (reuse src_latent to avoid double-encode)
                 x_out, _ = self.translator.forward_with_retrieval(
@@ -2550,16 +2554,20 @@ class RetrievalTranslatorTrainer:
                     _lp_logits = self.translator.predict_labels(src_latent, parts["M_pad"])
                     _ccr_label_probs = torch.sigmoid(_lp_logits.float())
 
-                context = query_memory_bank(
-                    src_latent,
-                    parts["M_pad"],
-                    self.memory_bank,
-                    k_neighbors=self.k_neighbors,
-                    retrieval_window=self.retrieval_window,
-                    importance_weights=importance_w,
-                    query_label_probs=_ccr_label_probs,
-                    ccr_alpha=self.ccr_alpha,
-                )
+                if self.translator.n_cross_layers > 0:
+                    context = query_memory_bank(
+                        src_latent,
+                        parts["M_pad"],
+                        self.memory_bank,
+                        k_neighbors=self.k_neighbors,
+                        retrieval_window=self.retrieval_window,
+                        importance_weights=importance_w,
+                        query_label_probs=_ccr_label_probs,
+                        ccr_alpha=self.ccr_alpha,
+                    )
+                else:
+                    B, T, D = src_latent.shape
+                    context = torch.zeros(B, T, 1, D, device=src_latent.device)
 
                 x_out, _ = self.translator.forward_with_retrieval(
                     parts["X_val"], parts["X_miss"], parts["t_abs"],
@@ -2784,8 +2792,8 @@ class RetrievalTranslatorTrainer:
                 start_epoch, self.best_val, epochs_without_improvement,
             )
 
-        # Initial memory bank build (before loop)
-        if self.memory_bank is None:
+        # Initial memory bank build (before loop) — skip if no cross-attention (C1 ablation)
+        if self.memory_bank is None and self.translator.n_cross_layers > 0:
             self._build_memory_bank()
             self._last_refresh_epoch = start_epoch
             self._update_refresh_baseline(None)
@@ -2833,9 +2841,9 @@ class RetrievalTranslatorTrainer:
                 else:
                     self.scheduler.step()
 
-            # Adaptive / fixed memory bank refresh (AFTER validation)
+            # Adaptive / fixed memory bank refresh (AFTER validation) — skip if no cross-attention
             should_refresh, refresh_reason = self._should_refresh_memory_bank(epoch, val_metrics)
-            if should_refresh:
+            if should_refresh and self.translator.n_cross_layers > 0:
                 self._build_memory_bank()
                 self._last_refresh_epoch = epoch
                 self._update_refresh_baseline(val_metrics)

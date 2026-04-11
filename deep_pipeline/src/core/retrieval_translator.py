@@ -480,9 +480,11 @@ class RetrievalTranslator(nn.Module):
         temporal_attention_window: int = 0,
         output_mode: str = "residual",
         gradient_checkpointing: bool = False,
+        disable_triplet_time_delta: bool = False,
     ):
         super().__init__()
         self.gradient_checkpointing = gradient_checkpointing
+        self.disable_triplet_time_delta = disable_triplet_time_delta
         if d_time % 2 != 0:
             raise ValueError("d_time must be even for sin/cos encoding")
 
@@ -581,6 +583,8 @@ class RetrievalTranslator(nn.Module):
         time_delta = time_delta.masked_fill(m_pad, 0.0)
 
         td_feat = time_delta.unsqueeze(-1).expand(-1, -1, F)
+        if self.disable_triplet_time_delta:
+            td_feat = torch.zeros_like(td_feat)
         x_trip = torch.stack([x_val, x_miss, td_feat], dim=-1)  # (B, T, F, 3)
         h = self.triplet_proj(x_trip)  # (B, T, F, 16)
         h = h + self.sensor_emb.view(1, 1, F, 16)

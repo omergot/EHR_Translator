@@ -50,6 +50,216 @@ settings:
       path_mappings:
         /bigdata/omerg/Thesis: ~/Thesis
 experiments:
+- name: mortality_C0_control
+  config: configs/ablation/mortality_C0_control.json
+  output: experiments/results/mortality_C0_control.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C0_control'
+- name: mortality_C1_no_retrieval
+  config: configs/ablation/mortality_C1_no_retrieval.json
+  output: experiments/results/mortality_C1_no_retrieval.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C1_no_retrieval'
+- name: mortality_C2_no_feature_gate
+  config: configs/ablation/mortality_C2_no_feature_gate.json
+  output: experiments/results/mortality_C2_no_feature_gate.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C2_no_feature_gate'
+- name: mortality_C3_no_mmd
+  config: configs/ablation/mortality_C3_no_mmd.json
+  output: experiments/results/mortality_C3_no_mmd.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C3_no_mmd'
+- name: mortality_C4_no_target_task
+  config: configs/ablation/mortality_C4_no_target_task.json
+  output: experiments/results/mortality_C4_no_target_task.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C4_no_target_task'
+- name: mortality_C5_no_fidelity
+  config: configs/ablation/mortality_C5_no_fidelity.json
+  output: experiments/results/mortality_C5_no_fidelity.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C5_no_fidelity'
+- name: mortality_C6_no_pretrain
+  config: configs/ablation/mortality_C6_no_pretrain.json
+  output: experiments/results/mortality_C6_no_pretrain.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C6_no_pretrain'
+- name: mortality_C7_no_target_norm
+  config: configs/ablation/mortality_C7_no_target_norm.json
+  output: experiments/results/mortality_C7_no_target_norm.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C7_no_target_norm'
+- name: mortality_C8_residual
+  config: configs/ablation/mortality_C8_residual.json
+  output: experiments/results/mortality_C8_residual.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C8_residual'
+- name: mortality_C9_no_time_delta
+  config: configs/ablation/mortality_C9_no_time_delta.json
+  output: experiments/results/mortality_C9_no_time_delta.parquet
+  status: pending
+  branch: master
+  server: local
+  notes: 'Part A ablation: C9_no_time_delta'
+- name: aki_C0_control
+  config: configs/ablation/aki_C0_control.json
+  output: experiments/results/aki_C0_control.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C0_control'
+- name: aki_C1_no_retrieval
+  config: configs/ablation/aki_C1_no_retrieval.json
+  output: experiments/results/aki_C1_no_retrieval.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C1_no_retrieval'
+- name: aki_C2_no_feature_gate
+  config: configs/ablation/aki_C2_no_feature_gate.json
+  output: experiments/results/aki_C2_no_feature_gate.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C2_no_feature_gate'
+- name: aki_C3_no_mmd
+  config: configs/ablation/aki_C3_no_mmd.json
+  output: experiments/results/aki_C3_no_mmd.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C3_no_mmd'
+- name: aki_C4_no_target_task
+  config: configs/ablation/aki_C4_no_target_task.json
+  output: experiments/results/aki_C4_no_target_task.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C4_no_target_task'
+- name: aki_C5_no_fidelity
+  config: configs/ablation/aki_C5_no_fidelity.json
+  output: experiments/results/aki_C5_no_fidelity.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C5_no_fidelity'
+- name: aki_C6_no_pretrain
+  config: configs/ablation/aki_C6_no_pretrain.json
+  output: experiments/results/aki_C6_no_pretrain.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C6_no_pretrain'
+- name: aki_C7_no_target_norm
+  config: configs/ablation/aki_C7_no_target_norm.json
+  output: experiments/results/aki_C7_no_target_norm.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C7_no_target_norm'
+- name: aki_C8_residual
+  config: configs/ablation/aki_C8_residual.json
+  output: experiments/results/aki_C8_residual.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C8_residual'
+- name: aki_C9_no_time_delta
+  config: configs/ablation/aki_C9_no_time_delta.json
+  output: experiments/results/aki_C9_no_time_delta.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: 'Part A ablation: C9_no_time_delta'
+- name: sepsis_C0_control
+  config: configs/ablation/sepsis_C0_control.json
+  output: experiments/results/sepsis_C0_control.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C0_control'
+- name: sepsis_C1_no_retrieval
+  config: configs/ablation/sepsis_C1_no_retrieval.json
+  output: experiments/results/sepsis_C1_no_retrieval.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C1_no_retrieval'
+- name: sepsis_C2_no_feature_gate
+  config: configs/ablation/sepsis_C2_no_feature_gate.json
+  output: experiments/results/sepsis_C2_no_feature_gate.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C2_no_feature_gate'
+- name: sepsis_C3_no_mmd
+  config: configs/ablation/sepsis_C3_no_mmd.json
+  output: experiments/results/sepsis_C3_no_mmd.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C3_no_mmd'
+- name: sepsis_C4_no_target_task
+  config: configs/ablation/sepsis_C4_no_target_task.json
+  output: experiments/results/sepsis_C4_no_target_task.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C4_no_target_task'
+- name: sepsis_C5_no_fidelity
+  config: configs/ablation/sepsis_C5_no_fidelity.json
+  output: experiments/results/sepsis_C5_no_fidelity.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C5_no_fidelity'
+- name: sepsis_C6_no_pretrain
+  config: configs/ablation/sepsis_C6_no_pretrain.json
+  output: experiments/results/sepsis_C6_no_pretrain.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C6_no_pretrain'
+- name: sepsis_C7_no_target_norm
+  config: configs/ablation/sepsis_C7_no_target_norm.json
+  output: experiments/results/sepsis_C7_no_target_norm.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C7_no_target_norm'
+- name: sepsis_C8_residual
+  config: configs/ablation/sepsis_C8_residual.json
+  output: experiments/results/sepsis_C8_residual.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C8_residual'
+- name: sepsis_C9_no_time_delta
+  config: configs/ablation/sepsis_C9_no_time_delta.json
+  output: experiments/results/sepsis_C9_no_time_delta.parquet
+  status: pending
+  branch: master
+  server: '3090'
+  notes: 'Part A ablation: C9_no_time_delta'
 - name: debug_mortality_hirid
   config: configs/hirid/debug_mortality_hirid.json
   output: experiments/results/debug_mortality_hirid.parquet
@@ -5874,3 +6084,19 @@ experiments:
     loss: -0.0936
     brier: -0.0394
     ece: -0.0361
+- name: mfd_best_res_s3
+  config: experiments/.athena_configs/adatime_mfd_best_res_s3.json
+  output: runs/mfd_best_res_s3/eval_unknown.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-11 22:47:03'
+  slurm_job_id: '70053'
+- name: mfd_best_res_s4
+  config: experiments/.athena_configs/adatime_mfd_best_res_s4.json
+  output: runs/mfd_best_res_s4/eval_unknown.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-11 22:47:13'
+  slurm_job_id: '70054'

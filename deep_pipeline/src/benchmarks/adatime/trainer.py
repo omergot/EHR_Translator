@@ -20,7 +20,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp import GradScaler
-from torch.optim import AdamW
+from torch.optim import Adam, AdamW
 from torch.utils.data import DataLoader
 
 from src.core.retrieval_translator import (
@@ -61,9 +61,11 @@ class AdaTimeRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
+        use_last_epoch: bool = False,
         run_dir: str = "runs/adatime",
         device: str = "cuda",
-        best_metric: str = "val_acc",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -86,13 +88,16 @@ class AdaTimeRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
@@ -106,8 +111,7 @@ class AdaTimeRetrievalTrainer:
         self._compute_feature_bounds()
 
         # State
-        self.best_metric = best_metric
-        self.best_val_metric = 0.0 if self.best_metric == "val_acc" else float("inf")
+        self.best_val_metric = 0.0  # accuracy (higher is better)
         self.best_state = None
         self.history = []
         self.memory_bank: Optional[MemoryBank] = None
@@ -424,20 +428,17 @@ class AdaTimeRetrievalTrainer:
                 **val_metrics,
             })
 
-            # Best model tracking
-            metric_val = val_metrics[self.best_metric]
-            improved = (metric_val > self.best_val_metric) if self.best_metric == "val_acc" else (metric_val < self.best_val_metric)
-            if improved:
-                self.best_val_metric = metric_val
+            # Best model tracking (by val accuracy)
+            if val_metrics["val_acc"] > self.best_val_metric:
+                self.best_val_metric = val_metrics["val_acc"]
                 self.best_state = {k: v.clone() for k, v in self.translator.state_dict().items()}
                 patience_counter = 0
-                logger.info("  -> New best %s=%.4f", self.best_metric, self.best_val_metric)
+                logger.info("  -> New best val_acc=%.4f", self.best_val_metric)
 
                 # Save best checkpoint
                 torch.save({
                     "translator": self.translator.state_dict(),
-                    "best_val_metric": self.best_val_metric,
-                    "best_metric": self.best_metric,
+                    "best_val_acc": self.best_val_metric,
                     "epoch": epoch,
                 }, self.run_dir / "best_checkpoint.pt")
             else:
@@ -447,9 +448,11 @@ class AdaTimeRetrievalTrainer:
                     break
 
         # Restore best model
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
-            logger.info("Restored best model (%s=%.4f)", self.best_metric, self.best_val_metric)
+            logger.info("Restored best model (val_acc=%.4f)", self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         # Verify frozen model integrity
         self._verify_frozen()
@@ -457,11 +460,10 @@ class AdaTimeRetrievalTrainer:
         # Save final checkpoint
         torch.save({
             "translator": self.translator.state_dict(),
-            "best_val_metric": self.best_val_metric,
-            "best_metric": self.best_metric,
+            "best_val_acc": self.best_val_metric,
             "history": self.history,
         }, self.run_dir / "final_checkpoint.pt")
-        logger.info("Training complete. Best %s=%.4f", self.best_metric, self.best_val_metric)
+        logger.info("Training complete. Best val_acc=%.4f", self.best_val_metric)
 
 
 class AdaTimeCNNRetrievalTrainer:
@@ -497,9 +499,13 @@ class AdaTimeCNNRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
-        run_dir: str = "runs/adatime_cnn",
-        device: str = "cuda",
         best_metric: str = "val_acc",
+        use_last_epoch: bool = False,
+        run_dir: str = "runs/adatime_cnn",
+        pretrain_fallback_dir: str = None,
+        device: str = "cuda",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         """Initialize the CNN-based retrieval trainer.
 
@@ -521,9 +527,16 @@ class AdaTimeCNNRetrievalTrainer:
             retrieval_window: Retrieval window size
             memory_refresh_epochs: Rebuild memory bank every N epochs
             early_stopping_patience: Epochs without improvement before stopping
+            best_metric: Metric for early stopping/best model selection.
+                "val_acc" (higher is better) or "val_loss" (lower is better).
+                val_loss is recommended for small test sets where accuracy is coarse.
             run_dir: Directory for checkpoints
+            pretrain_fallback_dir: Fallback directory to look for pretrain_checkpoint.pt
+                when it doesn't exist in run_dir. Used by variant runs to reuse pretrain
+                from the base experiment.
             device: Device ('cuda' or 'cpu')
-            best_metric: Metric for checkpoint selection ('val_acc' or 'val_loss')
+            optimizer_type: "adam" or "adamw"
+            optimizer_betas: Optimizer beta parameters
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -545,13 +558,18 @@ class AdaTimeCNNRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.best_metric = best_metric  # "val_acc" or "val_loss"
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
+        self.pretrain_fallback_dir = Path(pretrain_fallback_dir) if pretrain_fallback_dir else None
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer for translator
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
@@ -565,8 +583,9 @@ class AdaTimeCNNRetrievalTrainer:
         self._compute_feature_bounds_from_source()
 
         # State
-        self.best_metric = best_metric
-        self.best_val_metric = 0.0 if self.best_metric == "val_acc" else float("inf")
+        # For val_acc: higher is better, init to 0.0
+        # For val_loss: lower is better, init to inf
+        self.best_val_metric = 0.0 if best_metric == "val_acc" else float("inf")
         self.best_state = None
         self.history = []
         self.memory_bank: Optional[MemoryBank] = None
@@ -680,6 +699,17 @@ class AdaTimeCNNRetrievalTrainer:
             self.translator.load_state_dict(state["translator"])
             logger.info("Loaded pretrain checkpoint from %s", pretrain_ckpt)
             return
+
+        # Fall back to base dir pretrain checkpoint (for variant runs)
+        if self.pretrain_fallback_dir is not None:
+            fallback_ckpt = self.pretrain_fallback_dir / "pretrain_checkpoint.pt"
+            if fallback_ckpt.exists():
+                state = torch.load(fallback_ckpt, map_location=self.device, weights_only=False)
+                self.translator.load_state_dict(state["translator"])
+                logger.info("Loaded pretrain checkpoint from fallback: %s", fallback_ckpt)
+                # Save a copy to the variant dir so future reruns find it locally
+                torch.save(state, pretrain_ckpt)
+                return
 
         for epoch in range(1, self.pretrain_epochs + 1):
             loss = self._pretrain_epoch()
@@ -897,18 +927,29 @@ class AdaTimeCNNRetrievalTrainer:
 
             self.history.append({"epoch": epoch, **train_losses, **val_metrics})
 
-            metric_val = val_metrics[self.best_metric]
-            improved = (metric_val > self.best_val_metric) if self.best_metric == "val_acc" else (metric_val < self.best_val_metric)
-            if improved:
-                self.best_val_metric = metric_val
+            # Determine if current epoch is a new best
+            current_metric = val_metrics[self.best_metric]
+            if self.best_metric == "val_acc":
+                is_new_best = current_metric > self.best_val_metric
+            else:  # val_loss: lower is better
+                is_new_best = current_metric < self.best_val_metric
+
+            if is_new_best:
+                self.best_val_metric = current_metric
                 self.best_state = {k: v.clone() for k, v in self.translator.state_dict().items()}
                 patience_counter = 0
-                logger.info("  -> New best %s=%.4f", self.best_metric, self.best_val_metric)
+                logger.info(
+                    "  -> New best %s=%.4f (val_acc=%.4f val_loss=%.4f)",
+                    self.best_metric, self.best_val_metric,
+                    val_metrics["val_acc"], val_metrics["val_loss"],
+                )
 
                 torch.save({
                     "translator": self.translator.state_dict(),
-                    "best_val_metric": self.best_val_metric,
+                    "best_val_acc": val_metrics["val_acc"],
+                    "best_val_loss": val_metrics["val_loss"],
                     "best_metric": self.best_metric,
+                    "best_metric_value": self.best_val_metric,
                     "epoch": epoch,
                 }, self.run_dir / "best_checkpoint.pt")
             else:
@@ -917,16 +958,17 @@ class AdaTimeCNNRetrievalTrainer:
                     logger.info("Early stopping at epoch %d (patience=%d)", epoch, self.early_stopping_patience)
                     break
 
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
             logger.info("Restored best model (%s=%.4f)", self.best_metric, self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         self._verify_frozen()
 
         torch.save({
             "translator": self.translator.state_dict(),
-            "best_val_metric": self.best_val_metric,
-            "best_metric": self.best_metric,
+            "best_val_acc": self.best_val_metric if self.best_metric == "val_acc" else 0.0,
             "history": self.history,
         }, self.run_dir / "final_checkpoint.pt")
         logger.info("Training complete. Best %s=%.4f", self.best_metric, self.best_val_metric)
@@ -1111,10 +1153,11 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         retrieval_window: int = 4,
         memory_refresh_epochs: int = 5,
         early_stopping_patience: int = 10,
+        use_last_epoch: bool = False,
         run_dir: str = "runs/adatime_cnn",
         device: str = "cuda",
-        context_aware: bool = False,
-        best_metric: str = "val_acc",
+        optimizer_type: str = "adamw",
+        optimizer_betas: tuple = (0.9, 0.999),
     ):
         """Initialize the chunked CNN retrieval trainer.
 
@@ -1126,7 +1169,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                 (for Phase 1 pretrain and memory bank, processed as chunks)
             num_classes: Number of output classes
             chunk_size: Size of each chunk (default 128). Source sequences are split into
-                non-overlapping chunks of this size. Partial final chunks are padded.
+                non-overlapping chunks of this size. Partial final chunks are dropped.
             learning_rate: Translator optimizer learning rate
             weight_decay: Optimizer weight decay
             lambda_recon: Reconstruction loss weight (Phase 1)
@@ -1141,10 +1184,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             early_stopping_patience: Epochs without improvement before stopping
             run_dir: Directory for checkpoints
             device: Device ('cuda' or 'cpu')
-            context_aware: If True, each chunk's encoder sees the previous chunk as left
-                context (2*chunk_size input, only current chunk output kept). This lets the
-                encoder's self-attention see across chunk boundaries.
-            best_metric: Metric for checkpoint selection ('val_acc' or 'val_loss')
+            optimizer_type: "adam" or "adamw"
+            optimizer_betas: Optimizer beta parameters
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -1152,7 +1193,6 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         self.source_train_loader = source_train_loader
         self.num_classes = num_classes
         self.chunk_size = chunk_size
-        self.context_aware = context_aware
         self.device = device
 
         # Loss weights
@@ -1168,13 +1208,16 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         self.retrieval_window = retrieval_window
         self.memory_refresh_epochs = memory_refresh_epochs
         self.early_stopping_patience = early_stopping_patience
+        self.use_last_epoch = use_last_epoch  # AdaTime convention: use last epoch, not best
 
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         # Optimizer for translator
-        self.optimizer = AdamW(
-            self.translator.parameters(), lr=learning_rate, weight_decay=weight_decay,
+        OptimClass = Adam if optimizer_type.lower() == "adam" else AdamW
+        self.optimizer = OptimClass(
+            self.translator.parameters(), lr=learning_rate,
+            weight_decay=weight_decay, betas=optimizer_betas,
         )
         self.scaler = GradScaler(enabled=device.startswith("cuda"))
 
@@ -1193,12 +1236,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         # Compute feature bounds from SOURCE data chunks
         self._compute_feature_bounds_from_source()
 
-        if self.context_aware:
-            logger.info("Context-aware chunking ENABLED: encoder sees previous chunk as left context")
-
         # State
-        self.best_metric = best_metric
-        self.best_val_metric = 0.0 if self.best_metric == "val_acc" else float("inf")
+        self.best_val_metric = 0.0
         self.best_state = None
         self.history = []
         self.memory_bank: Optional[MemoryBank] = None
@@ -1214,29 +1253,20 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             x: (B, T, C) full-length sequences
 
         Returns:
-            chunks: (B * n_chunks, chunk_size, C) where partial final chunk is
-                zero-padded to chunk_size (not dropped).
+            chunks: (B * n_chunks, chunk_size, C) where n_chunks = T // chunk_size
+                Partial final chunk is dropped.
         """
         B, T, C = x.shape
-        n_full_chunks = T // self.chunk_size
-        remainder = T % self.chunk_size
-
-        if n_full_chunks == 0 and remainder == 0:
+        n_chunks = T // self.chunk_size
+        if n_chunks == 0:
             raise ValueError(
                 f"Sequence length {T} is shorter than chunk_size {self.chunk_size}. "
                 f"Use a smaller chunk_size."
             )
-
-        if remainder > 0:
-            # Pad last partial chunk to full chunk_size
-            pad_size = self.chunk_size - remainder
-            x = F.pad(x, (0, 0, 0, pad_size))  # pad timestep dim: (B, T+pad, C)
-            n_chunks = n_full_chunks + 1
-        else:
-            n_chunks = n_full_chunks
-
+        # Take only full chunks
+        x_trimmed = x[:, :n_chunks * self.chunk_size, :]  # (B, n_chunks*chunk_size, C)
         # Reshape to chunks
-        chunks = x.reshape(B, n_chunks, self.chunk_size, C)
+        chunks = x_trimmed.reshape(B, n_chunks, self.chunk_size, C)
         # Flatten batch and chunk dims: (B * n_chunks, chunk_size, C)
         return chunks.reshape(B * n_chunks, self.chunk_size, C)
 
@@ -1250,9 +1280,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
     ) -> torch.Tensor:
         """Translate a batch of full-length sequences by chunking.
 
-        Each sequence is split into chunks (padding the last partial chunk).
-        When context_aware=True, each chunk's encoder also sees the previous
-        chunk as left context, but only the current chunk's output is kept.
+        Each sequence is split into chunks. Each chunk is independently
+        translated. Translated chunks are concatenated back.
 
         Args:
             x: (B, T, C) full-length sequences
@@ -1262,136 +1291,43 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             x_static: (B, S) static features
 
         Returns:
-            x_translated: (B, T, C) translated sequences (same length as input)
+            x_translated: (B, n_chunks * chunk_size, C) translated sequences
         """
-        B, T_original, C = x.shape
-        n_full_chunks = T_original // self.chunk_size
-        remainder = T_original % self.chunk_size
-        n_chunks = n_full_chunks + (1 if remainder > 0 else 0)
+        B, T, C = x.shape
+        n_chunks = T // self.chunk_size
 
-        if not self.context_aware:
-            # ── Standard (non-context-aware) path: all chunks at once ──
-            # Split into chunks (pads last partial chunk): (B * n_chunks, chunk_size, C)
-            x_chunks = self._split_into_chunks(x)
-            x_miss_chunks = self._split_into_chunks(x_miss)
+        # Split into chunks: (B * n_chunks, chunk_size, C)
+        x_chunks = self._split_into_chunks(x)
+        x_miss_chunks = self._split_into_chunks(x_miss)
+        t_abs_chunks = t_abs_seq[:, :n_chunks * self.chunk_size].reshape(
+            B * n_chunks, self.chunk_size
+        )
+        m_pad_chunks = m_pad[:, :n_chunks * self.chunk_size].reshape(
+            B * n_chunks, self.chunk_size
+        )
+        # Repeat static features for each chunk
+        x_static_chunks = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
+            B * n_chunks, x_static.shape[-1]
+        )
 
-            # Pad t_abs and m_pad to match
-            if remainder > 0:
-                pad_size = self.chunk_size - remainder
-                t_abs_padded = F.pad(t_abs_seq, (0, pad_size))
-                m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)  # True = padded
-            else:
-                t_abs_padded = t_abs_seq
-                m_pad_padded = m_pad
-            t_abs_chunks = t_abs_padded.reshape(B * n_chunks, self.chunk_size)
-            m_pad_chunks = m_pad_padded.reshape(B * n_chunks, self.chunk_size)
+        # Encode all chunks at once
+        latent_chunks = self.translator.encode(
+            x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
+        )
 
-            # Repeat static features for each chunk
-            x_static_chunks = x_static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
-                B * n_chunks, x_static.shape[-1]
-            )
+        # Retrieve from chunk-level latent bank.
+        # context: (B*n_chunks, chunk_size, K, d_latent)
+        context = self._query_chunk_bank(latent_chunks.detach())
 
-            # Encode all chunks at once
-            latent_chunks = self.translator.encode(
-                x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
-            )
+        # Translate chunks
+        x_translated_chunks, _ = self.translator.forward_with_retrieval(
+            x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
+            context, latent=latent_chunks,
+        )
 
-            # Retrieve from chunk-level latent bank
-            context = self._query_chunk_bank(latent_chunks.detach())
-
-            # Translate chunks
-            x_translated_chunks, _ = self.translator.forward_with_retrieval(
-                x_chunks, x_miss_chunks, t_abs_chunks, m_pad_chunks, x_static_chunks,
-                context, latent=latent_chunks,
-            )
-
-            # Reshape back and strip padding
-            x_translated = x_translated_chunks.reshape(B, n_chunks * self.chunk_size, C)
-            if remainder > 0:
-                x_translated = x_translated[:, :T_original, :]
-            return x_translated
-
-        else:
-            # ── Context-aware path: each chunk sees previous chunk as left context ──
-            # Pad the full sequence so all chunks are chunk_size aligned
-            if remainder > 0:
-                pad_size = self.chunk_size - remainder
-                x_padded = F.pad(x, (0, 0, 0, pad_size))
-                x_miss_padded = F.pad(x_miss, (0, 0, 0, pad_size))
-                t_abs_padded = F.pad(t_abs_seq, (0, pad_size))
-                m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)
-            else:
-                x_padded = x
-                x_miss_padded = x_miss
-                t_abs_padded = t_abs_seq
-                m_pad_padded = m_pad
-
-            T_padded = n_chunks * self.chunk_size
-            ctx_size = self.chunk_size  # left context = one full chunk
-
-            translated_chunks = []
-            for i in range(n_chunks):
-                chunk_start = i * self.chunk_size
-                chunk_end = chunk_start + self.chunk_size
-                ctx_start = max(0, chunk_start - ctx_size)
-
-                # Extract context + current chunk window
-                x_win = x_padded[:, ctx_start:chunk_end, :]       # (B, win_len, C)
-                x_miss_win = x_miss_padded[:, ctx_start:chunk_end, :]
-                t_abs_win = t_abs_padded[:, ctx_start:chunk_end]
-                m_pad_win = m_pad_padded[:, ctx_start:chunk_end]
-
-                win_len = x_win.shape[1]
-                x_static_exp = x_static  # (B, S) — no expansion needed
-
-                # Encode the full window (context + current chunk)
-                latent_win = self.translator.encode(
-                    x_win, x_miss_win, t_abs_win, m_pad_win, x_static_exp,
-                )
-
-                # Retrieve using only the current chunk's latent (last chunk_size timesteps)
-                latent_chunk = latent_win[:, -self.chunk_size:, :]
-                context = self._query_chunk_bank(latent_chunk.detach())
-
-                # Translate the full window
-                x_trans_win, _ = self.translator.forward_with_retrieval(
-                    x_win, x_miss_win, t_abs_win, m_pad_win, x_static_exp,
-                    # Context needs to match win_len, not just chunk_size.
-                    # Pad context on the left with zeros for the context timesteps.
-                    self._expand_context_for_window(context, win_len),
-                    latent=latent_win,
-                )
-
-                # Keep only the current chunk portion (last chunk_size timesteps)
-                translated_chunks.append(x_trans_win[:, -self.chunk_size:, :])
-
-            # Concatenate and strip padding
-            x_translated = torch.cat(translated_chunks, dim=1)  # (B, T_padded, C)
-            if remainder > 0:
-                x_translated = x_translated[:, :T_original, :]
-            return x_translated
-
-    def _expand_context_for_window(
-        self, context: torch.Tensor, win_len: int,
-    ) -> torch.Tensor:
-        """Expand chunk-level context to match a larger window length.
-
-        Context is (B, chunk_size, K, d). For the context-aware window of
-        win_len > chunk_size, we prepend zero-context for the left-context timesteps.
-
-        Args:
-            context: (B, chunk_size, K, d_latent) retrieved context for the current chunk
-            win_len: Total window length (context_len + chunk_size)
-
-        Returns:
-            expanded: (B, win_len, K, d_latent)
-        """
-        if win_len == context.shape[1]:
-            return context
-        B, T_ctx, K, d = context.shape
-        prefix_len = win_len - T_ctx
-        prefix = torch.zeros(B, prefix_len, K, d, device=context.device, dtype=context.dtype)
-        return torch.cat([prefix, context], dim=1)
+        # Reshape back: (B * n_chunks, chunk_size, C) -> (B, n_chunks * chunk_size, C)
+        x_translated = x_translated_chunks.reshape(B, n_chunks * self.chunk_size, C)
+        return x_translated
 
     def _build_chunk_loader(self, full_length_loader: DataLoader) -> DataLoader:
         """Build a DataLoader that yields individual chunks instead of full sequences.
@@ -1415,26 +1351,18 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             for batch in full_length_loader:
                 x, y_seq, pad_mask, static = batch  # (B, T, C), (B, T), (B, T), (B, S)
                 B, T, C = x.shape
-                n_full = T // self.chunk_size
-                remainder = T % self.chunk_size
-                n_chunks = n_full + (1 if remainder > 0 else 0)
+                n_chunks = T // self.chunk_size
                 if n_chunks == 0:
                     continue
-                # Split: (B * n_chunks, chunk_size, C) — pads last partial chunk
+                # Split: (B * n_chunks, chunk_size, C)
                 x_chunked = self._split_into_chunks(x)
                 # Labels: use per-sequence label for all chunks of that sequence
                 y_seq_label = y_seq[:, 0]  # (B,)
                 y_repeated = y_seq_label.unsqueeze(1).expand(B, n_chunks).reshape(B * n_chunks)
                 y_chunks_seq = y_repeated.unsqueeze(1).expand(B * n_chunks, self.chunk_size)
-                # Pad mask: True = valid for full chunks, last chunk has partial padding
+                # Pad mask: all True = all valid (AdaTime convention: True=valid)
+                # schema_resolver.extract() inverts: m_pad = ~pad_mask → all False (no padding)
                 pad_chunks = torch.ones(B * n_chunks, self.chunk_size, dtype=torch.bool)
-                if remainder > 0:
-                    # Mark padded timesteps in the last chunk of each sequence as invalid
-                    pad_size = self.chunk_size - remainder
-                    # Last chunk for each sequence is at indices n_chunks-1, 2*n_chunks-1, etc.
-                    for b in range(B):
-                        last_chunk_idx = b * n_chunks + (n_chunks - 1)
-                        pad_chunks[last_chunk_idx, remainder:] = False
                 # Static: repeat for each chunk
                 static_chunks = static.unsqueeze(1).expand(B, n_chunks, -1).reshape(
                     B * n_chunks, static.shape[-1]
@@ -1694,21 +1622,23 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             y = parts["y"][:, 0]          # (B,) per-sequence label
 
             B, T, C = x_val.shape
-            if T < self.chunk_size:
+            n_chunks = T // self.chunk_size
+            if n_chunks == 0:
                 continue
 
             # Translate full sequence via chunking
             x_translated = self._translate_sequence_chunked(
                 x_val, x_miss, t_abs, m_pad, x_static,
             )
-            # x_translated: (B, T, C) — same length as input (padding stripped)
+            # x_translated: (B, n_chunks * chunk_size, C)
 
             # Task loss: cross-entropy through frozen source CNN
             # CNN uses AdaptiveAvgPool1d so any length works
             task_loss = F.cross_entropy(self.frozen_model(x_translated), y)
 
-            # Fidelity loss: translated vs original (same length now)
-            fidelity_loss = self._fidelity_loss(x_translated, x_val)
+            # Fidelity loss: compare translated chunks to original (trimmed to same length)
+            x_val_trimmed = x_val[:, :n_chunks * self.chunk_size, :]
+            fidelity_loss = self._fidelity_loss(x_translated, x_val_trimmed)
 
             # Range loss
             range_loss = self._range_loss(x_translated)
@@ -1774,7 +1704,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                 y = parts["y"][:, 0]
 
                 B, T, C = x_val.shape
-                if T < self.chunk_size:
+                n_chunks = T // self.chunk_size
+                if n_chunks == 0:
                     continue
 
                 x_translated = self._translate_sequence_chunked(
@@ -1840,18 +1771,15 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
 
             self.history.append({"epoch": epoch, **train_losses, **val_metrics})
 
-            metric_val = val_metrics[self.best_metric]
-            improved = (metric_val > self.best_val_metric) if self.best_metric == "val_acc" else (metric_val < self.best_val_metric)
-            if improved:
-                self.best_val_metric = metric_val
+            if val_metrics["val_acc"] > self.best_val_metric:
+                self.best_val_metric = val_metrics["val_acc"]
                 self.best_state = {k: v.clone() for k, v in self.translator.state_dict().items()}
                 patience_counter = 0
-                logger.info("  -> New best %s=%.4f", self.best_metric, self.best_val_metric)
+                logger.info("  -> New best val_acc=%.4f", self.best_val_metric)
 
                 torch.save({
                     "translator": self.translator.state_dict(),
-                    "best_val_metric": self.best_val_metric,
-                    "best_metric": self.best_metric,
+                    "best_val_acc": self.best_val_metric,
                     "epoch": epoch,
                     "chunk_size": self.chunk_size,
                 }, self.run_dir / "best_checkpoint.pt")
@@ -1861,17 +1789,18 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
                     logger.info("Early stopping at epoch %d (patience=%d)", epoch, self.early_stopping_patience)
                     break
 
-        if self.best_state is not None:
+        if not self.use_last_epoch and self.best_state is not None:
             self.translator.load_state_dict(self.best_state)
-            logger.info("Restored best model (%s=%.4f)", self.best_metric, self.best_val_metric)
+            logger.info("Restored best model (val_acc=%.4f)", self.best_val_metric)
+        elif self.use_last_epoch:
+            logger.info("AdaTime protocol: using last epoch model (not best val)")
 
         self._verify_frozen()
 
         torch.save({
             "translator": self.translator.state_dict(),
-            "best_val_metric": self.best_val_metric,
-            "best_metric": self.best_metric,
+            "best_val_acc": self.best_val_metric,
             "history": self.history,
             "chunk_size": self.chunk_size,
         }, self.run_dir / "final_checkpoint.pt")
-        logger.info("Training complete. Best %s=%.4f", self.best_metric, self.best_val_metric)
+        logger.info("Training complete. Best val_acc=%.4f", self.best_val_metric)

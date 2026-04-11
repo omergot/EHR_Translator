@@ -1159,7 +1159,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         optimizer_type: str = "adamw",
         optimizer_betas: tuple = (0.9, 0.999),
         context_aware: bool = False,
-        drop_last_chunk: bool = False,
+        drop_last_chunk: bool = True,
     ):
         """Initialize the chunked CNN retrieval trainer.
 
@@ -1191,8 +1191,8 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             context_aware: If True, each chunk's encoder sees the previous chunk as left
                 context (2*chunk_size input, only current chunk output kept). This lets the
                 encoder's self-attention see across chunk boundaries.
-            drop_last_chunk: If True, drop partial final chunk instead of padding.
-                This was the original behavior before SSC pad-last-chunk was added.
+            drop_last_chunk: If True (default), drop partial final chunk instead of
+                padding. Set False to pad last chunk with zeros instead.
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)

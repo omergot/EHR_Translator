@@ -205,15 +205,16 @@ def evaluate_with_chunked_translator(
     chunk_size: int = 128,
     k_neighbors: int = 8,
     context_aware: bool = False,
-    drop_last_chunk: bool = False,
+    drop_last_chunk: bool = True,
     # Legacy parameters (kept for backward compat but not used)
     memory_bank=None,
     retrieval_window: int = 4,
 ) -> Dict[str, float]:
     """Evaluate full-length sequences translated via chunking through frozen source CNN.
 
-    Each full-length sequence is split into chunk_size chunks. If drop_last_chunk=True,
-    partial final chunks are dropped (original behavior). Otherwise they are zero-padded.
+    Each full-length sequence is split into chunk_size chunks. By default
+    (drop_last_chunk=True), partial final chunks are dropped. Set False to
+    pad with zeros instead.
 
     When context_aware=True, each chunk's encoder sees the previous chunk as left
     context (2*chunk_size input), but only the current chunk's output is kept.

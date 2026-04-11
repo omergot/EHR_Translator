@@ -91,6 +91,22 @@ These rules prevent catastrophic failures. Violating any one can silently ruin r
 - **Remote sync gate**: Before queuing experiments on remote servers, verify that all relevant code changes have been pushed. Run `git log origin/<branch>..HEAD` to check for unpushed commits.
 - **Empirical estimates**: When estimating resource usage (GPU VRAM, disk, compute time), prefer actual measurements from prior runs (`nvidia-smi`, log files) over theoretical calculations. Flag when estimates are theoretical.
 
+## SSH & Server Access
+
+SSH aliases (in `~/.ssh/config`):
+- `ssh 3090` → `omerg@132.68.35.177` (RTX 3090, PyTorch 2.6+cu118)
+- `ssh a6000` → `omerg@132.68.39.40` (A6000×8, PyTorch 2.6+cu118)
+- Athena: use `athena_submit.py` — or `ssh omer.gotfrid@athena-login` directly
+
+**All three local servers are now equivalent** (PyTorch 2.6+cu118). Results are directly comparable.
+
+## Multi-Server Workflows
+
+- **Push before remote queue**: After any code change, confirm commits are pushed before queueing remote experiments. Hook on `queue.yaml` will warn. Manual check: `git log origin/<branch>..HEAD`.
+- **SSH variable expansion**: When writing remote shell commands, pass variables explicitly. Do not rely on the remote shell inheriting local env vars.
+- **Bootstrap CIs**: Default to 500 replicates on large datasets (not 2000). Prior successful runs used 500.
+- **Experiment results**: After an experiment completes, check `experiments/results/*.json` and `runs/*/run.log` to validate manually.
+
 ## Config Structure
 
 JSON configs with two main sections:
@@ -114,6 +130,11 @@ All experiments are managed through `experiments/queue.yaml`. This is the single
 - Nighttime (21:00-09:00): max 3 GPUs. Can use GPU 2. GPU 3 only as last resort.
 - These rules are enforced by the scheduler automatically.
 - If launching a one-off manual experiment (debugging), use GPU 3 to avoid conflicts.
+- **CRITICAL — No GPU sharing between EHR and AdaTime experiments**: Running two training jobs on the same GPU risks OOM and makes both experiments slow/unreproducible. Before launching any manual experiment (`run_adatime.py` or `run.py` outside the scheduler), ALWAYS verify the target GPU is truly free:
+  ```bash
+  nvidia-smi; sleep 5; nvidia-smi
+  ```
+  Check both outputs — a GPU may appear idle between jobs (loading phase). Only use a GPU if it shows 0% utilization AND low memory in BOTH readings. Also run `python scripts/gpu_scheduler.py --status` to confirm the scheduler is not about to assign a job to that GPU.
 
 ### Queue Entry Format
 Each experiment needs: `name` (unique ID), `config` (path to JSON config), `output` (parquet output path), `status: pending`, and optionally `notes`, `server`, `branch`, `command`.

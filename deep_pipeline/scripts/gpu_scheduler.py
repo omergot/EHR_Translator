@@ -27,7 +27,7 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
@@ -296,9 +296,9 @@ def select_gpus(server: ServerConfig, free_gpus: list[int], running_gpus: set[in
 def infer_task(config_path: str) -> str:
     """Infer task name from config filename."""
     name = Path(config_path).stem.lower()
-    for task in ["mortality", "aki", "sepsis", "los", "kf", "kidney_function"]:
+    for task in ["mortality", "mort", "aki", "sepsis", "los", "kf", "kidney_function"]:
         if task in name:
-            return task
+            return {"mort": "mortality"}.get(task, task)
     return "unknown"
 
 
@@ -683,9 +683,39 @@ def cleanup_worktrees(branch: str = "", servers: dict[str, ServerConfig] | None 
 # Experiment launch & monitoring
 # ---------------------------------------------------------------------------
 
+def _resolve_local_python(conda_env: str) -> str:
+    """Resolve the Python executable path for a named local conda environment.
+
+    Falls back to sys.executable if the env path cannot be determined.
+    The conda base is inferred from sys.executable
+    (e.g. /bigdata/omerg/miniconda3/envs/yaib/bin/python → base=/bigdata/omerg/miniconda3).
+    """
+    exe = Path(sys.executable)
+    # sys.executable is typically <conda_base>/envs/<name>/bin/python or
+    # <conda_base>/bin/python (base env). Walk up to find 'envs' parent.
+    parts = exe.parts
+    try:
+        envs_idx = parts.index("envs")
+        conda_base = Path(*parts[:envs_idx])
+    except ValueError:
+        # Running from base env: <conda_base>/bin/python
+        conda_base = exe.parent.parent
+
+    candidate = conda_base / "envs" / conda_env / "bin" / "python"
+    if candidate.exists():
+        return str(candidate)
+
+    logging.warning(
+        f"Could not find Python for conda env '{conda_env}' at {candidate}; "
+        f"falling back to sys.executable ({sys.executable})"
+    )
+    return sys.executable
+
+
 def launch_experiment_local(exp: dict, gpu: int,
                             repo_path: Path | None = None,
-                            config_override: str | None = None) -> subprocess.Popen:
+                            config_override: str | None = None,
+                            server: "ServerConfig | None" = None) -> subprocess.Popen:
     """Launch an experiment on a local GPU."""
     repo = repo_path or REPO
     task = infer_task(exp["config"])
@@ -705,9 +735,15 @@ def launch_experiment_local(exp: dict, gpu: int,
     # Ensure output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    # Use the conda env specified in the server config (if any) so that local
+    # jobs can be pinned to a specific environment (e.g. yaib-cu118) regardless
+    # of which env the scheduler process itself was started in.
+    conda_env = server.conda_env if server is not None else None
+    python_exe = _resolve_local_python(conda_env) if conda_env else sys.executable
+
     run_command = exp.get("command", "train_and_eval")
     cmd = [
-        sys.executable, str(repo / "run.py"), run_command,
+        python_exe, str(repo / "run.py"), run_command,
         "--config", config_path,
         "--output_parquet", output_path,
     ]
@@ -847,7 +883,7 @@ def launch_experiment(exp: dict, gpu: int, server: ServerConfig,
                       remote_cwd: str | None = None) -> bool:
     """Launch an experiment on the given server + GPU. Returns True on success."""
     if server.is_local:
-        launch_experiment_local(exp, gpu, repo_path=repo_path, config_override=config_override)
+        launch_experiment_local(exp, gpu, repo_path=repo_path, config_override=config_override, server=server)
         return True
     else:
         return launch_experiment_remote(exp, gpu, server,
@@ -1322,6 +1358,35 @@ def show_status(show_all: bool = False):
 
     if not show_all and hidden > 0:
         print(f"\n  ({hidden} done/failed hidden — use --status --all to show)")
+
+    # Validate done experiments finished since start of yesterday
+    yesterday = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    done_exps = [
+        e for e in experiments
+        if e.get("status") == "done" and e.get("finished")
+        and datetime.strptime(e["finished"], "%Y-%m-%d %H:%M:%S") >= yesterday
+    ]
+    if done_exps:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "validate_results",
+                str(Path(__file__).parent / "validate_results.py"),
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            all_issues = []
+            for exp in done_exps:
+                issues = mod.validate_experiment_result(exp["name"])
+                all_issues.extend(issues)
+            if all_issues:
+                print(f"\n  [validate] {len(all_issues)} issue(s) in done experiments:")
+                for issue in all_issues[:10]:
+                    print(f"    {issue}")
+                if len(all_issues) > 10:
+                    print(f"    ... and {len(all_issues) - 10} more. Run: python scripts/validate_results.py")
+        except Exception:
+            pass  # Don't break --status if validate_results.py is unavailable
     print()
 
 

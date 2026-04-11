@@ -49,7 +49,7 @@ def _compute_loader_stats(loader: DataLoader, schema_resolver: "SchemaResolver",
     count = None
     with torch.no_grad():
         for batch in loader:
-            batch = tuple(b.to(device) for b in batch)
+            batch = tuple(b.to(device, non_blocking=True) for b in batch)
             parts = schema_resolver.extract(batch)
             x = parts["X_val"]        # (B, T, F)
             mask = (~parts["M_pad"]).unsqueeze(-1).expand_as(x).float()
@@ -224,7 +224,7 @@ class TranslatorTrainer:
         num_batches = 0
         total_elements = 0
         for batch in train_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             
             self.optimizer.zero_grad()
             if num_batches % 200 == 0:
@@ -250,7 +250,7 @@ class TranslatorTrainer:
             for batch in val_loader:
                 if num_batches % 200 == 0:
                     logging.info(f"Validating Batch number: {num_batches}/{len(val_loader)}")
-                batch = tuple(b.to(self.device) for b in batch)
+                batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
                 translated_data = self.translator(batch)
                 baseline_outputs = self.yaib_runtime.forward((translated_data, batch[1], batch[2]))
                 mask = batch[2].to(baseline_outputs.device).bool()
@@ -572,7 +572,7 @@ class TransformerTranslatorTrainer:
         num_batches = 0
         logged_this_epoch = False
         for batch in loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
             use_amp = self.scaler.is_enabled()
@@ -806,7 +806,7 @@ class TransformerTranslatorTrainer:
         num_batches = 0
         with torch.no_grad():
             for batch in loader:
-                batch = tuple(b.to(self.device) for b in batch)
+                batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
                 parts = self.schema_resolver.extract(batch)
                 parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
                 result = self.translator(
@@ -1293,7 +1293,7 @@ class LatentTranslatorTrainer:
         n_batches = 0
 
         for batch in target_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
@@ -1342,7 +1342,7 @@ class LatentTranslatorTrainer:
         n_batches = 0
 
         for batch in train_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
@@ -1535,7 +1535,7 @@ class LatentTranslatorTrainer:
         n_batches = 0
 
         for batch in val_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
@@ -1978,6 +1978,19 @@ class RetrievalTranslatorTrainer:
         self.history: list[dict] = []
         self.memory_bank = None
 
+        # torch.compile: JIT compile translator sub-modules
+        if _tc.get("use_torch_compile", False):
+            logging.info("[torch.compile] Compiling translator sub-modules (mode=default, dynamic=True)")
+            self.translator.encode = torch.compile(
+                self.translator.encode, mode="default", dynamic=True
+            )
+            self.translator.decode_with_context = torch.compile(
+                self.translator.decode_with_context, mode="default", dynamic=True
+            )
+            self.translator.decode = torch.compile(
+                self.translator.decode, mode="default", dynamic=True
+            )
+
     def _compute_jacobian_sensitivity(self, num_features: int) -> torch.Tensor:
         """FJS: Compute frozen model's per-feature input sensitivity via Jacobian.
 
@@ -1992,7 +2005,7 @@ class RetrievalTranslatorTrainer:
         was_training = model.training
 
         for batch in islice(self.target_train_loader, 50):
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             # Work directly on the YAIB-format tensor to avoid rebuild grad issues
             x_yaib = parts["X_yaib"].clone().detach().float().requires_grad_(True)
@@ -2188,7 +2201,7 @@ class RetrievalTranslatorTrainer:
         use_self_retrieval = self.phase1_self_retrieval and self.memory_bank is not None
 
         for batch in target_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
@@ -2258,13 +2271,16 @@ class RetrievalTranslatorTrainer:
         self.lambda_recon = self._compute_scheduled_lambda_recon(epoch)
 
         for batch in train_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
             _grad_diag_interval = getattr(self, "_grad_diag_interval", 1)
-            _do_grad_diag = (epoch == 0 and n_batches <= 3) or \
-                            (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+            _gc_enabled = getattr(self.translator, "gradient_checkpointing", False)
+            _do_grad_diag = not _gc_enabled and (
+                (epoch == 0 and n_batches <= 3) or
+                (epoch > 0 and epoch % _grad_diag_interval == 0 and n_batches == 0)
+            )
 
             with torch.amp.autocast("cuda", enabled=self.device.startswith("cuda")):
                 # ── Source (eICU) path with retrieval ──
@@ -2518,7 +2534,7 @@ class RetrievalTranslatorTrainer:
         importance_w = self.translator.get_importance_weights()
 
         for batch in val_loader:
-            batch = tuple(b.to(self.device) for b in batch)
+            batch = tuple(b.to(self.device, non_blocking=True) for b in batch)
             parts = self.schema_resolver.extract(batch)
             parts["X_val"] = self._apply_renorm(parts["X_val"], parts["M_pad"])
 
@@ -2775,11 +2791,15 @@ class RetrievalTranslatorTrainer:
             self._update_refresh_baseline(None)
             self._refresh_history.append({"epoch": start_epoch, "reason": "initial_build"})
 
+        import time as _time
         for epoch in range(start_epoch, epochs):
+            t_epoch = _time.time()
             train_metrics = self._run_epoch(train_loader, epoch=epoch)
             val_metrics = self._validate(val_loader)
 
+            epoch_time = _time.time() - t_epoch
             cur_lr = self.optimizer.param_groups[0]["lr"]
+            logging.info("[timing] Epoch %d/%d: %.1fs", epoch + 1, epochs, epoch_time)
             logging.info(
                 "Epoch %d/%d - train: total=%.4f task=%.4f align=%.4f recon=%.4f range=%.4f smooth=%.4f imp_reg=%.4f target_task=%.4f label_pred=%.4f (lr=%.2e)",
                 epoch + 1, epochs, train_metrics["total"], train_metrics["task"],

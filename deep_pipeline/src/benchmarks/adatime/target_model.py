@@ -429,12 +429,13 @@ def train_source_cnn(
     device: str = "cuda",
     save_path: Optional[str] = None,
     patience: int = 10,
+    optimizer_betas: tuple = (0.9, 0.999),
 ) -> "AdaTimeCNNClassifier":
     """Train AdaTime's CNN on SOURCE domain data, then freeze it.
 
     Matches AdaTime's NO_ADAPT (source-only) training protocol exactly:
-      - Adam optimizer, lr=1e-3, weight_decay=1e-4
-      - StepLR(step_size=50, gamma=0.5) — effectively no decay for 40 epochs
+      - Adam optimizer, lr=1e-3, weight_decay=1e-4, betas=(0.5, 0.99)
+      - NO learning rate scheduling (AdaTime: "we exclude any LR scheduling")
       - NO early stopping — train for all 40 epochs (AdaTime reports last model)
       - NO validation split — source_train_loader should be the FULL source train set
       - source_val_loader is accepted for logging only (not for model selection)
@@ -456,6 +457,8 @@ def train_source_cnn(
         device: Device to train on
         save_path: Path to save the final model checkpoint
         patience: Unused (kept for backward compatibility — AdaTime has no early stopping)
+        optimizer_betas: Adam beta parameters. AdaTime protocol uses (0.5, 0.99).
+            Default (0.9, 0.999) for backward compatibility with existing checkpoints.
 
     Returns:
         Trained (frozen) AdaTimeCNNClassifier
@@ -471,13 +474,15 @@ def train_source_cnn(
         features_len=features_len,
     ).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    # AdaTime uses StepLR(step_size=50, gamma=0.5) — no actual decay for 40 epochs
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
-
-    # Track best src cls loss every 10 epochs (AdaTime's model selection)
-    best_src_loss = float('inf')
-    best_state = None
+    optimizer = torch.optim.Adam(
+        model.parameters(), lr=lr, weight_decay=weight_decay, betas=optimizer_betas,
+    )
+    logger.info(
+        "[Source CNN] Optimizer: Adam(lr=%g, weight_decay=%g, betas=%s), no LR scheduler",
+        lr, weight_decay, optimizer_betas,
+    )
+    # AdaTime protocol: "we exclude any learning rate scheduling schemes"
+    # No scheduler — constant LR throughout training.
 
     for epoch in range(1, epochs + 1):
         # Training
@@ -503,14 +508,8 @@ def train_source_cnn(
             train_correct += (logits.argmax(dim=1) == y).sum().item()
             train_total += x.shape[0]
 
-        scheduler.step()
         train_acc = train_correct / max(train_total, 1)
         avg_train_loss = train_loss / max(train_total, 1)
-
-        # Save best model based on source training loss every 10 epochs (AdaTime convention)
-        if (epoch + 1) % 10 == 0 and avg_train_loss < best_src_loss:
-            best_src_loss = avg_train_loss
-            best_state = {k: v.clone() for k, v in model.state_dict().items()}
 
         if epoch % 5 == 0 or epoch == 1:
             logger.info(
@@ -519,8 +518,6 @@ def train_source_cnn(
             )
 
     # AdaTime uses the LAST model (not best val) — use last epoch's weights
-    # (best_state is only used as fallback if it was never set)
-    last_state = {k: v.clone() for k, v in model.state_dict().items()}
     logger.info("[Source CNN] Training complete (no early stopping). Using last epoch model.")
     final_train_acc = train_acc
 

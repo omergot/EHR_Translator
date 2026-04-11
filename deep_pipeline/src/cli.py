@@ -202,6 +202,10 @@ def _get_training_config(config: dict) -> dict:
         "fidelity_decay_start_epoch": training.get("fidelity_decay_start_epoch", 5),
         "fidelity_decay_end_epoch": training.get("fidelity_decay_end_epoch", 40),
         "fidelity_min_ratio": training.get("fidelity_min_ratio", 0.1),
+        # torch.compile: JIT compile translator sub-modules for faster forward pass
+        "use_torch_compile": training.get("use_torch_compile", False),
+        # Gradient checkpointing: trade compute for memory to enable larger batch sizes
+        "gradient_checkpointing": training.get("gradient_checkpointing", False),
     }
 
 
@@ -250,7 +254,8 @@ def _augment_loader_with_static(
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -268,7 +273,8 @@ def _augment_loader_with_zero_static(
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -349,7 +355,8 @@ def _apply_negative_subsampling(loader, n_keep_negative, seed=42):
         shuffle=False,
         num_workers=loader.num_workers,
         drop_last=loader.drop_last,
-        pin_memory=getattr(loader, "pin_memory", False),
+        pin_memory=True,
+        persistent_workers=loader.num_workers > 0,
         collate_fn=loader.collate_fn,
     )
 
@@ -1427,6 +1434,7 @@ def train_translator(args):
             temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
             temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
             output_mode=training_cfg.get("output_mode", "residual"),
+            gradient_checkpointing=training_cfg.get("gradient_checkpointing", False),
         )
 
         trainer = RetrievalTranslatorTrainer(
@@ -2032,6 +2040,7 @@ def translate_and_eval(args):
             temporal_attention_mode=_get_temporal_attention_mode(translator_cfg),
             temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
             output_mode=training_cfg.get("output_mode", "residual"),
+            gradient_checkpointing=training_cfg.get("gradient_checkpointing", False),
         )
 
         checkpoint_path = args.translator_checkpoint

@@ -105,7 +105,7 @@ SSH aliases (in `~/.ssh/config`):
 - **Push before remote queue**: After any code change, confirm commits are pushed before queueing remote experiments. Hook on `queue.yaml` will warn. Manual check: `git log origin/<branch>..HEAD`.
 - **SSH variable expansion**: When writing remote shell commands, pass variables explicitly. Do not rely on the remote shell inheriting local env vars.
 - **Bootstrap CIs**: Default to 500 replicates on large datasets (not 2000). Prior successful runs used 500.
-- **Experiment auto-validation**: The scheduler auto-validates results on completion and writes `experiments/results/{name}.needs_diagnosis` for failures. SessionStart hook and `--status` hook alert on pending diagnoses.
+- **Experiment results**: After an experiment completes, check `experiments/results/*.json` and `runs/*/run.log` to validate manually.
 
 ## Config Structure
 

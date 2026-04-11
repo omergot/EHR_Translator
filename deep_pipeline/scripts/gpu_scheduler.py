@@ -27,7 +27,7 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
@@ -937,138 +937,6 @@ def collect_results(exp: dict, servers: dict[str, ServerConfig]):
             logging.warning(f"Malformed results JSON for '{exp['name']}'")
 
 
-# ---------------------------------------------------------------------------
-# Post-experiment validation and rate-limited headless diagnosis
-# ---------------------------------------------------------------------------
-
-DIAGNOSIS_RATE_LIMIT_HOURS = 6  # Max 4 invocations per day
-_RATE_LIMIT_FILE = REPO / "experiments" / "results" / "_last_diagnosis_trigger.txt"
-
-
-def _validate_and_flag(exp: dict) -> None:
-    """Validate result after collect_results(). Flags issues for diagnosis.
-
-    Called INSIDE the queue lock — only file I/O and logging here.
-    """
-    try:
-        # Import from scripts/ directory
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "validate_results",
-            str(REPO / "scripts" / "validate_results.py"),
-        )
-        mod = importlib.util.load_from_spec(spec)
-        spec.loader.exec_module(mod)
-        validate_fn = mod.validate_experiment_result
-    except Exception as e:
-        logging.warning(f"  [validate] Could not import validate_results: {e}")
-        return
-
-    name = exp["name"]
-    task = infer_task(exp["config"])
-    issues = validate_fn(name, task)
-    if issues:
-        _mark_for_diagnosis(exp, issues)
-    else:
-        logging.info(f"  [validate] '{name}' results OK")
-
-
-def _mark_for_diagnosis(exp: dict, issues: list[str]) -> None:
-    """Write flag file for this experiment.
-
-    Called INSIDE the queue lock. Only writes a small flag file here.
-    Actual Claude invocation is batched and rate-limited in flush_pending_diagnoses().
-    """
-    name = exp["name"]
-    flag = REPO / "experiments" / "results" / f"{name}.needs_diagnosis"
-    flag.write_text(
-        f"issues: {', '.join(issues)}\n"
-        f"experiment: {name}\n"
-        f"config: {exp.get('config', 'unknown')}\n"
-        f"log: runs/{name}/run.log\n"
-        f"queued_at: {datetime.now().isoformat()}\n"
-    )
-    logging.warning(f"  [validate] '{name}' flagged for diagnosis: {issues}")
-
-
-def _trigger_batched_claude_diagnosis(pending: list) -> None:
-    """Spawn ONE headless Claude session to diagnose all pending experiments.
-
-    Diagnosis-only: Claude writes {name}_diagnosis.txt per experiment and
-    deletes the .needs_diagnosis flag when done. Must NOT edit queue.yaml.
-    Requires: `claude` CLI on PATH (Claude Code installation).
-    """
-    import shutil
-    if not shutil.which("claude"):
-        logging.warning("  [diagnose] 'claude' CLI not found on PATH — skipping headless diagnosis")
-        return
-
-    names = [p.stem for p in pending]
-    n = len(names)
-    names_str = "\n".join(f"  - {name}" for name in names)
-    max_calls = n * 4
-
-    prompt = (
-        f"The GPU scheduler has flagged {n} experiment(s) with bad results. Diagnose each.\n\n"
-        f"Experiments:\n{names_str}\n\n"
-        f"For EACH experiment name above:\n"
-        f"1. Run: tail -80 runs/<name>/run.log\n"
-        f"2. Run: ls -lh runs/<name>/  (check what files exist)\n"
-        f"3. Run: cat experiments/results/<name>*.json 2>/dev/null  (read result JSON if any)\n"
-        f"4. Write diagnosis to experiments/results/<name>_diagnosis.txt:\n"
-        f"   EXPERIMENT: <name>\n"
-        f"   TRAINING_COMPLETE: yes/no  (MUST see 'Saving best checkpoint' in log — not just checkpoint existence)\n"
-        f"   EVAL_COMPLETE: yes/no\n"
-        f"   ROOT_CAUSE: [specific — epoch number, error message]\n"
-        f"   RECOMMENDED_ACTION: [e.g. 'requeue as translate_and_eval', 'fix lambda_fidelity', 'reduce batch_size']\n"
-        f"   SAFE_TO_AUTO_FIX: yes/no + reason\n"
-        f"5. Delete experiments/results/<name>.needs_diagnosis  (mark as processed)\n\n"
-        f"Rules:\n"
-        f"- Write ONLY to <name>_diagnosis.txt files and delete .needs_diagnosis files. Nothing else.\n"
-        f"- Do NOT modify queue.yaml, configs, or checkpoints.\n"
-        f"- Budget: {max_calls} tool calls total."
-    )
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = REPO / "experiments" / "results" / f"_batch_diagnosis_{ts}.log"
-    proc = subprocess.Popen(
-        ["claude", "-p", prompt],
-        stdout=open(log_path, "w"),
-        stderr=subprocess.STDOUT,
-        cwd=str(REPO),
-    )
-    logging.info(
-        f"  [diagnose] Headless Claude batch for {n} experiment(s) "
-        f"(PID {proc.pid}) → {log_path.name}"
-    )
-
-
-def flush_pending_diagnoses() -> None:
-    """Rate-limited batched diagnosis: at most once per 6 hours.
-
-    Called OUTSIDE the queue lock, once per scheduler loop iteration.
-    Collects ALL pending .needs_diagnosis files and processes in ONE Claude session.
-    """
-    results_dir = REPO / "experiments" / "results"
-    pending = sorted(results_dir.glob("*.needs_diagnosis"))
-    if not pending:
-        return
-
-    # Check rate limit
-    if _RATE_LIMIT_FILE.exists():
-        try:
-            last = float(_RATE_LIMIT_FILE.read_text().strip())
-            hours_since = (time.time() - last) / 3600
-            if hours_since < DIAGNOSIS_RATE_LIMIT_HOURS:
-                return  # Too soon — wait for next window
-        except (ValueError, OSError):
-            pass
-
-    # Update rate limit timestamp BEFORE spawning (prevent double-fire if loop is fast)
-    _RATE_LIMIT_FILE.write_text(str(time.time()))
-    _trigger_batched_claude_diagnosis(pending)
-
-
 def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
     """Check running experiments and update status on completion."""
     # Batch remote PID checks by server
@@ -1096,7 +964,6 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                     logging.info(f"Experiment '{name}' completed successfully")
                     exp["status"] = "done"
                     collect_results(exp, servers)
-                    _validate_and_flag(exp)
                 else:
                     logging.error(f"Experiment '{name}' failed (exit code {retcode})")
                     exp["status"] = "failed"
@@ -1114,7 +981,6 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                         logging.info(f"Experiment '{name}' output found — marking as done")
                         exp["status"] = "done"
                         collect_results(exp, servers)
-                        _validate_and_flag(exp)
                     else:
                         exp["status"] = "failed"
                         exp["error"] = "Process died (detected during monitoring)"
@@ -1165,7 +1031,6 @@ def check_running(experiments: list[dict], servers: dict[str, ServerConfig]):
                     logging.warning(f"  Remote experiment '{name}' FAILED — no success markers and no output file")
                 if exp["status"] == "done":
                     collect_results(exp, servers)
-                    _validate_and_flag(exp)
 
 
 # ---------------------------------------------------------------------------
@@ -1343,9 +1208,6 @@ def scheduler_loop(dry_run: bool = False):
             logging.info("All experiments completed. Scheduler exiting.")
             return
 
-        # Trigger batched headless Claude for any flagged experiments (rate-limited to 6h)
-        flush_pending_diagnoses()
-
         time.sleep(poll_interval)
 
     logging.info("Scheduler shut down by signal")
@@ -1496,6 +1358,35 @@ def show_status(show_all: bool = False):
 
     if not show_all and hidden > 0:
         print(f"\n  ({hidden} done/failed hidden — use --status --all to show)")
+
+    # Validate done experiments finished since start of yesterday
+    yesterday = (datetime.now() - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    done_exps = [
+        e for e in experiments
+        if e.get("status") == "done" and e.get("finished")
+        and datetime.strptime(e["finished"], "%Y-%m-%d %H:%M:%S") >= yesterday
+    ]
+    if done_exps:
+        try:
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "validate_results",
+                str(Path(__file__).parent / "validate_results.py"),
+            )
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            all_issues = []
+            for exp in done_exps:
+                issues = mod.validate_experiment_result(exp["name"])
+                all_issues.extend(issues)
+            if all_issues:
+                print(f"\n  [validate] {len(all_issues)} issue(s) in done experiments:")
+                for issue in all_issues[:10]:
+                    print(f"    {issue}")
+                if len(all_issues) > 10:
+                    print(f"    ... and {len(all_issues) - 10} more. Run: python scripts/validate_results.py")
+        except Exception:
+            pass  # Don't break --status if validate_results.py is unavailable
     print()
 
 

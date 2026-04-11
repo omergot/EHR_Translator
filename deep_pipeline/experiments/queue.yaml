@@ -1,3 +1,9 @@
+# ============================================================
+# Experiment Queue — edit this file to manage experiments
+# Reorder pending experiments by moving entries up/down
+# The scheduler runs top-to-bottom through pending experiments
+# ============================================================
+
 settings:
   poll_interval: 60
   gpu_free_threshold_mb: 1000
@@ -9,12 +15,15 @@ settings:
       - 1
       day_max_gpus: 2
       night_max_gpus: 2
+      conda_env: yaib-cu118
     a6000:
       host: omerg@132.68.39.40
       gpu_priority:
+      - 0
+      - 1
       - 3
-      day_max_gpus: 1
-      night_max_gpus: 1
+      day_max_gpus: 3
+      night_max_gpus: 3
       repo_path: /home/omerg/Thesis/EHR_Translator/deep_pipeline
       conda_env: yaib
       path_mappings:
@@ -216,25 +225,28 @@ experiments:
 - name: los_hirid_sr
   config: configs/hirid/los_hirid_sr.json
   output: experiments/results/los_hirid_sr.parquet
-  status: athena_pending
+  status: done
   server: athena
   slurm_job_id: '65974'
-  notes: HiRID->MIMIC LoS V6 SR (n_cross=3, 30ep). Running on Athena rtx6k-shared n318.
+  notes: HiRID->MIMIC LoS V6 SR (n_cross=3, 30ep). Ran locally. MAE -0.0452 (0.3545->0.3092). Result JSON created manually
+    Apr 8.
   submitted: '2026-03-25 19:19:00'
+  finished: '2026-03-26 02:31:02'
 - name: kf_hirid_sr
   config: configs/hirid/kf_hirid_sr.json
   output: experiments/results/kf_hirid_sr.parquet
-  status: athena_pending
+  status: done
   server: athena
   slurm_job_id: '65973'
-  notes: HiRID->MIMIC KF V6 SR (n_cross=3, 30ep). Submitted to Athena.
+  notes: HiRID->MIMIC KF V6 SR (n_cross=3, 30ep). Ran locally. MAE -0.0001 (negligible). Result JSON fixed Apr 8.
   submitted: '2026-03-25 19:18:55'
+  finished: '2026-03-25 20:37:31'
 - name: cal_aki_v5_cross3_ep5
   config: experiments/calibration/cal_aki_v5_cross3_ep5.json
   output: experiments/results/cal_aki_v5_cross3_ep5.parquet
   status: calibration_done
   server: '3090'
-  notes: "Calibration: aki_v5_cross3 @ 5ep (known AUCROC \u0394=+0.0556)"
+  notes: 'Calibration: aki_v5_cross3 @ 5ep (known AUCROC Δ=+0.0556)'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/cal_aki_v5_cross3_ep5.json
   _original_status: calibration
   gpu: 0
@@ -252,7 +264,7 @@ experiments:
   output: experiments/results/cal_aki_v5_stride3_ep5.parquet
   status: calibration_done
   server: '3090'
-  notes: "Calibration: aki_v5_stride3 @ 5ep (known AUCROC \u0394=+0.0498)"
+  notes: 'Calibration: aki_v5_stride3 @ 5ep (known AUCROC Δ=+0.0498)'
   _original_status: calibration
   gpu: 0
   pid: 188160
@@ -270,7 +282,7 @@ experiments:
   output: experiments/results/cal_aki_v5_k24_ep5.parquet
   status: calibration_done
   server: a6000
-  notes: "Calibration: aki_v5_k24 @ 5ep (known AUCROC \u0394=+0.0491)"
+  notes: 'Calibration: aki_v5_k24 @ 5ep (known AUCROC Δ=+0.0491)'
   _original_status: calibration
   gpu: 3
   pid: 515913
@@ -288,7 +300,7 @@ experiments:
   output: experiments/results/cal_aki_v5_stride1_ep5.parquet
   status: calibration_done
   server: a6000
-  notes: "Calibration: aki_v5_stride1 @ 5ep (known AUCROC \u0394=+0.0448)"
+  notes: 'Calibration: aki_v5_stride1 @ 5ep (known AUCROC Δ=+0.0448)'
   _original_status: calibration
   gpu: 3
   pid: 833503
@@ -306,7 +318,7 @@ experiments:
   output: experiments/results/cal_aki_v5_fix_only_ep5.parquet
   status: done
   server: local
-  notes: "Calibration: aki_v5_fix_only @ 5ep (known AUCROC \u0394=+0.0446)"
+  notes: 'Calibration: aki_v5_fix_only @ 5ep (known AUCROC Δ=+0.0446)'
   _original_status: calibration
   gpu: 1
   pid: 3207010
@@ -388,7 +400,7 @@ experiments:
   config: configs/aki_retrieval_absolute_full.json
   output: runs/aki_retrieval_absolute_full/eval.parquet
   status: failed
-  notes: "Retrieval absolute mode on AKI (causal, VLB) \u2014 launched manually"
+  notes: Retrieval absolute mode on AKI (causal, VLB) — launched manually
   gpu: 1
   pid: 1787320
   started: '2026-02-27 14:45:00'
@@ -652,7 +664,7 @@ experiments:
   output: runs/sepsis_retr_fg_no_smooth/eval.parquet
   status: done
   server: local
-  notes: "Ablation: remove smoothness (0.1\u21920.0). NEW AUCPR RECORD +0.0225. Process died after parquet export."
+  notes: 'Ablation: remove smoothness (0.1→0.0). NEW AUCPR RECORD +0.0225. Process died after parquet export.'
   gpu: 2
   pid: 464095
   started: '2026-03-04 21:00:33'
@@ -668,7 +680,8 @@ experiments:
   output: runs/sepsis_retr_fg_oversample/eval.parquet
   status: done
   server: local
-  notes: 'Ablation: oversample=20. FAILED: AUCROC -0.0331, AUCPR -0.0063. Gate collapsed (all weights=0). Oversampling anti-synergistic with featgate.'
+  notes: 'Ablation: oversample=20. FAILED: AUCROC -0.0331, AUCPR -0.0063. Gate collapsed (all weights=0). Oversampling anti-synergistic
+    with featgate.'
   gpu: 0
   pid: 972458
   started: '2026-03-05 18:03:34'
@@ -700,7 +713,8 @@ experiments:
   output: runs/mortality_retr_absolute_a6000/eval.parquet
   status: done
   server: a6000
-  notes: 'Reproduce mortality_retrieval_absolute_full on a6000 to validate cross-server results (local: AUCROC +0.046, AUCPR +0.048)'
+  notes: 'Reproduce mortality_retrieval_absolute_full on a6000 to validate cross-server results (local: AUCROC +0.046, AUCPR
+    +0.048)'
   gpu: 2
   pid: 2308625
   started: '2026-03-05 19:55:34'
@@ -801,7 +815,7 @@ experiments:
   status: done
   server: local
   branch: exp/sepsis-v2
-  notes: "VARIANCE TEST: retr+FG seed=2223 on local (A6000 got +0.040). Completes seed\xD7server matrix."
+  notes: 'VARIANCE TEST: retr+FG seed=2223 on local (A6000 got +0.040). Completes seed×server matrix.'
   gpu: 2
   pid: 2015129
   started: '2026-03-07 12:04:23'
@@ -818,7 +832,8 @@ experiments:
   status: done
   server: local
   branch: exp/sepsis-v2
-  notes: 'VARIANCE TEST: fresh SL+FG seed=2222 on local with current code (A6000 got +0.029, old local +0.0015 tainted by pre-commit code). Answers: is SL also unstable on sepsis?'
+  notes: 'VARIANCE TEST: fresh SL+FG seed=2222 on local with current code (A6000 got +0.029, old local +0.0015 tainted by
+    pre-commit code). Answers: is SL also unstable on sepsis?'
   gpu: 0
   pid: 2052455
   started: '2026-03-07 13:53:01'
@@ -903,7 +918,8 @@ experiments:
   output: runs/sepsis_sl_fg_a6000/eval.parquet
   status: done
   server: a6000
-  notes: "Control: SL+featgate sepsis on a6000 (local: +0.0015/+0.0013). SL stable for mort/AKI cross-server \u2014 tests if sepsis variance is retrieval-specific."
+  notes: 'Control: SL+featgate sepsis on a6000 (local: +0.0015/+0.0013). SL stable for mort/AKI cross-server — tests if sepsis
+    variance is retrieval-specific.'
   gpu: 3
   pid: 3757293
   started: '2026-03-07 00:17:23'
@@ -1142,7 +1158,8 @@ experiments:
   status: done
   server: a6000
   branch: feat/stability-validation
-  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, importance_reg=0. Target: close 0.007 gap to SL.'
+  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, importance_reg=0. Target: close 0.007
+    gap to SL.'
   gpu: 2
   pid: 3407472
   started: '2026-03-10 01:29:11'
@@ -1160,7 +1177,8 @@ experiments:
   status: done
   server: a6000
   branch: feat/stability-validation
-  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, importance_reg=0. Target: close 0.005 gap to SL.'
+  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, importance_reg=0. Target: close 0.005
+    gap to SL.'
   gpu: 3
   pid: 3407805
   started: '2026-03-10 01:29:16'
@@ -1178,7 +1196,8 @@ experiments:
   status: done
   server: local
   branch: feat/stability-validation
-  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, smooth=0, importance_reg=0. Test if MMD helps/hurts sepsis.'
+  notes: 'Retrieval V4: +MMD alignment (lambda_align=0.5), +label_pred Phase 2 fix, smooth=0, importance_reg=0. Test if MMD
+    helps/hurts sepsis.'
   gpu: 2
   pid: 595774
   started: '2026-03-10 01:19:00'
@@ -1339,7 +1358,7 @@ experiments:
   status: failed
   server: local
   branch: exp/retr-v5-aki
-  notes: "Killed to free GPU \u2014 ran old code (no resume support). Best at ep13, 10/15 no-improve at ep23."
+  notes: Killed to free GPU — ran old code (no resume support). Best at ep13, 10/15 no-improve at ep23.
   gpu: 1
   pid: 3141799
   started: '2026-03-14 05:04:16'
@@ -1410,7 +1429,7 @@ experiments:
   status: failed
   server: a6000
   branch: exp/retr-v5-aki
-  notes: "Cancelled \u2014 replaced with window12 on a6000."
+  notes: Cancelled — replaced with window12 on a6000.
   gpu: 3
   pid: 1384553
   started: '2026-03-16 23:01:35'
@@ -1515,7 +1534,7 @@ experiments:
   output: runs/aki_sl_fg_tseed1337_3090/eval.parquet
   status: done
   server: 3090
-  notes: "Verification: AKI SL+FG tseed=1337 on 3090. Pass criteria: AUCROC within \xB10.003 of 0.0535."
+  notes: 'Verification: AKI SL+FG tseed=1337 on 3090. Pass criteria: AUCROC within ±0.003 of 0.0535.'
   gpu: 0
   pid: 7788
   started: '2026-03-15 18:37:00'
@@ -1561,7 +1580,8 @@ experiments:
   output: runs/kf_retr_v5_cross3/eval.parquet
   status: done
   branch: feat/regression-tasks
-  notes: KF retrieval V5 cross3 (bidirectional, no VLB, batch=16). 292-feature LSTM with generated feature recomputation. Frozen baseline MAE=0.403.
+  notes: KF retrieval V5 cross3 (bidirectional, no VLB, batch=16). 292-feature LSTM with generated feature recomputation.
+    Frozen baseline MAE=0.403.
   server: a6000
   gpu: 3
   pid: 3707445
@@ -1573,7 +1593,8 @@ experiments:
   output: runs/aki_v5_cross3_stride3/eval.parquet
   status: finished
   branch: deep_pipeline
-  notes: 'V5 validation: cross3 + stride3 (window_stride=3). Reuses cross3 pretrain (f37fa5d9cfc3) to control Phase 1. Tests if stride3 improves on cross3 (+0.0556).'
+  notes: 'V5 validation: cross3 + stride3 (window_stride=3). Reuses cross3 pretrain (f37fa5d9cfc3) to control Phase 1. Tests
+    if stride3 improves on cross3 (+0.0556).'
   server: a6000
   gpu: 3
   pid: 1557805
@@ -1591,7 +1612,8 @@ experiments:
   output: runs/aki_v5_cross3_stride1/eval.parquet
   status: finished
   branch: deep_pipeline
-  notes: 'V5 validation: cross3 + stride1 (window_stride=1). Reuses cross3 pretrain (f37fa5d9cfc3) to control Phase 1. Tests if dense bank helps or hurts with cross3.'
+  notes: 'V5 validation: cross3 + stride1 (window_stride=1). Reuses cross3 pretrain (f37fa5d9cfc3) to control Phase 1. Tests
+    if dense bank helps or hurts with cross3.'
   server: '3090'
   gpu: 0
   pid: 209694
@@ -1925,13 +1947,15 @@ experiments:
   output: runs/sepsis_v6_cosine_only/eval.parquet
   status: cancelled
   branch: v6-universal
-  notes: 'V6 Wave 1 S2: Cosine only. n_cross=2, old pretrain, cosine LR+warmup+clip. Tests LR scheduling alone. [CANCELLED: dropping cosine LR, testing SR only]'
+  notes: 'V6 Wave 1 S2: Cosine only. n_cross=2, old pretrain, cosine LR+warmup+clip. Tests LR scheduling alone. [CANCELLED:
+    dropping cosine LR, testing SR only]'
 - name: sepsis_v6_sr_cosine
   config: configs/v6/sepsis_v6_sr_cosine.json
   output: runs/sepsis_v6_sr_cosine/eval.parquet
   status: cancelled
   branch: v6-universal
-  notes: 'V6 Wave 1 S3: SR + cosine. n_cross=3, SR pretrain, cosine LR+warmup+clip. Tests combined innovations. [KILLED: stuck on /tmp full at ep30, cosine LR dropped anyway]'
+  notes: 'V6 Wave 1 S3: SR + cosine. n_cross=3, SR pretrain, cosine LR+warmup+clip. Tests combined innovations. [KILLED: stuck
+    on /tmp full at ep30, cosine LR dropped anyway]'
   finished: '2026-03-25 11:32:55'
   error: Process died (detected during monitoring)
 - name: sepsis_v6_sr_cosine_accum
@@ -1939,14 +1963,16 @@ experiments:
   output: runs/sepsis_v6_sr_cosine_accum/eval.parquet
   status: cancelled
   branch: v6-universal
-  notes: 'V6 Wave 1 S4: All innovations. SR + cosine + accum=4 (eff batch=64). Tests full V6 on hardest task. [KILLED: cosine LR dropped, testing SR only]'
+  notes: 'V6 Wave 1 S4: All innovations. SR + cosine + accum=4 (eff batch=64). Tests full V6 on hardest task. [KILLED: cosine
+    LR dropped, testing SR only]'
   finished: '2026-03-24 11:23:28'
 - name: mortality_v6_sr_cosine
   config: configs/v6/mortality_v6_sr_cosine.json
   output: runs/mortality_v6_sr_cosine/eval.parquet
   status: cancelled
   branch: v6-universal
-  notes: 'V6 Wave 1 M1: SR + cosine on mortality. n_cross=3, SR pretrain, cosine LR. Must beat +0.0476. [CANCELLED: dropping cosine LR, testing SR only]'
+  notes: 'V6 Wave 1 M1: SR + cosine on mortality. n_cross=3, SR pretrain, cosine LR. Must beat +0.0476. [CANCELLED: dropping
+    cosine LR, testing SR only]'
 - name: aki_v6_sr
   config: configs/v6/aki_v6_sr.json
   output: runs/aki_v6_sr/eval.parquet
@@ -1970,7 +1996,8 @@ experiments:
   output: runs/los_v6_sr/eval.parquet
   status: cancelled
   branch: v6-universal
-  notes: 'V6 SR-only: LoS best config (v5_cross3, n_cross=3) + self-retrieval pretrain. Must beat MAE -0.0196. [KILLED: NaN divergence at ep13, SR init instability on regression]'
+  notes: 'V6 SR-only: LoS best config (v5_cross3, n_cross=3) + self-retrieval pretrain. Must beat MAE -0.0196. [KILLED: NaN
+    divergence at ep13, SR init instability on regression]'
 - name: kf_v6_sr
   config: configs/v6/kf_v6_sr.json
   output: runs/kf_v6_sr/eval.parquet
@@ -3075,7 +3102,8 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'SOURCE-ONLY ABLATION: Same 2-layer LSTM as DANN but lambda_adversarial=0 (no DA). Tests whether DANN high AUROC comes from alignment or architecture.'
+  notes: 'SOURCE-ONLY ABLATION: Same 2-layer LSTM as DANN but lambda_adversarial=0 (no DA). Tests whether DANN high AUROC
+    comes from alignment or architecture.'
   server: '3090'
   gpu: 0
   pid: 1310021
@@ -3091,7 +3119,8 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "SOURCE-ONLY ABLATION: Same 2-layer LSTM as DANN but lambda_adversarial=0. DANN AKI=0.988 \u2014 if source-only matches, DA provides zero benefit."
+  notes: 'SOURCE-ONLY ABLATION: Same 2-layer LSTM as DANN but lambda_adversarial=0. DANN AKI=0.988 — if source-only matches,
+    DA provides zero benefit.'
   server: '3090'
   gpu: 0
   pid: 1325865
@@ -3107,7 +3136,8 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "SOURCE-ONLY ABLATION: Control \u2014 mortality (per-stay). DANN mortality=0.828. Should match if discriminator collapse theory is correct."
+  notes: 'SOURCE-ONLY ABLATION: Control — mortality (per-stay). DANN mortality=0.828. Should match if discriminator collapse
+    theory is correct.'
   server: a6000
   gpu: 3
   pid: 825063
@@ -3123,7 +3153,8 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'MATCHED ABLATION: 1-layer h=161 (same as frozen YAIB LSTM), no DA, target val ES. Isolates effect of target-val early stopping from architecture.'
+  notes: 'MATCHED ABLATION: 1-layer h=161 (same as frozen YAIB LSTM), no DA, target val ES. Isolates effect of target-val
+    early stopping from architecture.'
   server: local
   gpu: 0
   pid: 2258157
@@ -3154,7 +3185,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "INVALID: code fix was not committed \u2014 ran with eICU val ES instead of MIMIC val ES. Re-queued below."
+  notes: 'INVALID: code fix was not committed — ran with eICU val ES instead of MIMIC val ES. Re-queued below.'
   server: a6000
   gpu: 3
   pid: 1448818
@@ -3170,7 +3201,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "INVALID: code fix was not committed \u2014 ran with eICU val ES instead of MIMIC val ES. Re-queued below."
+  notes: 'INVALID: code fix was not committed — ran with eICU val ES instead of MIMIC val ES. Re-queued below.'
   server: '3090'
   gpu: 0
   pid: 1442148
@@ -3186,7 +3217,8 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: 'TRUE MATCHED: 1L h=161, NO LayerNorm, NO static_proj (exact frozen YAIB arch). eICU val ES. BCE/AdamW/left-pad. Isolates training procedure only.'
+  notes: 'TRUE MATCHED: 1L h=161, NO LayerNorm, NO static_proj (exact frozen YAIB arch). eICU val ES. BCE/AdamW/left-pad.
+    Isolates training procedure only.'
   server: local
   gpu: 0
   pid: 2325531
@@ -3249,7 +3281,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "DANN RP paper-HPs (\u03BB=1, lr=1e-3) AKI. Essential for paper table."
+  notes: DANN RP paper-HPs (λ=1, lr=1e-3) AKI. Essential for paper table.
   server: local
   gpu: 0
   pid: 2582779
@@ -3264,7 +3296,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "DANN RP paper-HPs (\u03BB=1, lr=1e-3) Mortality. Essential for paper table."
+  notes: DANN RP paper-HPs (λ=1, lr=1e-3) Mortality. Essential for paper table.
   server: a6000
   gpu: 3
   pid: 2089227
@@ -3280,7 +3312,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CORAL RP \u03BB=0.1 Sepsis. HP variant for paper."
+  notes: CORAL RP λ=0.1 Sepsis. HP variant for paper.
   server: '3090'
   gpu: 0
   pid: 1666192
@@ -3296,7 +3328,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CORAL RP \u03BB=0.1 AKI. HP variant for paper."
+  notes: CORAL RP λ=0.1 AKI. HP variant for paper.
   server: a6000
   gpu: 3
   pid: 2105565
@@ -3312,7 +3344,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CORAL RP \u03BB=0.1 Mortality. HP variant for paper."
+  notes: CORAL RP λ=0.1 Mortality. HP variant for paper.
   server: '3090'
   gpu: 0
   pid: 1676464
@@ -3328,7 +3360,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN RP \u03BB=0.1. Second HP variant."
+  notes: CDAN RP λ=0.1. Second HP variant.
   server: a6000
   gpu: 3
   pid: 3339745
@@ -3344,7 +3376,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN RP \u03BB=0.1. Second HP variant."
+  notes: CDAN RP λ=0.1. Second HP variant.
   server: '3090'
   gpu: 0
   pid: 1740757
@@ -3360,7 +3392,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN RP \u03BB=0.1. Second HP variant."
+  notes: CDAN RP λ=0.1. Second HP variant.
   server: '3090'
   gpu: 0
   pid: 1750003
@@ -3520,7 +3552,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "ACON RP lr=1e-3, \u03BB=0.1. Second HP variant."
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
   server: a6000
   gpu: 3
   pid: 3453702
@@ -3536,7 +3568,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "ACON RP lr=1e-3, \u03BB=0.1. Second HP variant."
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
   server: '3090'
   gpu: 0
   pid: 1840467
@@ -3552,7 +3584,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "ACON RP lr=1e-3, \u03BB=0.1. Second HP variant."
+  notes: ACON RP lr=1e-3, λ=0.1. Second HP variant.
   server: '3090'
   gpu: 0
   pid: 1849168
@@ -3568,7 +3600,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN E2E right-padded. Conditional adversarial (Long et al. NeurIPS 2018). \u03BB=1, lr=1e-3."
+  notes: CDAN E2E right-padded. Conditional adversarial (Long et al. NeurIPS 2018). λ=1, lr=1e-3.
   server: a6000
   gpu: 3
   pid: 3293926
@@ -3584,7 +3616,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN E2E right-padded. Conditional adversarial. \u03BB=1, lr=1e-3."
+  notes: CDAN E2E right-padded. Conditional adversarial. λ=1, lr=1e-3.
   server: '3090'
   gpu: 0
   pid: 1728536
@@ -3600,7 +3632,7 @@ experiments:
   status: done
   branch: da-baselines-v2
   command: run_e2e_baseline
-  notes: "CDAN E2E right-padded. Conditional adversarial. \u03BB=1, lr=1e-3."
+  notes: CDAN E2E right-padded. Conditional adversarial. λ=1, lr=1e-3.
   server: a6000
   gpu: 3
   pid: 3317602
@@ -4580,7 +4612,8 @@ experiments:
   config: configs/ccr_afs_mortality.json
   output: runs/ccr_afs_mortality/eval.parquet
   status: athena_pending
-  notes: 'CCR+AFS combined: class-conditional retrieval + fidelity scheduling for mortality. Bidirectional, no VLB. Base: RetrV4+MMD.'
+  notes: 'CCR+AFS combined: class-conditional retrieval + fidelity scheduling for mortality. Bidirectional, no VLB. Base:
+    RetrV4+MMD.'
   server: athena
   slurm_job_id: '67239'
   submitted: '2026-03-31 09:43:12'
@@ -4589,7 +4622,8 @@ experiments:
   output: runs/sepsis_v7_adaptive/eval.parquet
   status: done
   server: local
-  notes: V7 adaptive refresh for sepsis. Same config as sepsis_retr_v4_mmd + adaptive_refresh. Run on local for fair comparison with best sepsis result.
+  notes: V7 adaptive refresh for sepsis. Same config as sepsis_retr_v4_mmd + adaptive_refresh. Run on local for fair comparison
+    with best sepsis result.
   gpu: 1
   pid: 3889900
   started: '2026-03-31 16:53:33'
@@ -4683,7 +4717,8 @@ experiments:
   config: configs/afs_mortality.json
   output: runs/afs_mortality/eval.parquet
   status: done
-  notes: 'AFS only (linear decay 0.1->0.01 over ep5-40): adaptive fidelity scheduling for mortality. Bidirectional, no VLB. Base: RetrV4+MMD.'
+  notes: 'AFS only (linear decay 0.1->0.01 over ep5-40): adaptive fidelity scheduling for mortality. Bidirectional, no VLB.
+    Base: RetrV4+MMD.'
   server: '3090'
   gpu: 0
   pid: 1862297
@@ -5353,20 +5388,28 @@ experiments:
 - name: val_s1_aki_local
   config: configs/val_s1_aki_local.json
   output: runs/val_s1_aki_local/eval.parquet
-  status: running
+  status: done
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 1 validation: AKI v5 cross3 with pin_memory+non_blocking. Ref: +0.0556 (local, seed 2222). Expected bit-identical.'
-  gpu: 1
-  pid: 270592
-  started: '2026-04-06 11:18:59'
+  notes: 'Step 1 validation: AKI v5 cross3 with pin_memory+non_blocking. Ref: +0.0556 (local, seed 2222). Expected bit-identical..
+    RE-RUN: fixed persistent_workers bug in VLB DataLoader (PyTorch 2.4 batch_sampler issue). Pretrain checkpoint preserved.'
+  gpu: 0
+  pid: 1618426
+  started: '2026-04-08 10:30:18'
+  finished: '2026-04-08 22:29:56'
+  results:
+    AUCROC: -0.107
+    AUCPR: -0.2388
+    loss: 0.2072
+    brier: 0.0668
+    ece: 0.0568
 - name: val_s1_sepsis_3090
   config: configs/val_s1_sepsis_3090.json
   output: runs/val_s1_sepsis_3090/eval.parquet
-  status: failed
+  status: cancelled
   server: '3090'
   branch: opt/training-speedup-v2
-  notes: 'Step 1 validation: Sepsis v5 cross3 with pin_memory+non_blocking. Ref: +0.0448 (3090, seed 2222). Expected bit-identical.'
+  notes: 'CANCELLED: 3090 OOM. Moved to a6000 as val_s1_sepsis_a6000.'
   gpu: 0
   pid: 2157471
   started: '2026-04-06 11:19:10'
@@ -5376,128 +5419,458 @@ experiments:
 - name: val_s2_compile_aki
   config: configs/val_s2_compile_aki.json
   output: runs/val_s2_compile_aki/eval.parquet
-  status: running
+  status: failed
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 2 smoke: torch.compile on AKI v5 cross3, 5 epochs. Verify no graph breaks, loss matches ref within FP noise.'
+  notes: 'FAILED: torch.compile inductor NaN bug on V100.'
   gpu: 0
   pid: 287741
   started: '2026-04-06 11:52:08'
+  finished: '2026-04-07 00:23:41'
+  error: Process died (detected during monitoring)
 - name: val_gc_aki_local
   config: configs/val_gc_aki_local.json
   output: runs/val_gc_aki_local/eval.parquet
-  status: pending
+  status: cancelled
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: AKI v5 cross3, gc+bs32. Ref: +0.0556 (local, seed 2222). Threshold: |delta| < 0.003.'
+  notes: 'Cancelled: gc+bs32 confounds gc effect with batch_size change. Replaced by gc+bs16 experiments. Was: failed'
+  error: Process died (detected during monitoring)
 - name: val_gc_aki_3090
   config: configs/val_gc_aki_3090.json
   output: runs/val_gc_aki_3090/eval.parquet
-  status: failed
+  status: done
   server: '3090'
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: AKI v5 cross3, gc+bs32. Ref: +0.0550 (3090, seed 2222). Threshold: |delta| < 0.003.'
+  notes: 'Step 3 validation: AKI v5 cross3, gc+bs32. Ref: +0.0550 (3090, seed 2222). Threshold: |delta| < 0.003.. RE-RUN:
+    process died + double FiLM bug (gc=True). Bug fixed in commit 1e899d7. Pretrain checkpoint preserved.'
   gpu: 0
-  pid: 2158109
-  started: '2026-04-06 11:29:37'
+  pid: 2180106
+  started: '2026-04-07 13:41:02'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_aki_3090.json
-  finished: '2026-04-06 11:37:45'
-  error: Process died on 3090 (no success markers in log, no output file)
+  finished: '2026-04-08 08:54:12'
+  results:
+    AUCROC: 0.0518
+    AUCPR: 0.1515
+    loss: -0.1031
+    brier: -0.0164
+    ece: -0.002
 - name: val_gc_mort_v5_local
   config: configs/val_gc_mort_v5_local.json
   output: runs/val_gc_mort_v5_local/eval.parquet
-  status: pending
+  status: finished
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Mortality v5 cross3, gc+bs32. Ref: +0.0409 (local, seed 2222). Threshold: |delta| < 0.005.'
+  notes: 'PASSED: AUROC +0.0427, AUCPR +0.0548. Ref: +0.0409.'
 - name: val_gc_mort_v4_3090
   config: configs/val_gc_mort_v4_3090.json
   output: runs/val_gc_mort_v4_3090/eval.parquet
-  status: running
+  status: cancelled
   server: '3090'
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Mortality v4+MMD, gc+bs32. Ref: +0.0441 (3090, seed 2222). Threshold: |delta| < 0.005.'
-  gpu: 0
-  pid: 2158731
-  started: '2026-04-06 11:37:53'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_mort_v4_3090.json
+  notes: 'Cancelled: gc+bs32 confounds gc effect with batch_size change. Replaced by gc+bs16 experiments. Was: pending'
 - name: val_gc_mort_v4_a6000
   config: configs/val_gc_mort_v4_a6000.json
   output: runs/val_gc_mort_v4_a6000/eval.parquet
-  status: running
+  status: cancelled
   server: a6000
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Mortality v4+MMD, gc+bs32. Ref: +0.0470 (a6000, seed 2222). Threshold: |delta| < 0.005.'
-  gpu: 3
-  pid: 4057813
-  started: '2026-04-06 11:19:18'
-  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_mort_v4_a6000.json
+  notes: 'Cancelled: gc+bs32 confounds gc effect with batch_size change. Replaced by gc+bs16 experiments. Was: done'
 - name: val_gc_sepsis_v5_3090
   config: configs/val_gc_sepsis_v5_3090.json
   output: runs/val_gc_sepsis_v5_3090/eval.parquet
-  status: pending
+  status: cancelled
   server: '3090'
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Sepsis v5 cross3, gc+bs32. Ref: +0.0448 (3090, seed 2222). Threshold: |delta| < 0.020.'
+  notes: 'CANCELLED: 3090 OOM. Moved to a6000 as val_gc_sepsis_v5_a6000.'
 - name: val_gc_sepsis_v4_local
   config: configs/val_gc_sepsis_v4_local.json
   output: runs/val_gc_sepsis_v4_local/eval.parquet
-  status: pending
+  status: cancelled
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Sepsis v4+MMD, gc+bs32. Ref: +0.0512 (local, seed 2222). Threshold: |delta| < 0.020.'
+  notes: 'Cancelled: gc+bs32 confounds gc effect with batch_size change. Replaced by gc+bs16 experiments. Was: running'
 - name: val_gc_sepsis_v4_s7777
   config: configs/val_gc_sepsis_v4_s7777.json
   output: runs/val_gc_sepsis_v4_s7777/eval.parquet
-  status: pending
+  status: cancelled
   server: local
   branch: opt/training-speedup-v2
-  notes: 'Step 3 validation: Sepsis v4+MMD seed 7777, gc+bs32. Ref: +0.0384 (local, seed 7777). Threshold: |delta| < 0.020.'
+  notes: 'Cancelled: gc+bs32 confounds gc effect with batch_size change. Replaced by gc+bs16 experiments. Was: pending'
 - name: val_gc_aki_s42_athena
   config: configs/val_gc_aki_s42_athena.json
   output: runs/val_gc_aki_s42_athena/eval_aki.parquet
-  status: athena_pending
+  status: athena_failed
   server: athena
-  notes: 'Step 3 validation: AKI v5 cross3 seed42, gc+bs32. Ref: +0.0551 (Athena train, local eval). Threshold: |delta| < 0.003.'
+  notes: 'FAILED: CopySlices inplace crash (pre-fix). Resubmitted as v3.'
   submitted: '2026-04-06 11:49:47'
   slurm_job_id: '68942'
 - name: val_gc_mort_s7777_athena
   config: configs/val_gc_mort_s7777_athena.json
   output: runs/val_gc_mort_s7777_athena/eval_mortality.parquet
-  status: athena_pending
+  status: athena_done
   server: athena
-  notes: 'Step 3 validation: Mortality v4+MMD seed7777, gc+bs32. Ref: +0.0410 (Athena). Threshold: |delta| < 0.005.'
+  notes: 'PASSED: AUROC +0.0427, AUCPR +0.0374 (ref +0.0410).'
   submitted: '2026-04-06 11:49:59'
   slurm_job_id: '68943'
 - name: val_gc_aki_s7777_athena
   config: configs/val_gc_aki_s7777_athena.json
   output: runs/val_gc_aki_s7777_athena/eval_aki.parquet
-  status: athena_pending
+  status: athena_failed
   server: athena
-  notes: 'Step 3 validation: AKI v5 cross3 seed7777, gc+bs32. Ref: +0.0547 (local). Threshold: |delta| < 0.003.'
+  notes: 'FAILED: CopySlices inplace crash (pre-fix). Resubmitted as v3.'
   submitted: '2026-04-06 12:01:26'
   slurm_job_id: '68944'
 - name: val_gc_mort_v4_athena
   config: configs/val_gc_mort_v4_athena.json
   output: runs/val_gc_mort_v4_athena/eval_mortality.parquet
-  status: athena_pending
+  status: athena_done
   server: athena
-  notes: 'Step 3 validation: Mortality v4+MMD seed2222, gc+bs32. Ref: +0.0470 (a6000), +0.0456 (local). Threshold: |delta| < 0.005.'
+  notes: 'PASSED: AUROC +0.0472, AUCPR +0.0468 (ref +0.0470/+0.0562).'
   submitted: '2026-04-06 12:01:37'
   slurm_job_id: '68945'
 - name: val_gc_sepsis_v4_athena
   config: configs/val_gc_sepsis_v4_athena.json
   output: runs/val_gc_sepsis_v4_athena/eval_sepsis.parquet
-  status: athena_pending
+  status: athena_failed
   server: athena
-  notes: 'Step 3 validation: Sepsis v4+MMD seed2222, gc+bs32. Ref: +0.0512 (local). Threshold: |delta| < 0.020. Athena eval may segfault - re-eval locally.'
+  notes: 'FAILED: CopySlices inplace crash (pre-fix). Resubmitted as v3.'
   submitted: '2026-04-06 12:01:48'
   slurm_job_id: '68946'
 - name: val_gc_sepsis_v4_s7777_athena
   config: configs/val_gc_sepsis_v4_s7777_athena.json
   output: runs/val_gc_sepsis_v4_s7777_athena/eval_sepsis.parquet
-  status: athena_pending
+  status: athena_failed
   server: athena
-  notes: 'Step 3 validation: Sepsis v4+MMD seed7777, gc+bs32. Ref: +0.0384 (local). Threshold: |delta| < 0.020. Athena eval may segfault - re-eval locally.'
+  notes: 'FAILED: CopySlices inplace crash (pre-fix). Resubmitted as v3.'
   submitted: '2026-04-06 12:01:54'
   slurm_job_id: '68947'
+- name: val_gc_aki_s7777_athena_v2
+  config: configs/val_gc_aki_s7777_athena.json
+  output: runs/val_gc_aki_s7777_athena_v2/eval_aki.parquet
+  status: athena_failed
+  server: athena
+  notes: 'FAILED: CopySlices inplace crash (grad_diag fix insufficient).'
+  submitted: '2026-04-06 13:45:08'
+  slurm_job_id: '68968'
+- name: val_gc_sepsis_v4_athena_v2
+  config: configs/val_gc_sepsis_v4_athena.json
+  output: runs/val_gc_sepsis_v4_athena_v2/eval_sepsis.parquet
+  status: athena_failed
+  server: athena
+  notes: 'FAILED: CopySlices inplace crash (grad_diag fix insufficient).'
+  submitted: '2026-04-06 13:45:13'
+  slurm_job_id: '68969'
+- name: val_gc_sepsis_v4_s7777_athena_v2
+  config: configs/val_gc_sepsis_v4_s7777_athena.json
+  output: runs/val_gc_sepsis_v4_s7777_athena_v2/eval_sepsis.parquet
+  status: athena_failed
+  server: athena
+  notes: 'FAILED: CopySlices inplace crash (grad_diag fix insufficient).'
+  submitted: '2026-04-06 13:45:19'
+  slurm_job_id: '68970'
+- name: val_gc_aki_s42_athena_v3
+  config: configs/val_gc_aki_s42_athena.json
+  output: runs/val_gc_aki_s42_athena_v3/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: RETRY v3 (inplace fix 3ccc2d9). AKI v5 cross3 seed42, gc+bs32.
+  submitted: '2026-04-06 14:44:49'
+  slurm_job_id: '68984'
+- name: val_gc_aki_s7777_athena_v3
+  config: configs/val_gc_aki_s7777_athena.json
+  output: runs/val_gc_aki_s7777_athena_v3/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  notes: RETRY v3 (inplace fix 3ccc2d9). AKI v5 cross3 seed7777, gc+bs32.
+  submitted: '2026-04-06 14:44:55'
+  slurm_job_id: '68985'
+- name: val_gc_sepsis_v4_athena_v3
+  config: configs/val_gc_sepsis_v4_athena.json
+  output: runs/val_gc_sepsis_v4_athena_v3/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: RETRY v3 (inplace fix 3ccc2d9). Sepsis v4+MMD seed2222, gc+bs32.
+  submitted: '2026-04-06 14:45:00'
+  slurm_job_id: '68986'
+- name: val_gc_sepsis_v4_s7777_athena_v3
+  config: configs/val_gc_sepsis_v4_s7777_athena.json
+  output: runs/val_gc_sepsis_v4_s7777_athena_v3/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: RETRY v3 (inplace fix 3ccc2d9). Sepsis v4+MMD seed7777, gc+bs32.
+  submitted: '2026-04-06 14:45:06'
+  slurm_job_id: '68987'
+- name: ref_mort_v4_s2222_athena
+  config: configs/ref_mort_v4_s2222_athena.json
+  output: runs/ref_mort_v4_s2222_athena/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Reference: Mortality v4+MMD seed2222, bs=16, NO gc.'
+  submitted: '2026-04-06 15:04:59'
+  slurm_job_id: '68990'
+- name: ref_mort_v4_s7777_athena
+  config: configs/ref_mort_v4_s7777_athena.json
+  output: runs/ref_mort_v4_s7777_athena/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: 'Reference: Mortality v4+MMD seed7777, bs=16, NO gc.'
+  submitted: '2026-04-06 15:05:04'
+  slurm_job_id: '68991'
+- name: val_s1_sepsis_a6000
+  config: configs/val_s1_sepsis_a6000.json
+  output: runs/val_s1_sepsis_a6000/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'Step 1: Sepsis v5 cross3 on a6000 (3090 OOM). Ref: +0.0448.'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_s1_sepsis_a6000.json
+  finished: '2026-04-08 01:22:43'
+  error: Process died on a6000 (no success markers in log, no output file)
+  gpu: 3
+  pid: 1503329
+  started: '2026-04-07 15:10:36'
+  results:
+    AUCROC: 0.0475
+    AUCPR: 0.0191
+    loss: -0.1147
+    brier: -0.063
+    ece: -0.0496
+- name: val_gc_sepsis_v5_a6000
+  config: configs/val_gc_sepsis_v5_a6000.json
+  output: runs/val_gc_sepsis_v5_a6000/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'Step 3: Sepsis v5 cross3 gc+bs32 on a6000 (3090 OOM). Ref: +0.0448.. RE-RUN: killed — was running with double FiLM
+    bug (gc=True, started before fix 1e899d7). Pretrain checkpoint preserved.'
+  gpu: 3
+  pid: 2264162
+  started: '2026-04-08 01:22:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_sepsis_v5_a6000.json
+  finished: '2026-04-08 12:34:49'
+  results:
+    AUCROC: 0.036
+    AUCPR: 0.0194
+    loss: -0.0913
+    brier: -0.0284
+    ece: -0.0131
+- name: val_gc_bs16_aki
+  config: configs/val_gc_bs16_aki.json
+  output: runs/val_gc_bs16_aki/eval.parquet
+  status: cancelled
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'Cancelled: gc+bs16 irrelevant for speedup (no throughput gain). Replaced by gc+bs32+lr2x. Was: failed'
+  error: Exit code -15
+- name: val_gc_bs16_sepsis
+  config: configs/val_gc_bs16_sepsis.json
+  output: runs/val_gc_bs16_sepsis/eval.parquet
+  status: cancelled
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'Cancelled: gc+bs16 irrelevant for speedup (no throughput gain). Replaced by gc+bs32+lr2x. Was: running'
+- name: val_gc_bs16_mort
+  config: configs/val_gc_bs16_mort.json
+  output: runs/val_gc_bs16_mort/eval.parquet
+  status: cancelled
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'Cancelled: gc+bs16 irrelevant for speedup (no throughput gain). Replaced by gc+bs32+lr2x. Was: pending'
+  error: Process died on a6000 (no success markers in log, no output file)
+- name: val_gc_bs32_lr2x_aki
+  config: configs/val_gc_bs32_lr2x_aki.json
+  output: runs/val_gc_bs32_lr2x_aki/eval.parquet
+  status: done
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32+lr2x: AKI v5 cross3. Linear scaling rule (lr 1e-4->2e-4 with bs 16->32). Ref: +0.0556 (local seed 2222).
+    Threshold: +-0.003. Tests the full speedup config with correct lr scaling.'
+  gpu: 1
+  pid: 1695979
+  started: '2026-04-08 14:07:20'
+  finished: '2026-04-09 10:22:42'
+  results:
+    AUCROC: -0.1031
+    AUCPR: -0.2528
+    loss: 0.2036
+    brier: 0.0737
+    ece: 0.0643
+- name: val_gc_bs32_lr2x_sepsis
+  config: configs/val_gc_bs32_lr2x_sepsis.json
+  output: runs/val_gc_bs32_lr2x_sepsis/eval.parquet
+  status: done
+  server: '3090'
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32+lr2x: Sepsis v4+MMD. Linear scaling rule (lr 1e-4->2e-4 with bs 16->32). Ref: +0.0512 (local seed 2222).
+    Threshold: +-0.020. 3090 freed from AdaTime.'
+  gpu: 0
+  pid: 2200361
+  started: '2026-04-08 15:34:54'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_lr2x_sepsis.json
+  finished: '2026-04-09 04:46:13'
+  results:
+    AUCROC: 0.0435
+    AUCPR: 0.0188
+    loss: -0.0862
+    brier: -0.0596
+    ece: -0.0649
+- name: val_gc_bs32_lr2x_mort
+  config: configs/val_gc_bs32_lr2x_mort.json
+  output: runs/val_gc_bs32_lr2x_mort/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32+lr2x: Mortality v4+MMD. Linear scaling rule (lr 1e-4->2e-4 with bs 16->32). Ref: +0.0470 (a6000 seed 2222).
+    Threshold: +-0.004. a6000 GPU 1 freed from AdaTime.'
+  gpu: 3
+  pid: 3029727
+  started: '2026-04-08 15:58:23'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_lr2x_mort.json
+  finished: '2026-04-08 22:35:01'
+  results:
+    AUCROC: 0.0348
+    AUCPR: 0.0371
+    loss: -0.052
+    brier: -0.0299
+    ece: -0.0412
+- name: val_gc_bs32_mort
+  config: configs/val_gc_bs32_mort.json
+  output: runs/val_gc_bs32_mort/eval.parquet
+  status: cancelled
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'CANCELLED: Mortality already validated 3x (Athena +0.0472, +0.0427, local V5 +0.0427). Freed GPU for sepsis variants.'
+- name: val_gc_bs32_sepsis
+  config: configs/val_gc_bs32_sepsis.json
+  output: runs/val_gc_bs32_sepsis/eval.parquet
+  status: done
+  server: '3090'
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): Sepsis V4+MMD, n_cross=2. lr=1e-4 (original), bs=32, gc=true. lr=2e-4 passed sepsis (+0.0435)
+    but failed AKI/mort, so unified strategy is lr=1e-4. Ref: +0.0512. Threshold: +-0.020.'
+  gpu: 0
+  pid: 2227601
+  started: '2026-04-09 12:55:33'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_sepsis.json
+  finished: '2026-04-09 20:02:22'
+  results:
+    AUCROC: 0.0553
+    AUCPR: 0.0224
+    loss: -0.1123
+    brier: -0.026
+    ece: -0.0054
+- name: val_gc_bs32_aki_a6000
+  config: configs/val_gc_bs32_aki_a6000.json
+  output: runs/val_gc_bs32_aki_a6000/eval.parquet
+  status: done
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): AKI V5 cross3, n_cross=3. Local with yaib-cu118 (PyTorch 2.6). Confirms 3090 result (+0.0518).
+    Ref: +0.0556. Threshold: +-0.003.'
+  gpu: 0
+  pid: 2039097
+  started: '2026-04-09 12:55:33'
+  finished: '2026-04-10 11:01:26'
+  results:
+    AUCROC: 0.0517
+    AUCPR: 0.1477
+    loss: -0.1025
+    brier: -0.013
+    ece: 0.0054
+- name: val_s1_aki_a6000
+  config: configs/val_s1_aki_a6000.json
+  output: runs/val_s1_aki_a6000/eval.parquet
+  status: cancelled
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'CANCELLED: Redundant — gc+bs32 experiments already include Step 1. Replaced with gc+bs32 sepsis cross-server on
+    a6000.'
+  gpu: 1
+  pid: 113679
+  started: '2026-04-09 12:55:39'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_s1_aki_a6000.json
+  finished: '2026-04-09 13:12:01'
+  error: Killed intentionally — replaced with cross-server sepsis
+- name: val_gc_bs32_aki_a6000_v2
+  config: configs/val_gc_bs32_aki_a6000_v2.json
+  output: runs/val_gc_bs32_aki_a6000_v2/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): AKI V5 cross3, n_cross=3. Cross-server confirmation on a6000 (3090 borderline +0.0518 vs
+    ref +0.0556). Ref: +0.0556. Threshold: +-0.003.'
+  gpu: 3
+  pid: 114053
+  started: '2026-04-09 12:55:45'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_aki_a6000_v2.json
+  finished: '2026-04-10 07:17:40'
+  results:
+    AUCROC: 0.0526
+    AUCPR: 0.1489
+    loss: -0.1047
+    brier: -0.0152
+    ece: 0.0033
+- name: val_gc_bs32_sepsis_a6000
+  config: configs/val_gc_bs32_sepsis_a6000.json
+  output: runs/val_gc_bs32_sepsis_a6000/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): Sepsis V4+MMD cross-server on a6000. Complements 3090 run. Every task now has 2-server
+    coverage. Ref: +0.0512. Threshold: +-0.020.'
+  gpu: 0
+  pid: 164360
+  started: '2026-04-09 13:34:31'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_sepsis_a6000.json
+  finished: '2026-04-09 21:56:16'
+  results:
+    AUCROC: 0.0561
+    AUCPR: 0.0216
+    loss: -0.1126
+    brier: -0.0152
+    ece: 0.0106
+- name: val_gc_bs32_mort_local
+  config: configs/val_gc_bs32_mort_local.json
+  output: runs/val_gc_bs32_mort_local/eval.parquet
+  status: cancelled
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'CANCELLED: Mortality already validated 3x. Freed GPU for sepsis local.'
+- name: val_gc_bs32_sepsis_local
+  config: configs/val_gc_bs32_sepsis_local.json
+  output: runs/val_gc_bs32_sepsis_local/eval.parquet
+  status: done
+  server: local
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): Sepsis V4+MMD on local (yaib-cu118). Cross-server with 3090 run. Ref: +0.0512. Threshold:
+    +-0.020.'
+  gpu: 1
+  pid: 2057839
+  started: '2026-04-09 13:33:23'
+  finished: '2026-04-10 00:16:37'
+  results:
+    AUCROC: 0.0538
+    AUCPR: 0.0219
+    loss: -0.1092
+    brier: -0.0177
+    ece: 0.0016
+- name: val_gc_bs32_sepsis_s7777
+  config: configs/val_gc_bs32_sepsis_s7777.json
+  output: runs/val_gc_bs32_sepsis_s7777/eval.parquet
+  status: done
+  server: a6000
+  branch: opt/training-speedup-v2
+  notes: 'gc+bs32 (NO lr scaling): Sepsis V4+MMD, training_seed=7777. Seed stability check. Ref: +0.0512 (seed 2222). Threshold:
+    +-0.020.'
+  gpu: 1
+  pid: 164738
+  started: '2026-04-09 13:34:36'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/val_gc_bs32_sepsis_s7777.json
+  finished: '2026-04-09 23:15:36'
+  results:
+    AUCROC: 0.0456
+    AUCPR: 0.0196
+    loss: -0.0936
+    brier: -0.0394
+    ece: -0.0361

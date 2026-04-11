@@ -59,6 +59,9 @@ python scripts/autoresearch.py --task aki --paradigm retrieval --budget 12h  # A
 - **V6 Gradient Clipping**: `grad_clip_norm: 1.0` clips gradient norm before optimizer step. Applied in all 3 trainers.
 - **V6 Gradient Accumulation**: `accumulate_grad_batches: 4` accumulates gradients over N mini-batches before stepping (effective batch = batch_size × N). Useful for sparse-label tasks (sepsis). Applied in all 3 trainers. Remaining gradients are flushed at end of epoch.
 - **Checkpoint resume**: Training saves `latest_checkpoint.pt` every epoch. If training is interrupted, restarting with the same config auto-resumes from the latest checkpoint (epoch, optimizer state, scheduler state, best metric all restored).
+- **Training speedup (S1)**: `pin_memory=True`, `persistent_workers=True`, `non_blocking=True` are always active on all DataLoaders and `.to(device)` calls. Provides 1.5-1.7x per-epoch speedup with zero performance cost.
+- **Gradient checkpointing** (`gradient_checkpointing: true`): Opt-in, reduces VRAM to enable `batch_size=32`. Default `false`. Halves gradient steps per epoch, which causes a small AKI regression (-0.003 AUROC) but benefits sepsis (regularization). See `docs/speedup_validation_handoff.md`.
+- **Validation frequency** (`val_every_n_epochs`): Skip validation on intermediate epochs. Default 1 (validate every epoch).
 
 ## Safety & Validation (CRITICAL)
 
@@ -111,7 +114,7 @@ SSH aliases (in `~/.ssh/config`):
 
 JSON configs with two main sections:
 - `"translator"`: `type` ("transformer"|"shared_latent"|"retrieval"), `d_model`, `d_latent`, `n_layers`, `n_enc_layers`, `n_dec_layers`, `n_cross_layers`, `output_mode`, etc.
-- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`, `training_seed`, `task_type` ("classification"|"regression"), `lr_scheduler` ("cosine"|"plateau"|null), `lr_min`, `lr_warmup_epochs`, `grad_clip_norm`, `phase1_self_retrieval`, `phase1_memory_refresh_epochs`, `accumulate_grad_batches`.
+- `"training"`: `epochs`, `lr`, `batch_size`, `lambda_fidelity`, `lambda_range`, `oversampling_factor`, `variable_length_batching`, `pretrain_epochs`, `lambda_align`, `lambda_recon`, `lambda_target_task`, `lambda_label_pred`, `negative_subsample_count`, `shuffle`, `use_target_normalization`, `early_stopping_patience`, `best_metric`, `k_neighbors`, `retrieval_window`, `n_cross_layers`, `output_mode`, `memory_refresh_epochs`, `lambda_importance_reg`, `lambda_smooth`, `feature_gate`, `training_seed`, `task_type` ("classification"|"regression"), `lr_scheduler` ("cosine"|"plateau"|null), `lr_min`, `lr_warmup_epochs`, `grad_clip_norm`, `phase1_self_retrieval`, `phase1_memory_refresh_epochs`, `accumulate_grad_batches`, `gradient_checkpointing` (default: false), `val_every_n_epochs` (default: 1).
 
 ## Experiment Queue System
 

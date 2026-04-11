@@ -205,17 +205,15 @@ def evaluate_with_chunked_translator(
     chunk_size: int = 128,
     k_neighbors: int = 8,
     context_aware: bool = False,
+    drop_last_chunk: bool = False,
     # Legacy parameters (kept for backward compat but not used)
     memory_bank=None,
     retrieval_window: int = 4,
 ) -> Dict[str, float]:
     """Evaluate full-length sequences translated via chunking through frozen source CNN.
 
-    Each full-length sequence is split into chunk_size chunks. The last partial
-    chunk is zero-padded (not dropped). Each chunk is translated by the retrieval
-    translator using the chunk-level latent bank. Translated chunks are concatenated,
-    padding stripped, and passed through the frozen CNN (AdaptiveAvgPool1d handles
-    any sequence length).
+    Each full-length sequence is split into chunk_size chunks. If drop_last_chunk=True,
+    partial final chunks are dropped (original behavior). Otherwise they are zero-padded.
 
     When context_aware=True, each chunk's encoder sees the previous chunk as left
     context (2*chunk_size input), but only the current chunk's output is kept.
@@ -293,21 +291,25 @@ def evaluate_with_chunked_translator(
             elif chunk_bank_latents is not None:
                 n_full_chunks = T // chunk_size
                 remainder = T % chunk_size
-                n_chunks = n_full_chunks + (1 if remainder > 0 else 0)
+                if drop_last_chunk or remainder == 0:
+                    n_chunks = n_full_chunks
+                else:
+                    n_chunks = n_full_chunks + 1
 
                 if not context_aware:
-                    # ── Standard path: pad last chunk, translate all at once ──
-                    if remainder > 0:
+                    # ── Standard path ──
+                    if drop_last_chunk or remainder == 0:
+                        T_used = n_chunks * chunk_size
+                        x_padded = x_val[:, :T_used, :]
+                        x_miss_padded = x_miss[:, :T_used, :]
+                        t_abs_padded = t_abs[:, :T_used]
+                        m_pad_padded = m_pad[:, :T_used]
+                    else:
                         pad_size = chunk_size - remainder
                         x_padded = F.pad(x_val, (0, 0, 0, pad_size))
                         x_miss_padded = F.pad(x_miss, (0, 0, 0, pad_size))
                         t_abs_padded = F.pad(t_abs, (0, pad_size))
                         m_pad_padded = F.pad(m_pad, (0, pad_size), value=True)
-                    else:
-                        x_padded = x_val
-                        x_miss_padded = x_miss
-                        t_abs_padded = t_abs
-                        m_pad_padded = m_pad
 
                     x_chunks = x_padded.reshape(B * n_chunks, chunk_size, C)
                     x_miss_c = x_miss_padded.reshape(B * n_chunks, chunk_size, C)
@@ -325,7 +327,7 @@ def evaluate_with_chunked_translator(
                     )
 
                     x_translated = x_translated_c.reshape(B, n_chunks * chunk_size, C)
-                    if remainder > 0:
+                    if n_chunks * chunk_size != T:
                         x_translated = x_translated[:, :T, :]
                     logits = frozen_model(x_translated)
 

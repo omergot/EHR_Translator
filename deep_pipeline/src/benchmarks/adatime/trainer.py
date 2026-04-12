@@ -1159,7 +1159,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         optimizer_type: str = "adamw",
         optimizer_betas: tuple = (0.9, 0.999),
         context_aware: bool = False,
-        drop_last_chunk: bool = True,
+        drop_last_chunk: bool = False,
     ):
         """Initialize the chunked CNN retrieval trainer.
 
@@ -1191,8 +1191,9 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             context_aware: If True, each chunk's encoder sees the previous chunk as left
                 context (2*chunk_size input, only current chunk output kept). This lets the
                 encoder's self-attention see across chunk boundaries.
-            drop_last_chunk: If True (default), drop partial final chunk instead of
-                padding. Set False to pad last chunk with zeros instead.
+            drop_last_chunk: If True, drop partial final chunk instead of
+                padding. Default False (pad with zeros). Both reproduce results
+                within noise (65.9 vs 66.0 on SSC).
         """
         self.frozen_model = frozen_model.to(device)
         self.translator = translator.to(device)
@@ -1760,14 +1761,18 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
             x_translated = self._translate_sequence_chunked(
                 x_val, x_miss, t_abs, m_pad, x_static,
             )
-            # x_translated: (B, T, C) — same length as input (padding stripped)
+            # x_translated: (B, T', C) — may be shorter than input if drop_last_chunk
+
+            # Trim original to match translated length (drop_last_chunk trims tail)
+            T_trans = x_translated.shape[1]
+            x_val_matched = x_val[:, :T_trans, :]
 
             # Task loss: cross-entropy through frozen source CNN
             # CNN uses AdaptiveAvgPool1d so any length works
             task_loss = F.cross_entropy(self.frozen_model(x_translated), y)
 
-            # Fidelity loss: translated vs original (same length now)
-            fidelity_loss = self._fidelity_loss(x_translated, x_val)
+            # Fidelity loss: translated vs original (matched length)
+            fidelity_loss = self._fidelity_loss(x_translated, x_val_matched)
 
             # Range loss
             range_loss = self._range_loss(x_translated)

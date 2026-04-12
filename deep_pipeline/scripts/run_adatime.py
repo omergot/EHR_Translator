@@ -421,7 +421,7 @@ def run_scenario(
                     optimizer_type=training_cfg.get("optimizer_type", "adamw"),
                     optimizer_betas=tuple(training_cfg.get("optimizer_betas", [0.9, 0.999])),
                     context_aware=ctx_aware,
-                    drop_last_chunk=config.get("drop_last_chunk", True),
+                    drop_last_chunk=config.get("drop_last_chunk", False),
                 )
 
                 trainer.train(
@@ -446,7 +446,7 @@ def run_scenario(
                     chunk_size=chunk_size,
                     k_neighbors=training_cfg.get("k_neighbors", 8),
                     context_aware=ctx_aware,
-                    drop_last_chunk=config.get("drop_last_chunk", True),
+                    drop_last_chunk=config.get("drop_last_chunk", False),
                 )
                 results["translator_cnn_full"] = translator_metrics
                 logger.info(

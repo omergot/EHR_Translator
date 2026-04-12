@@ -205,7 +205,7 @@ def evaluate_with_chunked_translator(
     chunk_size: int = 128,
     k_neighbors: int = 8,
     context_aware: bool = False,
-    drop_last_chunk: bool = True,
+    drop_last_chunk: bool = False,
     # Legacy parameters (kept for backward compat but not used)
     memory_bank=None,
     retrieval_window: int = 4,

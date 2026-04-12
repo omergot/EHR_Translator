@@ -110,7 +110,8 @@
     "shuffle": true,
     "early_stopping_patience": 15,
     "best_metric": "val_task",
-    "disable_triplet_time_delta": true
+    "disable_triplet_time_delta": true,
+    "gradient_checkpointing": true
   },
   "output": {
     "run_dir": "runs/ablation/sepsis_C9_no_time_delta",

@@ -1159,7 +1159,7 @@ class ChunkedAdaTimeCNNRetrievalTrainer:
         optimizer_type: str = "adamw",
         optimizer_betas: tuple = (0.9, 0.999),
         context_aware: bool = False,
-        drop_last_chunk: bool = False,
+        drop_last_chunk: bool = True,
     ):
         """Initialize the chunked CNN retrieval trainer.
 

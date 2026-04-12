@@ -2093,8 +2093,10 @@ class RetrievalTranslatorTrainer:
         x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
         return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
 
-    def _compute_importance_reg(self, importance_w: torch.Tensor) -> torch.Tensor:
+    def _compute_importance_reg(self, importance_w) -> torch.Tensor:
         """Compute importance regularization on importance weights."""
+        if importance_w is None:
+            return torch.tensor(0.0, device=self.device)
         if self.importance_reg_type == "entropy":
             # Entropy reg: encourages decisive 0/1 without collapse
             per_dim_ent = -(
@@ -2312,6 +2314,7 @@ class RetrievalTranslatorTrainer:
                 else:
                     B, T, D = src_latent.shape
                     context = torch.zeros(B, T, 1, D, device=src_latent.device)
+                    importance_w = None  # no retrieval → skip importance reg
 
                 # Forward with retrieved context (reuse src_latent to avoid double-encode)
                 x_out, _ = self.translator.forward_with_retrieval(

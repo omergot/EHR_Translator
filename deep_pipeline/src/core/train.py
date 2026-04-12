@@ -2129,8 +2129,15 @@ class RetrievalTranslatorTrainer:
 
     def _build_memory_bank(self) -> None:
         """Build/rebuild the MIMIC memory bank using the current encoder."""
+        import gc
         from ..core.retrieval_translator import build_memory_bank
         logging.info("Building memory bank (encoding all MIMIC data)...")
+        # Free old memory bank before building new one to reduce peak CPU RAM.
+        # For LoS (65K stays, 757K windows), the old bank holds ~2.5 GB of CPU
+        # tensors that would otherwise coexist with the new bank during rebuild.
+        if self.memory_bank is not None:
+            self.memory_bank = None
+            gc.collect()
         self.memory_bank = build_memory_bank(
             encoder=self.translator,
             target_loader=self.target_train_loader,

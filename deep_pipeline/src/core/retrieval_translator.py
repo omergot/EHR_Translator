@@ -158,12 +158,18 @@ def build_memory_bank(
     all_cat = torch.cat(all_timestep_latents, dim=0)  # (total_ts, d_latent)
     padding_row = torch.zeros(1, all_cat.shape[1], dtype=all_cat.dtype)
     all_latents_flat = torch.cat([all_cat, padding_row], dim=0).to(device)  # (total_ts+1, d_latent)
+    del all_cat, padding_row  # free temporary ~2.2 GB CPU tensor
 
     # Stay offsets: prefix-sum so stay i occupies [offsets[i], offsets[i+1])
     lengths = torch.tensor([ts.shape[0] for ts in all_timestep_latents], dtype=torch.long)
-    stay_offsets = torch.zeros(len(all_timestep_latents) + 1, dtype=torch.long)
+    n_stays = len(all_timestep_latents)
+    stay_offsets = torch.zeros(n_stays + 1, dtype=torch.long)
     torch.cumsum(lengths, dim=0, out=stay_offsets[1:])
     stay_offsets = stay_offsets.to(device)
+
+    # Free CPU-resident per-stay lists — they are superseded by all_latents_flat
+    # and never accessed after build. For LoS (65K stays) this saves ~2.5 GB CPU RAM.
+    del all_timestep_latents, all_pad_masks
 
     # Per-window: absolute flat start index and actual length
     _wts = window_to_stay_idx.to(device)
@@ -174,7 +180,7 @@ def build_memory_bank(
     flat_mb = all_latents_flat.nelement() * 4 / 1e6
     logger.info(
         "Memory bank built: %d stays, %d windows (W=%d, stride=%d), %.1f MB GPU (windows) + %.1f MB GPU (flat)%s",
-        len(all_timestep_latents),
+        n_stays,
         window_latents.shape[0],
         W,
         stride,
@@ -184,8 +190,8 @@ def build_memory_bank(
     )
     return MemoryBank(
         window_latents=window_latents,
-        timestep_latents=all_timestep_latents,
-        pad_masks=all_pad_masks,
+        timestep_latents=[],  # freed above — kept empty for dataclass compat
+        pad_masks=[],         # freed above — kept empty for dataclass compat
         window_to_stay_idx=window_to_stay_idx,
         window_to_time_range=window_to_time_range,
         window_size=W,

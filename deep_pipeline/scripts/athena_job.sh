@@ -21,7 +21,7 @@
 #SBATCH --partition=__PARTITIONS__
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=48G
+#SBATCH --mem=64G
 #SBATCH --time=__WALLTIME__
 #SBATCH --qos=__QOS__
 #SBATCH --output=experiments/logs/athena_%x_%j.out

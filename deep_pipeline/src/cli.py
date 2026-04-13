@@ -2474,8 +2474,34 @@ def translate_and_eval(args):
             for key, value in lr_metrics.items():
                 logging.info("  %s: %.6f", key, value)
 
+    # Explicit cleanup to prevent segfault during Python interpreter shutdown.
+    # On Athena, CUDA context teardown can race with polars/pyarrow C++ destructors
+    # causing SIGSEGV after all results are saved.  Synchronizing and clearing the
+    # CUDA cache while Python objects are still alive avoids the race.
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+
 def train_and_eval(args):
     train_translator(args)
+    # Free all training state (data loaders, optimizer, memory bank, trainer)
+    # before eval loads everything fresh.  For LoS (65K MIMIC stays) the
+    # training phase holds ~15-20 GB of CPU-resident tensors (cached datasets,
+    # memory bank, persistent DataLoader workers) that overlap with eval-time
+    # allocations, causing OOM on memory-limited SLURM nodes (48 GB cgroup).
+    #
+    # Two full gc.collect() passes: the first frees objects with __del__
+    # methods (e.g. DataLoader worker shutdown), the second frees objects
+    # that were prevented by destructor ordering in the first pass.
+    import gc
+    logging.info("[train_and_eval] Cleaning up training state before eval...")
+    gc.collect()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    logging.info("[train_and_eval] Freed training state: 2x gc.collect() + cuda.empty_cache()")
     translate_and_eval(args)
 
 

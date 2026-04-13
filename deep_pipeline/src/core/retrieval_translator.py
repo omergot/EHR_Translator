@@ -102,11 +102,21 @@ def build_memory_bank(
             m_pad = parts["M_pad"].bool()
 
             for i in range(latent.shape[0]):
-                all_timestep_latents.append(latent[i].cpu())    # (T, d_latent)
-                all_pad_masks.append(m_pad[i].cpu())             # (T,)
+                mask_i = m_pad[i].cpu()        # (T,) True=padded
+                valid = ~mask_i                 # True=real timestep
+                if not valid.any():
+                    continue
+                # Find last valid (non-padded) timestep.  YAIB uses right-padding,
+                # so trailing positions are zero-filled.  Truncating to the last
+                # valid position strips that tail while keeping any genuinely-zero
+                # interior rows intact.  For LoS (maxlen=169, mean=67) this cuts
+                # the flat tensor from ~5.6 GB to ~2.3 GB when the loader omits VLB.
+                last_valid = int(valid.nonzero(as_tuple=False)[-1].item()) + 1
+                all_timestep_latents.append(latent[i, :last_valid].cpu())  # (L, d_latent)
+                all_pad_masks.append(mask_i[:last_valid])                   # (L,)
                 if store_labels:
-                    all_labels.append(parts["y"][i].float().cpu())         # (T,)
-                    all_label_masks.append(parts["M_label"][i].bool().cpu())  # (T,)
+                    all_labels.append(parts["y"][i, :last_valid].float().cpu())
+                    all_label_masks.append(parts["M_label"][i, :last_valid].bool().cpu())
 
     # Segment into windows (overlapping if stride < window_size) and mean-pool each
     window_latent_list = []
@@ -154,22 +164,26 @@ def build_memory_bank(
     n_positive = sum(1 for v, m in zip(window_label_list, window_label_mask_list) if m and v > 0.5) if store_labels else 0
     label_info = f", labels: {n_labeled}/{len(window_latent_list)} windows ({n_positive} positive)" if store_labels else ""
 
-    # Build flattened timestep tensor for vectorized gather at query time
-    all_cat = torch.cat(all_timestep_latents, dim=0)  # (total_ts, d_latent)
-    padding_row = torch.zeros(1, all_cat.shape[1], dtype=all_cat.dtype)
-    all_latents_flat = torch.cat([all_cat, padding_row], dim=0).to(device)  # (total_ts+1, d_latent)
-    del all_cat, padding_row  # free temporary ~2.2 GB CPU tensor
-
-    # Stay offsets: prefix-sum so stay i occupies [offsets[i], offsets[i+1])
+    # Stay offsets: compute from per-stay lists BEFORE cat so we can free them
+    # immediately after concatenation (halves peak CPU RAM for LoS ~5.5 GB).
     lengths = torch.tensor([ts.shape[0] for ts in all_timestep_latents], dtype=torch.long)
     n_stays = len(all_timestep_latents)
     stay_offsets = torch.zeros(n_stays + 1, dtype=torch.long)
     torch.cumsum(lengths, dim=0, out=stay_offsets[1:])
     stay_offsets = stay_offsets.to(device)
 
-    # Free CPU-resident per-stay lists — they are superseded by all_latents_flat
-    # and never accessed after build. For LoS (65K stays) this saves ~2.5 GB CPU RAM.
+    # Build flattened timestep tensor for vectorized gather at query time.
+    # Peak CPU here: all_timestep_latents + all_cat coexist briefly.
+    all_cat = torch.cat(all_timestep_latents, dim=0)  # (total_ts, d_latent)
+
+    # Free CPU-resident per-stay lists immediately after cat — they are
+    # superseded by all_cat.  For LoS (65K stays) this frees ~5.5 GB CPU RAM.
     del all_timestep_latents, all_pad_masks
+    import gc; gc.collect()
+
+    padding_row = torch.zeros(1, all_cat.shape[1], dtype=all_cat.dtype)
+    all_latents_flat = torch.cat([all_cat, padding_row], dim=0).to(device)  # (total_ts+1, d_latent)
+    del all_cat, padding_row  # free temporary CPU tensors
 
     # Per-window: absolute flat start index and actual length
     _wts = window_to_stay_idx.to(device)

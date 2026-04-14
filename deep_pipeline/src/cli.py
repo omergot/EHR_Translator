@@ -2678,6 +2678,15 @@ def run_e2e_baseline(args):
             logging.info("  %s: %+0.4f", metric, diff)
     logging.info("=" * 80)
 
+    # Explicit cleanup to prevent segfault during Python interpreter shutdown.
+    # Same fix as translate_and_eval(): CUDA context teardown can race with
+    # polars/pyarrow C++ destructors causing SIGSEGV on Athena.
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
+
 
 def main():
     parser = argparse.ArgumentParser(description="Translator Training Pipeline")
@@ -2729,6 +2738,16 @@ def main():
         run_e2e_baseline(args)
     else:
         parser.print_help()
+
+    # Defense-in-depth: synchronize CUDA and run garbage collection before
+    # interpreter shutdown to prevent SIGSEGV from CUDA/polars teardown race
+    # on Athena SLURM nodes.  Individual functions already do this, but the
+    # top-level guard covers any future code paths that might miss it.
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
 
 
 if __name__ == "__main__":

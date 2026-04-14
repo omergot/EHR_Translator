@@ -713,14 +713,18 @@ class TransformerTranslatorEvaluator:
         if not group_col or not hasattr(base_dataset, "outcome_df"):
             return [None] * len(batch_sizes), [None] * len(batch_sizes)
 
-        stay_ids_list = base_dataset.outcome_df[group_col].unique().to_list()
         try:
+            stay_ids_list = base_dataset.outcome_df[group_col].unique().to_list()
             stay_ids = [stay_ids_list[idx] for idx in index_map]
-        except IndexError:
+        except Exception as exc:
+            # Catches IndexError (index_map vs stay_ids mismatch),
+            # polars.exceptions.ColumnNotFoundError (group_col not in outcome_df),
+            # and any other data-schema issues.  This is a non-critical metadata
+            # path — the parquet just won't have stay_id/time columns.
             logging.warning(
-                "Index mismatch in _build_id_time_batches: index_map max=%d but %d unique stay IDs. "
+                "Failed to build stay_id mapping in _build_id_time_batches: %s. "
                 "Falling back to no stay_id/time metadata (parquet export may lack these columns).",
-                max(index_map) if index_map else -1, len(stay_ids_list),
+                exc,
             )
             return [None] * len(batch_sizes), [None] * len(batch_sizes)
 

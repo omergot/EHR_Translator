@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 import polars as pl
 
 from .adapters.yaib import YAIBRuntime
-from .core.eval import TranslatorEvaluator, TransformerTranslatorEvaluator
+from .core.eval import TranslatorEvaluator, TransformerTranslatorEvaluator, load_feature_bounds
 from .core.train import TranslatorTrainer, TransformerTranslatorTrainer
 from .core.translator import IdentityTranslator, LinearRegressionTranslator, EHRTranslator
 from .core.schema import SchemaResolver
@@ -366,6 +366,19 @@ def _apply_negative_subsampling(loader, n_keep_negative, seed=42):
 def _get_bounds_csv(config: dict) -> str:
     paths = config.get("paths", {})
     return paths.get("bounds_csv", config.get("bounds_csv", ""))
+
+
+def _load_eval_bounds(config: dict, translator_cfg: dict, dynamic_features: list[str]):
+    """Load feature bounds for eval-time clamping. Returns (lower, upper) or (None, None)."""
+    bounds_csv = _get_bounds_csv(config) or translator_cfg.get("bounds_csv", "")
+    if not bounds_csv or not Path(bounds_csv).exists():
+        return None, None
+    try:
+        lower, upper = load_feature_bounds(Path(bounds_csv), dynamic_features)
+        return lower, upper
+    except Exception as e:
+        logging.warning("Could not load feature bounds for eval clamping: %s", e)
+        return None, None
 
 
 def _regression_feature_names(columns, missing_prefix, exclude_features):
@@ -1866,6 +1879,7 @@ def translate_and_eval(args):
         else:
             logging.warning("No transformer checkpoint found at %s", checkpoint_path)
 
+        _lb, _ub = _load_eval_bounds(config, translator_cfg, schema_resolver.dynamic_features)
         evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -1874,6 +1888,8 @@ def translate_and_eval(args):
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
+            lower_bounds=_lb,
+            upper_bounds=_ub,
         )
         output_path = Path(args.output_parquet)
         sample_dir = translator_cfg.get(
@@ -1966,6 +1982,7 @@ def translate_and_eval(args):
         else:
             logging.warning("No shared_latent checkpoint found at %s", checkpoint_path)
 
+        _lb, _ub = _load_eval_bounds(config, translator_cfg, schema_resolver.dynamic_features)
         evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -1974,6 +1991,8 @@ def translate_and_eval(args):
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
+            lower_bounds=_lb,
+            upper_bounds=_ub,
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(
@@ -2121,6 +2140,7 @@ def translate_and_eval(args):
             retrieval_window=training_cfg.get("retrieval_window", 6),
         )
 
+        _lb, _ub = _load_eval_bounds(config, translator_cfg, schema_resolver.dynamic_features)
         evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=wrapped_translator,
@@ -2129,6 +2149,8 @@ def translate_and_eval(args):
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
+            lower_bounds=_lb,
+            upper_bounds=_ub,
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(
@@ -2230,6 +2252,7 @@ def translate_and_eval(args):
         else:
             logging.warning("No finetune_lstm checkpoint found at %s", checkpoint_path)
 
+        _lb, _ub = _load_eval_bounds(config, translator_cfg, schema_resolver.dynamic_features)
         ft_evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -2238,6 +2261,8 @@ def translate_and_eval(args):
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
+            lower_bounds=_lb,
+            upper_bounds=_ub,
         )
         logging.info("Evaluating with FINE-TUNED LSTM...")
         output_path = Path(args.output_parquet)
@@ -2346,6 +2371,7 @@ def translate_and_eval(args):
         else:
             logging.warning("No %s checkpoint found at %s", translator_type, checkpoint_path)
 
+        _lb, _ub = _load_eval_bounds(config, translator_cfg, schema_resolver.dynamic_features)
         evaluator = TransformerTranslatorEvaluator(
             yaib_runtime=yaib_runtime,
             translator=translator,
@@ -2354,6 +2380,8 @@ def translate_and_eval(args):
             renorm_scale=renorm_scale,
             renorm_offset=renorm_offset,
             task_type=training_cfg.get("task_type", "classification"),
+            lower_bounds=_lb,
+            upper_bounds=_ub,
         )
         output_path = Path(args.output_parquet)
         results = evaluator.evaluate_original_vs_translated(

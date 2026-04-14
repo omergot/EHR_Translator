@@ -75,12 +75,16 @@ def compute_renorm_params(
     """Compute affine transform to renormalize source data to target statistics.
 
     Returns (scale, offset) such that: x_renorm = x_source * scale + offset
-    transforms source-normalized features into target-normalized space.
+    maps source distribution → target distribution via z-score matching:
+        x_renorm = (x_source - src_mean) / src_std * tgt_std + tgt_mean
+
+    This ensures E[x_renorm] = tgt_mean, Std[x_renorm] = tgt_std.
     """
     src_mean, src_std = _compute_loader_stats(source_loader, schema_resolver, device)
     tgt_mean, tgt_std = _compute_loader_stats(target_loader, schema_resolver, device)
-    scale = src_std / tgt_std.clamp(min=1e-8)
-    offset = (src_mean - tgt_mean) / tgt_std.clamp(min=1e-8)
+    # Correct z-score mapping: x_renorm = x * (tgt_std/src_std) + (tgt_mean - src_mean*tgt_std/src_std)
+    scale = tgt_std / src_std.clamp(min=1e-8)
+    offset = tgt_mean - src_mean * scale
     logging.info(
         "Renorm params computed: scale range [%.4f, %.4f], offset range [%.4f, %.4f]",
         scale.min().item(), scale.max().item(), offset.min().item(), offset.max().item(),
@@ -592,8 +596,13 @@ class TransformerTranslatorTrainer:
                     x_val_out, x_forecast = result
                 else:
                     x_val_out = result
+                # Hard-clamp to feature bounds before LSTM (prevents NaN on OOD source data)
+                x_val_out_clamped = x_val_out.float().clamp(
+                    min=self.lower_bounds.view(1, 1, -1),
+                    max=self.upper_bounds.view(1, 1, -1),
+                )
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_val_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
             # Retain grad on translator output for per-timestep gradient analysis
@@ -821,8 +830,12 @@ class TransformerTranslatorTrainer:
                     x_val_out, x_forecast = result
                 else:
                     x_val_out = result
+                x_val_out_clamped = x_val_out.float().clamp(
+                    min=self.lower_bounds.view(1, 1, -1),
+                    max=self.upper_bounds.view(1, 1, -1),
+                )
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_val_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
                 if not self._logged_val_batch:
@@ -1368,9 +1381,14 @@ class LatentTranslatorTrainer:
                 if _do_grad_diag:
                     x_out.retain_grad()
 
-                # Rebuild YAIB batch and get task loss (cast to float32 for schema rebuild)
+                # Hard-clamp to feature bounds before LSTM (prevents NaN on OOD source data)
+                x_out_clamped = x_out.float().clamp(
+                    min=self.lower_bounds.view(1, 1, -1),
+                    max=self.upper_bounds.view(1, 1, -1),
+                )
+                # Rebuild YAIB batch and get task loss
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
@@ -1554,8 +1572,12 @@ class LatentTranslatorTrainer:
                 )
                 x_out = self.translator.decode(src_latent, parts["M_pad"], parts["X_static"])
 
+                x_out_clamped = x_out.float().clamp(
+                    min=self.lower_bounds.view(1, 1, -1),
+                    max=self.upper_bounds.view(1, 1, -1),
+                )
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
@@ -2109,6 +2131,20 @@ class RetrievalTranslatorTrainer:
         x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
         return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
 
+    def _clamp_to_bounds(self, x_out: torch.Tensor) -> torch.Tensor:
+        """Hard-clamp translated features to target feature bounds.
+
+        Prevents extreme translator outputs (e.g. from OOD source data
+        like HiRID LoS) from causing NaN in the frozen LSTM.  The soft
+        range loss alone cannot prevent occasional extreme values during
+        early training.  For well-behaved experiments (translator outputs
+        already within bounds) this is a differentiable no-op.
+        """
+        return x_out.clamp(
+            min=self.lower_bounds.view(1, 1, -1),
+            max=self.upper_bounds.view(1, 1, -1),
+        )
+
     def _compute_importance_reg(self, importance_w) -> torch.Tensor:
         """Compute importance regularization on importance weights."""
         if importance_w is None:
@@ -2350,8 +2386,10 @@ class RetrievalTranslatorTrainer:
                     x_out.retain_grad()
 
                 # Task loss via frozen LSTM
+                # Hard-clamp to feature bounds before LSTM (prevents NaN on OOD source data)
+                x_out_clamped = self._clamp_to_bounds(x_out.float())
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()
@@ -2614,8 +2652,10 @@ class RetrievalTranslatorTrainer:
                     latent=src_latent,
                 )
 
+                # Hard-clamp before LSTM (validation path)
+                x_out_clamped = self._clamp_to_bounds(x_out.float())
                 x_yaib_translated = self.schema_resolver.rebuild(
-                    parts["X_yaib"], x_out.float(), parts["X_miss"], parts["X_static"],
+                    parts["X_yaib"], x_out_clamped, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
                 )
                 label_mask = parts["M_label"].bool()

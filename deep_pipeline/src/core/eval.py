@@ -61,6 +61,55 @@ def _compute_regression_metrics(targets: np.ndarray, predictions: np.ndarray) ->
     }
 
 
+def load_feature_bounds(
+    bounds_csv: Path, feature_names: list[str]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Load per-feature lower/upper bounds from a CSV file.
+
+    Standalone version of the trainer's ``_load_feature_bounds`` so that
+    the evaluator can clamp translated outputs without a trainer instance.
+    """
+    df = pd.read_csv(bounds_csv)
+    if "feature" not in df.columns:
+        raise ValueError("Bounds CSV must include a 'feature' column.")
+    columns = set(df.columns)
+
+    lower_candidates = ["p0.1", "p_001", "q001", "q01", "q05"]
+    upper_candidates = ["p99.9", "p_999", "q999", "q99", "q95"]
+
+    def _pick(base: str) -> Optional[str]:
+        if f"{base}_a" in columns:
+            return f"{base}_a"
+        if f"{base}_b" in columns:
+            return f"{base}_b"
+        if base in columns:
+            return base
+        return None
+
+    lower_col = None
+    for cand in lower_candidates:
+        lower_col = _pick(cand)
+        if lower_col:
+            break
+    upper_col = None
+    for cand in upper_candidates:
+        upper_col = _pick(cand)
+        if upper_col:
+            break
+    if lower_col is None or upper_col is None:
+        raise ValueError(
+            f"Bounds CSV missing required percentile columns. Found columns: {sorted(columns)}"
+        )
+
+    df = df.set_index("feature")
+    missing = [name for name in feature_names if name not in df.index]
+    if missing:
+        raise ValueError(f"Bounds CSV missing features: {missing}")
+    lower = torch.tensor(df.loc[feature_names, lower_col].to_numpy(), dtype=torch.float32)
+    upper = torch.tensor(df.loc[feature_names, upper_col].to_numpy(), dtype=torch.float32)
+    return lower, upper
+
+
 class TranslatorEvaluator:
     def __init__(
         self,
@@ -292,6 +341,8 @@ class TransformerTranslatorEvaluator:
         renorm_scale: Optional[torch.Tensor] = None,
         renorm_offset: Optional[torch.Tensor] = None,
         task_type: str = "classification",
+        lower_bounds: Optional[torch.Tensor] = None,
+        upper_bounds: Optional[torch.Tensor] = None,
     ):
         self.yaib_runtime = yaib_runtime
         self.translator = translator.to(device)
@@ -300,12 +351,23 @@ class TransformerTranslatorEvaluator:
         self.renorm_scale = renorm_scale.to(device) if renorm_scale is not None else None
         self.renorm_offset = renorm_offset.to(device) if renorm_offset is not None else None
         self.task_type = task_type
+        self.lower_bounds = lower_bounds.to(device) if lower_bounds is not None else None
+        self.upper_bounds = upper_bounds.to(device) if upper_bounds is not None else None
 
     def _apply_renorm(self, x_val: torch.Tensor, m_pad: torch.Tensor) -> torch.Tensor:
         if self.renorm_scale is None:
             return x_val
         x = x_val * self.renorm_scale.view(1, 1, -1) + self.renorm_offset.view(1, 1, -1)
         return x.masked_fill(m_pad.unsqueeze(-1).bool(), 0.0)
+
+    def _clamp_to_bounds(self, x_out: torch.Tensor) -> torch.Tensor:
+        """Hard-clamp translated features to feature bounds (eval path)."""
+        if self.lower_bounds is None or self.upper_bounds is None:
+            return x_out
+        return x_out.clamp(
+            min=self.lower_bounds.view(1, 1, -1),
+            max=self.upper_bounds.view(1, 1, -1),
+        )
 
     def translate_to_parquet(
         self,
@@ -331,6 +393,7 @@ class TransformerTranslatorEvaluator:
                     parts["M_pad"],
                     parts["X_static"],
                 )
+                x_val_out = self._clamp_to_bounds(x_val_out)
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],
@@ -461,6 +524,7 @@ class TransformerTranslatorEvaluator:
                     parts["M_pad"],
                     parts["X_static"],
                 )
+                x_val_out = self._clamp_to_bounds(x_val_out)
                 x_yaib_translated = self.schema_resolver.rebuild(
                     parts["X_yaib"], x_val_out, parts["X_miss"], parts["X_static"],
                     m_pad=parts["M_pad"],

@@ -1000,6 +1000,14 @@ class TransformerTranslatorTrainer:
                     self.scheduler.step()
 
             candidate = val_metrics["total"] if self.best_metric == "val_total" else val_metrics["task"]
+            import math
+            if math.isnan(candidate):
+                candidate = val_metrics.get("target_task", val_metrics.get("fidelity", float("inf")))
+                if epoch == 0:
+                    logging.warning(
+                        "val metric is NaN — falling back to alternative metric (%.6f) "
+                        "for best checkpoint selection", candidate,
+                    )
             if candidate < self.best_val:
                 self.best_val = candidate
                 self.best_state = self.translator.state_dict()
@@ -1740,6 +1748,14 @@ class LatentTranslatorTrainer:
                     self.scheduler.step()
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
+            import math
+            if math.isnan(candidate):
+                candidate = val_metrics.get("target_task", float("inf"))
+                if epoch == 0:
+                    logging.warning(
+                        "val_task is NaN — falling back to val_target_task (%.6f) "
+                        "for best checkpoint selection", candidate,
+                    )
             if candidate < self.best_val:
                 self.best_val = candidate
                 self.best_state = self.translator.state_dict()
@@ -2476,6 +2492,18 @@ class RetrievalTranslatorTrainer:
                     if n_terms > 0:
                         l_contrastive = l_contrastive / n_terms
 
+                # Guard against NaN task loss (e.g. LSTM overflow on
+                # out-of-distribution source data like HiRID LoS).  Replace
+                # NaN with 0 so the remaining loss components can still drive
+                # gradient updates.
+                if torch.isnan(l_task):
+                    if n_batches == 0 and epoch == 0:
+                        logging.warning(
+                            "l_task is NaN — replacing with 0.0 for this batch "
+                            "(frozen LSTM may overflow on translated source data)"
+                        )
+                    l_task = l_task.new_tensor(0.0)
+
                 l_total = (
                     l_task
                     + self.lambda_align * l_align
@@ -2669,8 +2697,13 @@ class RetrievalTranslatorTrainer:
 
                     l_label_pred = (l_src_lp + l_tgt_lp) / 2.0
 
+                # Replace NaN task loss with 0 in total (so val_total stays
+                # valid for checkpoint selection fallback), but keep the raw
+                # NaN in the task bucket so logging reflects the actual issue.
+                l_task_safe = l_task if not torch.isnan(l_task) else l_task.new_tensor(0.0)
+
                 l_total = (
-                    l_task
+                    l_task_safe
                     + self.lambda_align * l_align
                     + self.lambda_recon * l_recon
                     + self.lambda_range * l_range
@@ -2873,6 +2906,16 @@ class RetrievalTranslatorTrainer:
                 )
 
             candidate = val_metrics["task"] if self.best_metric == "val_task" else val_metrics["total"]
+            # Fallback: when val_task is NaN (e.g. LSTM overflow on HiRID
+            # source data), use val_target_task for checkpoint selection.
+            import math
+            if math.isnan(candidate):
+                candidate = val_metrics.get("target_task", float("inf"))
+                if epoch == 0:
+                    logging.warning(
+                        "val_task is NaN — falling back to val_target_task (%.6f) "
+                        "for best checkpoint selection", candidate,
+                    )
             if candidate < self.best_val:
                 self.best_val = candidate
                 self.best_state = self.translator.state_dict()

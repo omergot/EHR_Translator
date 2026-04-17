@@ -53,213 +53,488 @@ experiments:
 - name: mortality_C0_control
   config: configs/ablation/mortality_C0_control.json
   output: experiments/results/mortality_C0_control.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C0_control'
+  gpu: 0
+  pid: 394814
+  started: '2026-04-11 23:59:01'
+  finished: '2026-04-12 07:26:55'
+  results:
+    AUCROC: 0.029
+    AUCPR: 0.0391
+    loss: -0.0431
+    brier: -0.0225
+    ece: -0.0352
 - name: mortality_C1_no_retrieval
   config: configs/ablation/mortality_C1_no_retrieval.json
   output: experiments/results/mortality_C1_no_retrieval.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C1_no_retrieval'
+  gpu: 0
+  pid: 1416791
+  started: '2026-04-12 14:11:29'
+  finished: '2026-04-12 18:26:41'
+  results:
+    AUCROC: 0.0379
+    AUCPR: 0.0461
+    loss: -0.053
+    brier: -0.0464
+    ece: -0.0833
 - name: mortality_C2_no_feature_gate
   config: configs/ablation/mortality_C2_no_feature_gate.json
   output: experiments/results/mortality_C2_no_feature_gate.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C2_no_feature_gate'
+  gpu: 1
+  pid: 494407
+  started: '2026-04-12 01:02:48'
+  finished: '2026-04-12 08:18:51'
+  results:
+    AUCROC: 0.0355
+    AUCPR: 0.0391
+    loss: -0.0589
+    brier: -0.0408
+    ece: -0.0638
 - name: mortality_C3_no_mmd
   config: configs/ablation/mortality_C3_no_mmd.json
   output: experiments/results/mortality_C3_no_mmd.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C3_no_mmd'
+  gpu: 0
+  pid: 1022271
+  started: '2026-04-12 07:26:55'
+  finished: '2026-04-12 14:11:29'
+  results:
+    AUCROC: 0.0401
+    AUCPR: 0.0492
+    loss: -0.0631
+    brier: -0.0192
+    ece: -0.0257
 - name: mortality_C4_no_target_task
   config: configs/ablation/mortality_C4_no_target_task.json
   output: experiments/results/mortality_C4_no_target_task.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C4_no_target_task'
+  gpu: 1
+  pid: 1072604
+  started: '2026-04-12 08:18:52'
+  finished: '2026-04-12 16:06:44'
+  results:
+    AUCROC: 0.0339
+    AUCPR: 0.0378
+    loss: -0.0538
+    brier: -0.0149
+    ece: -0.0177
 - name: mortality_C5_no_fidelity
   config: configs/ablation/mortality_C5_no_fidelity.json
   output: experiments/results/mortality_C5_no_fidelity.parquet
-  status: pending
+  status: done
   branch: master
   server: local
-  notes: 'Part A ablation: C5_no_fidelity'
+  notes: 'Part A ablation: C5_no_fidelity [reconciled 2026-04-13 12:35:28: local restart, resumable (was at epoch 18/30, has
+    latest_checkpoint)]'
+  gpu: 0
+  pid: 64864
+  started: '2026-04-13 12:35:47'
+  finished: '2026-04-13 15:30:20'
+  results:
+    AUCROC: 0.0457
+    AUCPR: 0.0245
+    loss: -0.0681
+    brier: -0.0384
+    ece: -0.0668
 - name: mortality_C6_no_pretrain
   config: configs/ablation/mortality_C6_no_pretrain.json
   output: experiments/results/mortality_C6_no_pretrain.parquet
-  status: pending
+  status: done
   branch: master
   server: local
-  notes: 'Part A ablation: C6_no_pretrain'
+  notes: 'Part A ablation: C6_no_pretrain [reconciled 2026-04-13 12:35:28: local restart, resumable (was at epoch 12/30, all
+    NaN, has latest_checkpoint)]'
+  gpu: 1
+  pid: 64866
+  started: '2026-04-13 12:35:47'
+  finished: '2026-04-13 14:51:38'
+  results:
+    AUCROC: -0.1008
+    AUCPR: -0.1671
+    loss: 0.0691
+    brier: 0.0085
+    ece: 0.0627
 - name: mortality_C7_no_target_norm
   config: configs/ablation/mortality_C7_no_target_norm.json
   output: experiments/results/mortality_C7_no_target_norm.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C7_no_target_norm'
+  gpu: 1
+  pid: 215909
+  started: '2026-04-13 14:51:38'
+  finished: '2026-04-13 21:45:17'
+  results:
+    AUCROC: 0.0323
+    AUCPR: 0.0462
+    loss: -0.0489
+    brier: -0.0216
+    ece: -0.0324
 - name: mortality_C8_residual
   config: configs/ablation/mortality_C8_residual.json
   output: experiments/results/mortality_C8_residual.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C8_residual'
+  gpu: 0
+  pid: 225623
+  started: '2026-04-13 15:30:20'
+  finished: '2026-04-13 23:51:44'
+  results:
+    AUCROC: 0.0435
+    AUCPR: 0.0442
+    loss: -0.0688
+    brier: -0.0293
+    ece: -0.0425
 - name: mortality_C9_no_time_delta
   config: configs/ablation/mortality_C9_no_time_delta.json
   output: experiments/results/mortality_C9_no_time_delta.parquet
-  status: pending
+  status: done
   branch: master
   server: local
   notes: 'Part A ablation: C9_no_time_delta'
+  gpu: 1
+  pid: 824860
+  started: '2026-04-13 21:45:17'
+  finished: '2026-04-14 03:02:08'
+  results:
+    AUCROC: 0.0355
+    AUCPR: 0.0356
+    loss: -0.0546
+    brier: -0.0361
+    ece: -0.0627
 - name: aki_C0_control
   config: configs/ablation/aki_C0_control.json
   output: experiments/results/aki_C0_control.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C0_control'
+  gpu: 0
+  pid: 3789402
+  started: '2026-04-11 23:59:09'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C0_control.json
+  finished: '2026-04-12 17:16:10'
+  results:
+    AUCROC: 0.0548
+    AUCPR: 0.1568
+    loss: -0.1094
+    brier: -0.0213
+    ece: -0.0093
 - name: aki_C1_no_retrieval
   config: configs/ablation/aki_C1_no_retrieval.json
   output: experiments/results/aki_C1_no_retrieval.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
-  notes: 'Part A ablation: C1_no_retrieval'
+  notes: 'Part A ablation: C1_no_retrieval [reconciled 2026-04-13 12:35:28: completed on a6000, parquet exists]'
+  finished: '2026-04-13 12:35:28'
 - name: aki_C2_no_feature_gate
   config: configs/ablation/aki_C2_no_feature_gate.json
   output: experiments/results/aki_C2_no_feature_gate.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C2_no_feature_gate'
+  gpu: 3
+  pid: 3790091
+  started: '2026-04-11 23:59:21'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C2_no_feature_gate.json
+  finished: '2026-04-12 17:11:59'
+  results:
+    AUCROC: 0.0502
+    AUCPR: 0.1447
+    loss: -0.1009
+    brier: -0.0213
+    ece: -0.0068
 - name: aki_C3_no_mmd
   config: configs/ablation/aki_C3_no_mmd.json
   output: experiments/results/aki_C3_no_mmd.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C3_no_mmd'
+  gpu: 1
+  pid: 3867888
+  started: '2026-04-12 01:20:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C3_no_mmd.json
+  finished: '2026-04-12 17:32:34'
+  results:
+    AUCROC: 0.0519
+    AUCPR: 0.1518
+    loss: -0.0976
+    brier: -0.0017
+    ece: 0.0232
 - name: aki_C4_no_target_task
   config: configs/ablation/aki_C4_no_target_task.json
   output: experiments/results/aki_C4_no_target_task.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
-  notes: 'Part A ablation: C4_no_target_task'
+  notes: 'Part A ablation: C4_no_target_task [reconciled 2026-04-13 12:35:28: completed on a6000, parquet exists]'
+  finished: '2026-04-13 12:35:28'
 - name: aki_C5_no_fidelity
   config: configs/ablation/aki_C5_no_fidelity.json
   output: experiments/results/aki_C5_no_fidelity.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
-  notes: 'Part A ablation: C5_no_fidelity'
+  notes: 'Part A ablation: C5_no_fidelity [reconciled 2026-04-13 12:35:28: completed on a6000, parquet exists]'
+  finished: '2026-04-13 12:35:28'
 - name: aki_C6_no_pretrain
   config: configs/ablation/aki_C6_no_pretrain.json
   output: experiments/results/aki_C6_no_pretrain.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C6_no_pretrain'
+  gpu: 0
+  pid: 1747036
+  started: '2026-04-13 12:35:53'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C6_no_pretrain.json
+  finished: '2026-04-14 04:36:47'
+  results:
+    AUCROC: 0.034
+    AUCPR: 0.0804
+    loss: -0.0635
+    brier: 0.0038
+    ece: 0.0317
 - name: aki_C7_no_target_norm
   config: configs/ablation/aki_C7_no_target_norm.json
   output: experiments/results/aki_C7_no_target_norm.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C7_no_target_norm'
+  gpu: 1
+  pid: 1747380
+  started: '2026-04-13 12:36:00'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C7_no_target_norm.json
+  finished: '2026-04-14 04:41:58'
+  results:
+    AUCROC: 0.0543
+    AUCPR: 0.1635
+    loss: -0.108
+    brier: -0.0185
+    ece: -0.0046
 - name: aki_C8_residual
   config: configs/ablation/aki_C8_residual.json
   output: experiments/results/aki_C8_residual.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C8_residual'
+  gpu: 3
+  pid: 1747722
+  started: '2026-04-13 12:36:06'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C8_residual.json
+  finished: '2026-04-13 23:42:27'
+  results:
+    AUCROC: 0.0073
+    AUCPR: -0.0042
+    loss: -0.0044
+    brier: 0.0412
+    ece: 0.0794
 - name: aki_C9_no_time_delta
   config: configs/ablation/aki_C9_no_time_delta.json
   output: experiments/results/aki_C9_no_time_delta.parquet
-  status: pending
+  status: done
   branch: master
   server: a6000
   notes: 'Part A ablation: C9_no_time_delta'
+  gpu: 3
+  pid: 2366427
+  started: '2026-04-13 23:42:34'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_C9_no_time_delta.json
+  finished: '2026-04-14 15:41:24'
+  results:
+    AUCROC: 0.0542
+    AUCPR: 0.1561
+    loss: -0.1082
+    brier: -0.0227
+    ece: -0.0126
 - name: sepsis_C0_control
   config: configs/ablation/sepsis_C0_control.json
   output: experiments/results/sepsis_C0_control.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
-  notes: 'Part A ablation: C0_control'
+  notes: 'Part A ablation: C0_control [reconciled 2026-04-13 12:35:28: completed on 3090, collect_result timed out]'
+  finished: '2026-04-13 12:35:28'
 - name: sepsis_C1_no_retrieval
   config: configs/ablation/sepsis_C1_no_retrieval.json
   output: experiments/results/sepsis_C1_no_retrieval.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C1_no_retrieval'
+  gpu: 0
+  pid: 2315118
+  started: '2026-04-13 12:36:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C1_no_retrieval.json
+  finished: '2026-04-13 23:15:50'
+  results:
+    AUCROC: 0.0328
+    AUCPR: 0.0191
+    loss: -0.0942
+    brier: -0.0619
+    ece: -0.0639
 - name: sepsis_C2_no_feature_gate
   config: configs/ablation/sepsis_C2_no_feature_gate.json
   output: experiments/results/sepsis_C2_no_feature_gate.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C2_no_feature_gate'
+  gpu: 0
+  pid: 2339425
+  started: '2026-04-13 23:15:59'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C2_no_feature_gate.json
+  finished: '2026-04-14 10:39:29'
+  results:
+    AUCROC: 0.0233
+    AUCPR: 0.0152
+    loss: -0.0965
+    brier: -0.0816
+    ece: -0.0763
 - name: sepsis_C3_no_mmd
   config: configs/ablation/sepsis_C3_no_mmd.json
   output: experiments/results/sepsis_C3_no_mmd.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C3_no_mmd'
+  gpu: 0
+  pid: 2363071
+  started: '2026-04-14 10:39:37'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C3_no_mmd.json
+  finished: '2026-04-14 22:24:39'
+  results:
+    AUCROC: 0.0412
+    AUCPR: 0.009
+    loss: -0.1089
+    brier: -0.0648
+    ece: -0.0529
 - name: sepsis_C4_no_target_task
   config: configs/ablation/sepsis_C4_no_target_task.json
   output: experiments/results/sepsis_C4_no_target_task.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C4_no_target_task'
+  gpu: 0
+  pid: 2387782
+  started: '2026-04-14 22:24:49'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C4_no_target_task.json
+  finished: '2026-04-15 12:28:13'
+  results:
+    AUCROC: 0.0633
+    AUCPR: 0.0218
+    loss: -0.123
+    brier: -0.0544
+    ece: -0.0463
 - name: sepsis_C5_no_fidelity
   config: configs/ablation/sepsis_C5_no_fidelity.json
   output: experiments/results/sepsis_C5_no_fidelity.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C5_no_fidelity'
+  gpu: 0
+  pid: 2416014
+  started: '2026-04-15 12:28:22'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C5_no_fidelity.json
+  finished: '2026-04-15 22:01:47'
+  results:
+    AUCROC: -0.0665
+    AUCPR: -0.0091
+    loss: -0.0425
+    brier: -0.0642
+    ece: -0.0149
 - name: sepsis_C6_no_pretrain
   config: configs/ablation/sepsis_C6_no_pretrain.json
   output: experiments/results/sepsis_C6_no_pretrain.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C6_no_pretrain'
+  gpu: 0
+  pid: 2434706
+  started: '2026-04-15 22:01:56'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C6_no_pretrain.json
+  finished: '2026-04-16 11:42:33'
+  results:
+    AUCROC: -0.0763
+    AUCPR: -0.0103
+    loss: -0.0361
+    brier: -0.0649
+    ece: -0.0225
 - name: sepsis_C7_no_target_norm
   config: configs/ablation/sepsis_C7_no_target_norm.json
   output: experiments/results/sepsis_C7_no_target_norm.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C7_no_target_norm'
+  gpu: 0
+  pid: 2462972
+  started: '2026-04-16 11:42:42'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C7_no_target_norm.json
+  finished: '2026-04-17 01:50:56'
+  results:
+    AUCROC: 0.0549
+    AUCPR: 0.0199
+    loss: -0.1158
+    brier: -0.0695
+    ece: -0.0745
 - name: sepsis_C8_residual
   config: configs/ablation/sepsis_C8_residual.json
   output: experiments/results/sepsis_C8_residual.parquet
-  status: pending
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C8_residual'
+  gpu: 0
+  pid: 2490711
+  started: '2026-04-17 01:51:04'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C8_residual.json
+  finished: '2026-04-17 15:59:21'
+  results:
+    AUCROC: 0.0494
+    AUCPR: 0.0221
+    loss: -0.113
+    brier: -0.0783
+    ece: -0.0839
 - name: sepsis_C9_no_time_delta
   config: configs/ablation/sepsis_C9_no_time_delta.json
   output: experiments/results/sepsis_C9_no_time_delta.parquet
-  status: pending
+  status: running
   branch: master
   server: '3090'
   notes: 'Part A ablation: C9_no_time_delta'
+  gpu: 0
+  pid: 2522546
+  started: '2026-04-17 15:59:29'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C9_no_time_delta.json
 - name: debug_mortality_hirid
   config: configs/hirid/debug_mortality_hirid.json
   output: experiments/results/debug_mortality_hirid.parquet
@@ -6100,3 +6375,1406 @@ experiments:
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-11 22:47:13'
   slurm_job_id: '70054'
+- name: los_C0_control
+  config: configs/ablation/los_C0_control.json
+  output: runs/los_C0_control/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:45'
+  slurm_job_id: '70537'
+- name: los_C1_no_retrieval
+  config: configs/ablation/los_C1_no_retrieval.json
+  output: runs/los_C1_no_retrieval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:51'
+  slurm_job_id: '70538'
+- name: los_C2_no_feature_gate
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_no_feature_gate/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:09:42'
+  slurm_job_id: '70257'
+- name: los_C3_no_mmd
+  config: configs/ablation/los_C3_no_mmd.json
+  output: runs/los_C3_no_mmd/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:09:48'
+  slurm_job_id: '70258'
+- name: los_C4_no_target_task
+  config: configs/ablation/los_C4_no_target_task.json
+  output: runs/los_C4_no_target_task/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:09:53'
+  slurm_job_id: '70259'
+- name: los_C5_no_fidelity
+  config: configs/ablation/los_C5_no_fidelity.json
+  output: runs/los_C5_no_fidelity/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:10:12'
+  slurm_job_id: '70261'
+- name: los_C6_no_pretrain
+  config: configs/ablation/los_C6_no_pretrain.json
+  output: runs/los_C6_no_pretrain/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:10:18'
+  slurm_job_id: '70262'
+- name: los_C7_no_target_norm
+  config: configs/ablation/los_C7_no_target_norm.json
+  output: runs/los_C7_no_target_norm/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:10:23'
+  slurm_job_id: '70263'
+- name: los_C8_residual
+  config: configs/ablation/los_C8_residual.json
+  output: runs/los_C8_residual/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 17:10:36'
+  slurm_job_id: '70264'
+- name: los_C9_no_time_delta
+  config: configs/ablation/los_C9_no_time_delta.json
+  output: runs/los_C9_no_time_delta/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:57'
+  slurm_job_id: '70539'
+- name: kf_C0_control
+  config: configs/ablation/kf_C0_control.json
+  output: runs/kf_C0_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:00:38'
+  slurm_job_id: '70083'
+- name: kf_C1_no_retrieval
+  config: configs/ablation/kf_C1_no_retrieval.json
+  output: runs/kf_C1_no_retrieval/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 09:10:23'
+  slurm_job_id: '70142'
+- name: kf_C2_no_feature_gate
+  config: configs/ablation/kf_C2_no_feature_gate.json
+  output: runs/kf_C2_no_feature_gate/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:00:49'
+  slurm_job_id: '70085'
+- name: kf_C3_no_mmd
+  config: configs/ablation/kf_C3_no_mmd.json
+  output: runs/kf_C3_no_mmd/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:00:54'
+  slurm_job_id: '70086'
+- name: kf_C4_no_target_task
+  config: configs/ablation/kf_C4_no_target_task.json
+  output: runs/kf_C4_no_target_task/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:00'
+  slurm_job_id: '70088'
+- name: kf_C5_no_fidelity
+  config: configs/ablation/kf_C5_no_fidelity.json
+  output: runs/kf_C5_no_fidelity/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:05'
+  slurm_job_id: '70089'
+- name: kf_C6_no_pretrain
+  config: configs/ablation/kf_C6_no_pretrain.json
+  output: runs/kf_C6_no_pretrain/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:11'
+  slurm_job_id: '70090'
+- name: kf_C7_no_target_norm
+  config: configs/ablation/kf_C7_no_target_norm.json
+  output: runs/kf_C7_no_target_norm/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:16'
+  slurm_job_id: '70091'
+- name: kf_C8_residual
+  config: configs/ablation/kf_C8_residual.json
+  output: runs/kf_C8_residual/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:21'
+  slurm_job_id: '70092'
+- name: kf_C9_no_time_delta
+  config: configs/ablation/kf_C9_no_time_delta.json
+  output: runs/kf_C9_no_time_delta/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-12 00:01:27'
+  slurm_job_id: '70093'
+- name: kf_nf_C0_control
+  config: configs/ablation/kf_nf_C0_control.json
+  output: runs/kf_nf_C0_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:16:50'
+  slurm_job_id: '70268'
+- name: kf_nf_C1_no_retrieval
+  config: configs/ablation/kf_nf_C1_no_retrieval.json
+  output: runs/kf_nf_C1_no_retrieval/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:16:56'
+  slurm_job_id: '70270'
+- name: kf_nf_C2_no_feature_gate
+  config: configs/ablation/kf_nf_C2_no_feature_gate.json
+  output: runs/kf_nf_C2_no_feature_gate/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:03'
+  slurm_job_id: '70271'
+- name: kf_nf_C3_no_mmd
+  config: configs/ablation/kf_nf_C3_no_mmd.json
+  output: runs/kf_nf_C3_no_mmd/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:09'
+  slurm_job_id: '70272'
+- name: kf_nf_C4_no_target_task
+  config: configs/ablation/kf_nf_C4_no_target_task.json
+  output: runs/kf_nf_C4_no_target_task/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:16'
+  slurm_job_id: '70273'
+- name: kf_nf_C6_no_pretrain
+  config: configs/ablation/kf_nf_C6_no_pretrain.json
+  output: runs/kf_nf_C6_no_pretrain/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:22'
+  slurm_job_id: '70274'
+- name: kf_nf_C7_no_target_norm
+  config: configs/ablation/kf_nf_C7_no_target_norm.json
+  output: runs/kf_nf_C7_no_target_norm/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:28'
+  slurm_job_id: '70275'
+- name: kf_nf_C8_residual
+  config: configs/ablation/kf_nf_C8_residual.json
+  output: runs/kf_nf_C8_residual/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:34'
+  slurm_job_id: '70276'
+- name: kf_nf_C9_no_time_delta
+  config: configs/ablation/kf_nf_C9_no_time_delta.json
+  output: runs/kf_nf_C9_no_time_delta/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF ablation with no-fidelity base
+  submitted: '2026-04-12 17:17:40'
+  slurm_job_id: '70277'
+- name: kf_hirid_nofid
+  config: configs/hirid/kf_hirid_nofid.json
+  output: runs/kf_hirid_nofid/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'HiRID KF fix: no fidelity (lambda_recon=0), same as eICU winning recipe'
+  submitted: '2026-04-13 12:53:34'
+  slurm_job_id: '70452'
+- name: kf_hirid_nofid_nommd
+  config: configs/hirid/kf_hirid_nofid_nommd.json
+  output: runs/kf_hirid_nofid_nommd/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'HiRID KF fix: no fidelity + no MMD (eICU best recipe, MAE -0.0091)'
+  submitted: '2026-04-13 12:53:44'
+  slurm_job_id: '70453'
+- name: kf_hirid_nofid_noret
+  config: configs/hirid/kf_hirid_nofid_noret.json
+  output: runs/kf_hirid_nofid_noret/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'HiRID KF fix: no fidelity + no retrieval (n_cross=0)'
+  submitted: '2026-04-13 12:53:54'
+  slurm_job_id: '70454'
+- name: los_C2_eval_test
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_eval_test/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 13:00:25'
+  slurm_job_id: '70456'
+- name: los_C2_eval_fix
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_eval_fix/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 4d_1g, chain=1
+  submitted: '2026-04-13 13:02:13'
+  slurm_job_id: '70459'
+- name: los_C0_test_fix
+  config: configs/ablation/los_C0_control.json
+  output: runs/los_C0_test_fix/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-13 13:04:52'
+  slurm_job_id: '70464'
+- name: los_C2_eval_a100
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_eval_a100/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 4d_1g, chain=1
+  submitted: '2026-04-13 13:03:32'
+  slurm_job_id: '70461'
+- name: los_C2_eval_test2
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_eval_test2/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 2h_2g, chain=1
+  submitted: '2026-04-13 13:04:16'
+  slurm_job_id: '70463'
+- name: los_C2_eval_l40s
+  config: configs/ablation/los_C2_no_feature_gate.json
+  output: runs/los_C2_eval_l40s/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 2h_2g, chain=1
+  submitted: '2026-04-13 13:05:43'
+  slurm_job_id: '70465'
+- name: eval_aki_C1_no_retrieval
+  config: configs/ablation/aki_C1_no_retrieval.json
+  output: runs/ablation/aki_C1_no_retrieval/eval_aki.parquet
+  command: translate_and_eval
+  status: done
+  server: a6000
+  notes: Eval-only for trained checkpoint (training done, missing result.json)
+  gpu: 0
+  pid: 2630018
+  started: '2026-04-14 04:36:53'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/eval_aki_C1_no_retrieval.json
+  finished: '2026-04-14 04:59:22'
+  results:
+    AUCROC: 0.0488
+    AUCPR: 0.1422
+    loss: -0.0976
+    brier: -0.0208
+    ece: -0.0086
+- name: eval_aki_C4_no_target_task
+  config: configs/ablation/aki_C4_no_target_task.json
+  output: runs/ablation/aki_C4_no_target_task/eval_aki.parquet
+  command: translate_and_eval
+  status: done
+  server: a6000
+  notes: Eval-only for trained checkpoint (training done, missing result.json)
+  gpu: 1
+  pid: 2635447
+  started: '2026-04-14 04:42:04'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/eval_aki_C4_no_target_task.json
+  finished: '2026-04-14 05:04:33'
+  results:
+    AUCROC: 0.0511
+    AUCPR: 0.1454
+    loss: -0.0998
+    brier: -0.0141
+    ece: -0.0001
+- name: eval_aki_C5_no_fidelity
+  config: configs/ablation/aki_C5_no_fidelity.json
+  output: runs/ablation/aki_C5_no_fidelity/eval_aki.parquet
+  command: translate_and_eval
+  status: done
+  server: a6000
+  notes: Eval-only for trained checkpoint (training done, missing result.json)
+  gpu: 0
+  pid: 2651761
+  started: '2026-04-14 04:59:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/eval_aki_C5_no_fidelity.json
+  finished: '2026-04-14 05:21:52'
+  results:
+    AUCROC: 0.057
+    AUCPR: 0.1717
+    loss: -0.1142
+    brier: -0.0268
+    ece: -0.0224
+- name: eval_sepsis_C0_control
+  config: configs/ablation/sepsis_C0_control.json
+  output: runs/ablation/sepsis_C0_control/eval_sepsis.parquet
+  command: translate_and_eval
+  status: pending
+  server: '3090'
+  notes: Eval-only for trained checkpoint (training done, missing result.json)
+- name: los_C3_no_mmd_eval
+  config: configs/ablation/los_C3_no_mmd.json
+  output: runs/los_C3_no_mmd_eval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:12'
+  slurm_job_id: '70533'
+- name: los_C4_no_target_task_eval
+  config: configs/ablation/los_C4_no_target_task.json
+  output: runs/los_C4_no_target_task_eval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:18'
+  slurm_job_id: '70534'
+- name: los_C6_no_pretrain_eval
+  config: configs/ablation/los_C6_no_pretrain.json
+  output: runs/los_C6_no_pretrain_eval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:25'
+  slurm_job_id: '70535'
+- name: los_C7_eval
+  config: configs/ablation/los_C7_no_target_norm.json
+  output: runs/los_C7_eval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-13 16:49:31'
+  slurm_job_id: '70536'
+- name: los_C7_train
+  config: configs/ablation/los_C7_no_target_norm.json
+  output: runs/los_C7_train/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-13 16:50:03'
+  slurm_job_id: '70540'
+- name: mort_nf_C0_control
+  config: configs/ablation/mort_nf_C0_control.json
+  output: runs/ablation/mort_nf_C0_control/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - control (no fidelity base)
+  gpu: 0
+  pid: 1494619
+  started: '2026-04-14 10:15:00'
+  finished: '2026-04-14 18:15:21'
+  results:
+    AUCROC: 0.0457
+    AUCPR: 0.0245
+    loss: -0.0681
+    brier: -0.0384
+    ece: -0.0668
+- name: mort_nf_C1_no_retrieval
+  config: configs/ablation/mort_nf_C1_no_retrieval.json
+  output: runs/ablation/mort_nf_C1_no_retrieval/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C1 no retrieval (n_cross=0)
+  gpu: 1
+  pid: 1494620
+  started: '2026-04-14 10:15:00'
+  finished: '2026-04-14 15:31:12'
+  results:
+    AUCROC: 0.0431
+    AUCPR: 0.0399
+    loss: -0.065
+    brier: -0.0317
+    ece: -0.0495
+- name: mort_nf_C2_no_feature_gate
+  config: configs/ablation/mort_nf_C2_no_feature_gate.json
+  output: runs/ablation/mort_nf_C2_no_feature_gate/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C2 no feature gate
+  gpu: 1
+  pid: 1865994
+  started: '2026-04-14 15:31:12'
+  finished: '2026-04-14 23:52:51'
+  results:
+    AUCROC: 0.0457
+    AUCPR: 0.0245
+    loss: -0.0681
+    brier: -0.0384
+    ece: -0.0668
+- name: mort_nf_C3_no_mmd
+  config: configs/ablation/mort_nf_C3_no_mmd.json
+  output: runs/ablation/mort_nf_C3_no_mmd/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C3 no MMD
+  gpu: 0
+  pid: 2096011
+  started: '2026-04-14 18:15:22'
+  finished: '2026-04-15 00:23:27'
+  results:
+    AUCROC: 0.0441
+    AUCPR: 0.0372
+    loss: -0.0669
+    brier: -0.0224
+    ece: -0.0357
+- name: mort_nf_C4_no_target_task
+  config: configs/ablation/mort_nf_C4_no_target_task.json
+  output: runs/ablation/mort_nf_C4_no_target_task/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C4 no target task
+  gpu: 1
+  pid: 2734829
+  started: '2026-04-14 23:52:52'
+  finished: '2026-04-15 08:20:35'
+  results:
+    AUCROC: 0.0402
+    AUCPR: 0.0101
+    loss: -0.0576
+    brier: -0.0167
+    ece: -0.0338
+- name: mort_nf_C6_no_pretrain
+  config: configs/ablation/mort_nf_C6_no_pretrain.json
+  output: runs/ablation/mort_nf_C6_no_pretrain/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C6 no pretrain
+  gpu: 1
+  pid: 464690
+  started: '2026-04-15 08:20:35'
+  finished: '2026-04-15 14:07:21'
+  results:
+    AUCROC: -0.1413
+    AUCPR: -0.181
+    loss: 0.1911
+    brier: 0.1583
+    ece: 0.2492
+- name: mort_nf_C7_no_target_norm
+  config: configs/ablation/mort_nf_C7_no_target_norm.json
+  output: runs/ablation/mort_nf_C7_no_target_norm/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C7 no target norm
+  gpu: 1
+  pid: 2718965
+  started: '2026-04-15 14:07:21'
+  finished: '2026-04-15 22:37:40'
+  results:
+    AUCROC: 0.048
+    AUCPR: 0.0503
+    loss: -0.071
+    brier: -0.0306
+    ece: -0.0545
+- name: mort_nf_C8_residual
+  config: configs/ablation/mort_nf_C8_residual.json
+  output: runs/ablation/mort_nf_C8_residual/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C8 residual output
+  gpu: 0
+  pid: 3956511
+  started: '2026-04-15 17:02:05'
+  finished: '2026-04-16 01:25:17'
+  results:
+    AUCROC: 0.0488
+    AUCPR: 0.0592
+    loss: -0.0799
+    brier: -0.0492
+    ece: -0.0625
+- name: mort_nf_C9_no_time_delta
+  config: configs/ablation/mort_nf_C9_no_time_delta.json
+  output: runs/ablation/mort_nf_C9_no_time_delta/eval_mortality.parquet
+  status: done
+  server: local
+  notes: Mortality nf ablation - C9 no triplet time delta
+  gpu: 1
+  pid: 2963852
+  started: '2026-04-15 22:37:40'
+  finished: '2026-04-16 05:54:08'
+  results:
+    AUCROC: 0.0454
+    AUCPR: 0.0516
+    loss: -0.0656
+    brier: -0.0226
+    ece: -0.0413
+- name: los_hirid_nommd
+  config: configs/hirid/los_hirid_nommd.json
+  output: runs/los_hirid_nommd/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:15'
+  slurm_job_id: '70931'
+- name: mort_hirid_nofid
+  config: configs/hirid/mortality_hirid_nofid.json
+  output: runs/mort_hirid_nofid/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:20'
+  slurm_job_id: '70932'
+- name: kf_hp_K1_50ep
+  config: configs/hp_sweep/kf_hp_K1_50ep.json
+  output: runs/kf_hp_K1_50ep/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:33'
+  slurm_job_id: '70933'
+- name: kf_hp_K2_d256
+  config: configs/hp_sweep/kf_hp_K2_d256.json
+  output: runs/kf_hp_K2_d256/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:39'
+  slurm_job_id: '70934'
+- name: kf_hp_K3_window12
+  config: configs/hp_sweep/kf_hp_K3_window12.json
+  output: runs/kf_hp_K3_window12/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:45'
+  slurm_job_id: '70935'
+- name: kf_hp_K5_lr3e5
+  config: configs/hp_sweep/kf_hp_K5_lr3e5.json
+  output: runs/kf_hp_K5_lr3e5/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 12:50:51'
+  slurm_job_id: '70936'
+- name: kf_hp_K7_pretrain30
+  config: configs/hp_sweep/kf_hp_K7_pretrain30.json
+  output: runs/kf_hp_K7_pretrain30/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-14 12:50:57'
+  slurm_job_id: '70937'
+- name: los_hirid_nommd
+  config: configs/hirid/los_hirid_nommd.json
+  output: runs/hirid/los_hirid_nommd/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID LoS no MMD (best eICU finding). L40S 12h_4g.
+  submitted: '2026-04-14 12:50:14'
+  slurm_job_id: '70931'
+- name: mort_hirid_nofid
+  config: configs/hirid/mortality_hirid_nofid.json
+  output: runs/hirid/mortality_hirid_nofid/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID Mortality no fidelity (best eICU finding). L40S 12h_4g.
+  submitted: '2026-04-14 12:50:20'
+  slurm_job_id: '70932'
+- name: kf_hp_K1_50ep
+  config: configs/hp_sweep/kf_hp_K1_50ep.json
+  output: runs/hp_sweep/kf_hp_K1_50ep/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF HP K1 - 50 epochs (vs 35 baseline). A100 12h_4g. Pretrain reused.
+  submitted: '2026-04-14 12:50:33'
+  slurm_job_id: '70933'
+- name: kf_hp_K2_d256
+  config: configs/hp_sweep/kf_hp_K2_d256.json
+  output: runs/hp_sweep/kf_hp_K2_d256/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF HP K2 - d_latent=256 d_model=256 (wider bottleneck for 292 features). A100 12h_4g. New Phase 1.
+  submitted: '2026-04-14 12:50:39'
+  slurm_job_id: '70934'
+- name: kf_hp_K3_window12
+  config: configs/hp_sweep/kf_hp_K3_window12.json
+  output: runs/hp_sweep/kf_hp_K3_window12/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF HP K3 - retrieval_window=12 (wider temporal context). A100 12h_4g. Pretrain reused.
+  submitted: '2026-04-14 12:50:44'
+  slurm_job_id: '70935'
+- name: kf_hp_K5_lr3e5
+  config: configs/hp_sweep/kf_hp_K5_lr3e5.json
+  output: runs/hp_sweep/kf_hp_K5_lr3e5/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF HP K5 - lr=3e-5 (slower convergence for noisy per-stay regression). A100 12h_4g. Pretrain reused.
+  submitted: '2026-04-14 12:50:51'
+  slurm_job_id: '70936'
+- name: kf_hp_K7_pretrain30
+  config: configs/hp_sweep/kf_hp_K7_pretrain30.json
+  output: runs/hp_sweep/kf_hp_K7_pretrain30/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF HP K7 - pretrain_epochs=30 (longer Phase 1 for 292-feature autoencoder). A100 24h_1g. New Phase 1.
+  submitted: '2026-04-14 12:50:56'
+  slurm_job_id: '70937'
+- name: los_hirid_nommd_v2
+  config: configs/hirid/los_hirid_nommd.json
+  output: runs/los_hirid_nommd_v2/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 18:56:08'
+  slurm_job_id: '71047'
+- name: los_hirid_sr_v2
+  config: configs/hirid/los_hirid_sr.json
+  output: runs/los_hirid_sr_v2/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 18:56:29'
+  slurm_job_id: '71048'
+- name: mort_c2_C0_control
+  config: configs/ablation/mort_c2_C0_control.json
+  output: runs/ablation/mort_c2_C0_control/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: Control (n_cross=2)'
+  gpu: 0
+  pid: 3364358
+  started: '2026-04-14 19:02:23'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C0_control.json
+  finished: '2026-04-14 22:26:51'
+  results:
+    AUCROC: 0.043
+    AUCPR: 0.0376
+    loss: -0.0631
+    brier: -0.0142
+    ece: -0.0053
+- name: mort_c2_C1_no_retrieval
+  config: configs/ablation/mort_c2_C1_no_retrieval.json
+  output: runs/ablation/mort_c2_C1_no_retrieval/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C1 no retrieval (n_cross=0, new Phase 1)'
+  gpu: 1
+  pid: 3365135
+  started: '2026-04-14 19:02:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C1_no_retrieval.json
+  finished: '2026-04-14 22:32:08'
+  results:
+    AUCROC: 0.038
+    AUCPR: 0.0508
+    loss: -0.0566
+    brier: -0.0391
+    ece: -0.0675
+- name: mort_c2_C2_no_feature_gate
+  config: configs/ablation/mort_c2_C2_no_feature_gate.json
+  output: runs/ablation/mort_c2_C2_no_feature_gate/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C2 no feature gate'
+  gpu: 3
+  pid: 3365915
+  started: '2026-04-14 19:02:33'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C2_no_feature_gate.json
+  finished: '2026-04-14 22:28:59'
+  results:
+    AUCROC: 0.0332
+    AUCPR: 0.0232
+    loss: -0.0477
+    brier: -0.0052
+    ece: 0.0127
+- name: mort_c2_C3_no_mmd
+  config: configs/ablation/mort_c2_C3_no_mmd.json
+  output: runs/ablation/mort_c2_C3_no_mmd/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C3 no MMD'
+  gpu: 0
+  pid: 3544610
+  started: '2026-04-14 22:26:57'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C3_no_mmd.json
+  finished: '2026-04-15 01:46:02'
+  results:
+    AUCROC: 0.0484
+    AUCPR: 0.0458
+    loss: -0.0728
+    brier: -0.021
+    ece: -0.0212
+- name: mort_c2_C4_no_target_task
+  config: configs/ablation/mort_c2_C4_no_target_task.json
+  output: runs/ablation/mort_c2_C4_no_target_task/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C4 no target task'
+  gpu: 3
+  pid: 3546851
+  started: '2026-04-14 22:29:05'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C4_no_target_task.json
+  finished: '2026-04-15 03:31:40'
+  results:
+    AUCROC: 0.0356
+    AUCPR: 0.0436
+    loss: -0.0558
+    brier: -0.0464
+    ece: -0.0715
+- name: mort_c2_C5_no_fidelity
+  config: configs/ablation/mort_c2_C5_no_fidelity.json
+  output: runs/ablation/mort_c2_C5_no_fidelity/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C5 no fidelity'
+  gpu: 1
+  pid: 3550854
+  started: '2026-04-14 22:32:14'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C5_no_fidelity.json
+  finished: '2026-04-15 03:51:09'
+  results:
+    AUCROC: 0.0495
+    AUCPR: 0.047
+    loss: -0.0695
+    brier: -0.0382
+    ece: -0.064
+- name: mort_c2_C6_no_pretrain
+  config: configs/ablation/mort_c2_C6_no_pretrain.json
+  output: runs/ablation/mort_c2_C6_no_pretrain/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C6 no pretrain'
+  gpu: 0
+  pid: 3718122
+  started: '2026-04-15 01:46:08'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C6_no_pretrain.json
+  finished: '2026-04-15 06:33:24'
+  results:
+    AUCROC: 0.0243
+    AUCPR: -0.0122
+    loss: -0.0456
+    brier: -0.0289
+    ece: -0.0254
+- name: mort_c2_C7_no_target_norm
+  config: configs/ablation/mort_c2_C7_no_target_norm.json
+  output: runs/ablation/mort_c2_C7_no_target_norm/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C7 no target norm'
+  gpu: 3
+  pid: 3809815
+  started: '2026-04-15 03:31:47'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C7_no_target_norm.json
+  finished: '2026-04-15 07:37:45'
+  results:
+    AUCROC: 0.0444
+    AUCPR: 0.0438
+    loss: -0.0712
+    brier: -0.0384
+    ece: -0.0599
+- name: mort_c2_C8_residual
+  config: configs/ablation/mort_c2_C8_residual.json
+  output: runs/ablation/mort_c2_C8_residual/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C8 residual output'
+  gpu: 1
+  pid: 3827054
+  started: '2026-04-15 03:51:15'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C8_residual.json
+  finished: '2026-04-15 09:11:00'
+  results:
+    AUCROC: 0.0427
+    AUCPR: 0.0515
+    loss: -0.0661
+    brier: -0.052
+    ece: -0.082
+- name: mort_c2_C9_no_time_delta
+  config: configs/ablation/mort_c2_C9_no_time_delta.json
+  output: runs/ablation/mort_c2_C9_no_time_delta/eval_mortality.parquet
+  status: done
+  server: a6000
+  notes: 'Mortality cross2 ablation: C9 no triplet time delta'
+  gpu: 0
+  pid: 3966364
+  started: '2026-04-15 06:33:30'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C9_no_time_delta.json
+  finished: '2026-04-15 10:00:00'
+  results:
+    AUCROC: 0.0413
+    AUCPR: 0.0248
+    loss: -0.0599
+    brier: -0.0073
+    ece: 0.0045
+- name: los_hirid_nommd_v3
+  config: configs/hirid/los_hirid_nommd.json
+  output: runs/los_hirid_nommd_v3/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 19:57:35'
+  slurm_job_id: '71064'
+- name: los_hirid_sr_v3
+  config: configs/hirid/los_hirid_sr.json
+  output: runs/los_hirid_sr_v3/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 12h_4g, chain=1
+  submitted: '2026-04-14 19:57:41'
+  slurm_job_id: '71065'
+- name: mort_c2_nf_C0_control
+  config: configs/ablation/mort_c2_nf_C0_control.json
+  output: runs/ablation/mort_c2_nf_C0_control/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C0 control (rerun of mort_c2_C5 base)'
+  gpu: 0
+  pid: 45978
+  started: '2026-04-15 11:42:06'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C0_control.json
+  finished: '2026-04-15 17:16:30'
+  results:
+    AUCROC: 0.0496
+    AUCPR: 0.0536
+    loss: -0.077
+    brier: -0.0325
+    ece: -0.0439
+- name: mort_c2_nf_C1_no_retrieval
+  config: configs/ablation/mort_c2_nf_C1_no_retrieval.json
+  output: runs/ablation/mort_c2_nf_C1_no_retrieval/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C1 no retrieval (n_cross=0)'
+  gpu: 1
+  pid: 46310
+  started: '2026-04-15 11:42:12'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C1_no_retrieval.json
+  finished: '2026-04-15 15:18:49'
+  results:
+    AUCROC: 0.0473
+    AUCPR: 0.0445
+    loss: -0.0755
+    brier: -0.0413
+    ece: -0.0558
+- name: mort_c2_nf_C2_no_feature_gate
+  config: configs/ablation/mort_c2_nf_C2_no_feature_gate.json
+  output: runs/ablation/mort_c2_nf_C2_no_feature_gate/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C2 no feature gate'
+  gpu: 3
+  pid: 46651
+  started: '2026-04-15 11:42:18'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C2_no_feature_gate.json
+  finished: '2026-04-15 17:13:19'
+  results:
+    AUCROC: 0.0496
+    AUCPR: 0.0536
+    loss: -0.077
+    brier: -0.0325
+    ece: -0.0439
+- name: mort_c2_nf_C3_no_mmd
+  config: configs/ablation/mort_c2_nf_C3_no_mmd.json
+  output: runs/ablation/mort_c2_nf_C3_no_mmd/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C3 no MMD'
+  gpu: 1
+  pid: 264553
+  started: '2026-04-15 15:18:56'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C3_no_mmd.json
+  finished: '2026-04-15 21:00:24'
+  results:
+    AUCROC: 0.0457
+    AUCPR: 0.0461
+    loss: -0.0708
+    brier: -0.0223
+    ece: -0.0194
+- name: mort_c2_nf_C4_no_target_task
+  config: configs/ablation/mort_c2_nf_C4_no_target_task.json
+  output: runs/ablation/mort_c2_nf_C4_no_target_task/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C4 no target task loss'
+  gpu: 3
+  pid: 376857
+  started: '2026-04-15 17:13:26'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C4_no_target_task.json
+  finished: '2026-04-15 23:13:24'
+  results:
+    AUCROC: 0.0409
+    AUCPR: 0.0208
+    loss: -0.06
+    brier: -0.0192
+    ece: -0.0343
+- name: mort_c2_nf_C6_no_pretrain
+  config: configs/ablation/mort_c2_nf_C6_no_pretrain.json
+  output: runs/ablation/mort_c2_nf_C6_no_pretrain/eval_mortality.parquet
+  status: pending
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C6 no pretrain (requeue #2: worktree updated with grad_fn fix)'
+- name: mort_c2_nf_C7_no_target_norm
+  config: configs/ablation/mort_c2_nf_C7_no_target_norm.json
+  output: runs/ablation/mort_c2_nf_C7_no_target_norm/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C7 no target normalization'
+  gpu: 0
+  pid: 531860
+  started: '2026-04-15 19:50:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C7_no_target_norm.json
+  finished: '2026-04-16 01:55:02'
+  results:
+    AUCROC: 0.0496
+    AUCPR: 0.0561
+    loss: -0.0769
+    brier: -0.045
+    ece: -0.0701
+- name: mort_c2_nf_C8_residual
+  config: configs/ablation/mort_c2_nf_C8_residual.json
+  output: runs/ablation/mort_c2_nf_C8_residual/eval_mortality.parquet
+  status: running
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C8 residual output mode (requeue: fix grad_fn crash)'
+  gpu: 1
+  pid: 3498054
+  started: '2026-04-17 21:24:13'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C8_residual.json
+- name: mort_c2_nf_C9_no_time_delta
+  config: configs/ablation/mort_c2_nf_C9_no_time_delta.json
+  output: runs/ablation/mort_c2_nf_C9_no_time_delta/eval_mortality.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'Mort cross2 nf ablation: C9 no triplet time delta'
+  gpu: 3
+  pid: 741262
+  started: '2026-04-15 23:13:31'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C9_no_time_delta.json
+  finished: '2026-04-16 05:25:27'
+  results:
+    AUCROC: 0.049
+    AUCPR: 0.0555
+    loss: -0.0751
+    brier: -0.0501
+    ece: -0.0768
+- name: aki_nf_C0_control
+  config: configs/ablation/aki_nf_C0_control.json
+  output: runs/ablation/aki_nf_C0_control/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C0 control (rerun of aki_C5 base)'
+  gpu: 1
+  pid: 860906
+  started: '2026-04-16 01:26:26'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C0_control.json
+  finished: '2026-04-16 19:26:55'
+  results:
+    AUCROC: 0.0576
+    AUCPR: 0.1734
+    loss: -0.1149
+    brier: -0.0193
+    ece: -0.0069
+- name: aki_nf_C1_no_retrieval
+  config: configs/ablation/aki_nf_C1_no_retrieval.json
+  output: runs/ablation/aki_nf_C1_no_retrieval/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C1 no retrieval (n_cross=0)'
+  gpu: 0
+  pid: 891665
+  started: '2026-04-16 01:55:10'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C1_no_retrieval.json
+  finished: '2026-04-16 16:03:08'
+  results:
+    AUCROC: 0.0497
+    AUCPR: 0.1553
+    loss: -0.0955
+    brier: -0.0104
+    ece: 0.0015
+- name: aki_nf_C2_no_feature_gate
+  config: configs/ablation/aki_nf_C2_no_feature_gate.json
+  output: runs/ablation/aki_nf_C2_no_feature_gate/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C2 no feature gate'
+  gpu: 3
+  pid: 1103741
+  started: '2026-04-16 05:25:34'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C2_no_feature_gate.json
+  finished: '2026-04-16 23:03:30'
+  results:
+    AUCROC: 0.0576
+    AUCPR: 0.1734
+    loss: -0.1149
+    brier: -0.0193
+    ece: -0.0069
+- name: aki_nf_C3_no_mmd
+  config: configs/ablation/aki_nf_C3_no_mmd.json
+  output: runs/ablation/aki_nf_C3_no_mmd/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C3 no MMD'
+  gpu: 0
+  pid: 1711420
+  started: '2026-04-16 16:03:15'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C3_no_mmd.json
+  finished: '2026-04-17 06:56:14'
+  results:
+    AUCROC: 0.0535
+    AUCPR: 0.1504
+    loss: -0.1062
+    brier: -0.0247
+    ece: -0.0186
+- name: aki_nf_C4_no_target_task
+  config: configs/ablation/aki_nf_C4_no_target_task.json
+  output: runs/ablation/aki_nf_C4_no_target_task/eval_aki.parquet
+  status: running
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C4 no target task loss (requeue: fix grad_fn crash)'
+  gpu: 0
+  pid: 3520965
+  started: '2026-04-17 21:47:47'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C4_no_target_task.json
+- name: aki_nf_C6_no_pretrain
+  config: configs/ablation/aki_nf_C6_no_pretrain.json
+  output: runs/ablation/aki_nf_C6_no_pretrain/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C6 no pretrain'
+  gpu: 3
+  pid: 2091476
+  started: '2026-04-16 23:03:38'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C6_no_pretrain.json
+  finished: '2026-04-17 08:32:15'
+  results:
+    AUCROC: -0.0828
+    AUCPR: -0.1903
+    loss: 0.0947
+    brier: 0.0825
+    ece: 0.1469
+- name: aki_nf_C7_no_target_norm
+  config: configs/ablation/aki_nf_C7_no_target_norm.json
+  output: runs/ablation/aki_nf_C7_no_target_norm/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C7 no target normalization'
+  gpu: 1
+  pid: 2358595
+  started: '2026-04-17 03:56:39'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C7_no_target_norm.json
+  finished: '2026-04-17 21:24:06'
+  results:
+    AUCROC: 0.0534
+    AUCPR: 0.1607
+    loss: -0.1062
+    brier: -0.0205
+    ece: -0.0119
+- name: aki_nf_C8_residual
+  config: configs/ablation/aki_nf_C8_residual.json
+  output: runs/ablation/aki_nf_C8_residual/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C8 residual output mode'
+  gpu: 0
+  pid: 2518288
+  started: '2026-04-17 06:56:21'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C8_residual.json
+  finished: '2026-04-17 16:19:54'
+  results:
+    AUCROC: 0.0002
+    AUCPR: 0.0008
+    loss: -0.0081
+    brier: 0.0165
+    ece: 0.0426
+- name: aki_nf_C9_no_time_delta
+  config: configs/ablation/aki_nf_C9_no_time_delta.json
+  output: runs/ablation/aki_nf_C9_no_time_delta/eval_aki.parquet
+  status: running
+  server: a6000
+  branch: master
+  notes: 'AKI nf ablation: C9 no triplet time delta'
+  gpu: 3
+  pid: 2603119
+  started: '2026-04-17 08:32:22'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C9_no_time_delta.json
+- name: los_nm_C0_control
+  config: configs/ablation/los_nm_C0_control.json
+  output: runs/los_nm_C0_control/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C0_control'
+  submitted: '2026-04-17 19:21:01'
+  slurm_job_id: '71946'
+- name: los_nm_C1_no_retrieval
+  config: configs/ablation/los_nm_C1_no_retrieval.json
+  output: runs/los_nm_C1_no_retrieval/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C1_no_retrieval'
+  submitted: '2026-04-17 19:21:07'
+  slurm_job_id: '71947'
+- name: los_nm_C2_no_feature_gate
+  config: configs/ablation/los_nm_C2_no_feature_gate.json
+  output: runs/los_nm_C2_no_feature_gate/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C2_no_feature_gate'
+  submitted: '2026-04-17 19:21:13'
+  slurm_job_id: '71948'
+- name: los_nm_C4_no_target_task
+  config: configs/ablation/los_nm_C4_no_target_task.json
+  output: runs/los_nm_C4_no_target_task/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C4_no_target_task'
+  submitted: '2026-04-17 19:21:23'
+  slurm_job_id: '71949'
+- name: los_nm_C5_no_fidelity
+  config: configs/ablation/los_nm_C5_no_fidelity.json
+  output: runs/los_nm_C5_no_fidelity/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C5_no_fidelity'
+  submitted: '2026-04-17 19:21:29'
+  slurm_job_id: '71950'
+- name: los_nm_C6_no_pretrain
+  config: configs/ablation/los_nm_C6_no_pretrain.json
+  output: runs/los_nm_C6_no_pretrain/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C6_no_pretrain'
+  submitted: '2026-04-17 19:21:35'
+  slurm_job_id: '71951'
+- name: los_nm_C7_no_target_norm
+  config: configs/ablation/los_nm_C7_no_target_norm.json
+  output: runs/los_nm_C7_no_target_norm/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C7_no_target_norm'
+  submitted: '2026-04-17 19:21:44'
+  slurm_job_id: '71952'
+- name: los_nm_C8_residual
+  config: configs/ablation/los_nm_C8_residual.json
+  output: runs/los_nm_C8_residual/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C8_residual'
+  submitted: '2026-04-17 19:21:50'
+  slurm_job_id: '71953'
+- name: los_nm_C9_no_time_delta
+  config: configs/ablation/los_nm_C9_no_time_delta.json
+  output: runs/los_nm_C9_no_time_delta/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: 'LoS nm ablation: C9_no_time_delta'
+  submitted: '2026-04-17 19:21:56'
+  slurm_job_id: '71954'
+- name: kf_nfnm_C0_control
+  config: configs/ablation/kf_nfnm_C0_control.json
+  output: runs/kf_nfnm_C0_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C0_control'
+  submitted: '2026-04-15 12:00:42'
+  slurm_job_id: '71519'
+- name: kf_nfnm_C1_no_retrieval
+  config: configs/ablation/kf_nfnm_C1_no_retrieval.json
+  output: runs/kf_nfnm_C1_no_retrieval/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C1_no_retrieval'
+  submitted: '2026-04-15 12:00:48'
+  slurm_job_id: '71520'
+- name: kf_nfnm_C2_no_feature_gate
+  config: configs/ablation/kf_nfnm_C2_no_feature_gate.json
+  output: runs/kf_nfnm_C2_no_feature_gate/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C2_no_feature_gate'
+  submitted: '2026-04-15 12:00:54'
+  slurm_job_id: '71521'
+- name: kf_nfnm_C4_no_target_task
+  config: configs/ablation/kf_nfnm_C4_no_target_task.json
+  output: runs/kf_nfnm_C4_no_target_task/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C4_no_target_task'
+  submitted: '2026-04-15 12:01:00'
+  slurm_job_id: '71522'
+- name: kf_nfnm_C6_no_pretrain
+  config: configs/ablation/kf_nfnm_C6_no_pretrain.json
+  output: runs/kf_nfnm_C6_no_pretrain/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C6_no_pretrain'
+  submitted: '2026-04-15 12:01:06'
+  slurm_job_id: '71523'
+- name: kf_nfnm_C7_no_target_norm
+  config: configs/ablation/kf_nfnm_C7_no_target_norm.json
+  output: runs/kf_nfnm_C7_no_target_norm/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C7_no_target_norm'
+  submitted: '2026-04-15 12:01:12'
+  slurm_job_id: '71524'
+- name: kf_nfnm_C8_residual
+  config: configs/ablation/kf_nfnm_C8_residual.json
+  output: runs/kf_nfnm_C8_residual/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C8_residual'
+  submitted: '2026-04-15 12:01:18'
+  slurm_job_id: '71525'
+- name: kf_nfnm_C9_no_time_delta
+  config: configs/ablation/kf_nfnm_C9_no_time_delta.json
+  output: runs/kf_nfnm_C9_no_time_delta/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF nfnm ablation: C9_no_time_delta'
+  submitted: '2026-04-15 12:01:24'
+  slurm_job_id: '71526'
+- name: kf_nfnm_cross2_control
+  config: configs/ablation/kf_nfnm_cross2_control.json
+  output: runs/kf_nfnm_cross2_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF nfnm cross2 test — follow-up on mortality cross2 dominance finding
+  submitted: '2026-04-15 15:37:11'
+  slurm_job_id: '71574'
+- name: kf_nfnm_cross2_control
+  config: configs/ablation/kf_nfnm_cross2_control.json
+  output: runs/kf_nfnm_cross2_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: KF nfnm cross2 test — follow-up on mortality cross2 dominance finding
+  submitted: '2026-04-15 15:37:10'
+  slurm_job_id: '71574'
+- name: kf_lr_C0_control
+  config: configs/ablation/kf_lr_C0_control.json
+  output: runs/kf_lr_C0_control/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C0 control (lr=3e-5 base)'
+  submitted: '2026-04-17 19:26:02'
+  slurm_job_id: '71955'
+- name: kf_lr_C1_no_retrieval
+  config: configs/ablation/kf_lr_C1_no_retrieval.json
+  output: runs/kf_lr_C1_no_retrieval/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C1 no retrieval (n_cross=0)'
+  submitted: '2026-04-17 19:26:12'
+  slurm_job_id: '71956'
+- name: kf_lr_C2_no_feature_gate
+  config: configs/ablation/kf_lr_C2_no_feature_gate.json
+  output: runs/kf_lr_C2_no_feature_gate/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C2 no feature gate'
+  submitted: '2026-04-17 19:26:18'
+  slurm_job_id: '71957'
+- name: kf_lr_C4_no_target_task
+  config: configs/ablation/kf_lr_C4_no_target_task.json
+  output: runs/kf_lr_C4_no_target_task/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C4 no target task'
+  submitted: '2026-04-17 19:26:25'
+  slurm_job_id: '71958'
+- name: kf_lr_C6_no_pretrain
+  config: configs/ablation/kf_lr_C6_no_pretrain.json
+  output: runs/kf_lr_C6_no_pretrain/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C6 no pretrain'
+  submitted: '2026-04-17 19:26:31'
+  slurm_job_id: '71959'
+- name: kf_lr_C7_no_target_norm
+  config: configs/ablation/kf_lr_C7_no_target_norm.json
+  output: runs/kf_lr_C7_no_target_norm/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C7 no target norm'
+  submitted: '2026-04-17 19:26:37'
+  slurm_job_id: '71960'
+- name: kf_lr_C8_residual
+  config: configs/ablation/kf_lr_C8_residual.json
+  output: runs/kf_lr_C8_residual/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C8 residual output'
+  submitted: '2026-04-17 19:26:43'
+  slurm_job_id: '71961'
+- name: kf_lr_C9_no_time_delta
+  config: configs/ablation/kf_lr_C9_no_time_delta.json
+  output: runs/kf_lr_C9_no_time_delta/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: 'KF lr ablation: C9 no time delta'
+  submitted: '2026-04-17 19:26:49'
+  slurm_job_id: '71962'
+- name: los_hirid_sr_rerun
+  config: configs/hirid/los_hirid_sr.json
+  output: runs/los_hirid_sr_rerun/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-18 00:59:10'
+  slurm_job_id: '71985'
+- name: los_hirid_nommd_rerun
+  config: configs/hirid/los_hirid_nommd.json
+  output: runs/los_hirid_nommd_rerun/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-18 00:59:19'
+  slurm_job_id: '71986'
+- name: kf_lr_with_mmd
+  config: configs/hp_sweep/kf_lr_with_mmd.json
+  output: runs/kf_lr_with_mmd/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-18 01:11:34'
+  slurm_job_id: '71987'
+- name: kf_lr_with_fidelity
+  config: configs/hp_sweep/kf_lr_with_fidelity.json
+  output: runs/kf_lr_with_fidelity/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-18 01:11:40'
+  slurm_job_id: '71988'

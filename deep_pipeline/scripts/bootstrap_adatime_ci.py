@@ -63,7 +63,7 @@ BEST_CONFIGS = {
     "MFD": {
         "run_dir": "MFD_full_v5_nopretrain",
         "seed_pattern": "MFD_full_best_res_s{seed}",
-        "n_seeds": 3,
+        "n_seeds": 5,
         "best_baseline": "DIRT-T",
         "best_baseline_mf1": 92.8,
     },

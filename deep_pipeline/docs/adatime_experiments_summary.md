@@ -1,6 +1,6 @@
 # AdaTime Benchmark Experiments - Complete Results
 
-**Status**: Active (Apr 12, 2026). All 5 datasets complete. Multi-seed (5 seeds) done for HAR/HHAR/WISDM/SSC; MFD has 3 seeds (s0-s2), s3/s4 running. Bootstrap CIs computed.
+**Status**: Active (Apr 13, 2026). All 5 datasets complete. Multi-seed (5 seeds) done for all 5 datasets (HAR/HHAR/WISDM/SSC/MFD). Bootstrap CIs computed.
 **Branch**: `master` (merged from `opt/training-speedup-v2` at commit `966af85`)
 **Hardware**: V100S (local), A6000 (a6000 server), Athena L40S/A100 (SLURM), PyTorch 2.6+cu118
 
@@ -327,20 +327,22 @@ Both CNN and translator use Adam(β=0.5, 0.99), wd=1e-4, 40 epochs, last-epoch, 
 
 ## Results for Paper
 
-### Current Best — Protocol-Compliant (v4/v5, 40 total epochs)
+### Authoritative Results — Protocol-Compliant (v4/v5, 40 total epochs, multi-seed)
 
-| Dataset | Channels | Protocol | Src MF1 | Trans MF1 | Delta | Published Best | Win? |
-|---|---|---|---|---|---|---|---|
-| HAR | 9 | v5 | 80.0 | **94.1** | +14.1 | DIRT-T 93.7 | **WIN (+0.4)** |
-| HHAR | 3 | v4 | 56.5 | **86.6** | +30.1 | CoTMix 84.5 | **WIN (+2.1)** |
-| WISDM | 3 | v4 | 50.0 | **71.8** | +21.8 | CoTMix 66.3 | **WIN (+5.5)** |
-| SSC (full) | 1 | v5 | 58.0 | **66.0** | +7.9 | MMDA 63.5 | **WIN (+2.5)** |
-| MFD (full) | 1 | v4 | 77.7 | **83.4** | +5.7 | DIRT-T 92.8 | Lose (−9.4) |
+Multi-seed means (5 seeds) from bootstrap CI analysis. Source: `experiments/results/bootstrap_cis/adatime_bootstrap_cis.json`.
 
-3-dataset mean (HAR/HHAR/WISDM): **84.2** vs CoTMix 79.0 (+5.2), DIRT-T 78.8 (+5.4).
-5-dataset mean: **82.9** vs DIRT-T 77.3 (+5.6).
+| Dataset | Best Config | Protocol | Src MF1 | Trans MF1 | Published Best | Win? |
+|---|---|---|---|---|---|---|
+| HAR | **v5_k24** (k=24) | v5 | 80.0 | **94.1±0.0** | DIRT-T 93.7 | **WIN (+0.4)** |
+| HHAR | **v4_cross3** (n_cross=3) | v4 | 56.5 | **87.0±0.7** | CoTMix 84.5 | **WIN (+2.5)** |
+| WISDM | **v4_lr67** (lr=6.7e-4) | v4 | 50.0 | **70.3±1.5** | CoTMix 66.3 | **WIN (+4.0)** |
+| SSC | **v5_nopretrain_d64** (d=64) | v5 | 58.0 | **66.2±0.2** | MMDA 63.5 | **WIN (+2.7)** |
+| MFD | **v5_nopretrain** (pretrain=0) | v5 | 77.5 | **96.1±0.1** | DIRT-T 92.8 | **WIN (+3.3)** |
 
-### Reference: Non-Compliant Best (v2/v3, 50 total epochs)
+5-dataset mean: **82.7** vs DIRT-T 77.3 (+5.4).
+**Wins ALL 5/5 datasets with frozen backbone.** All improvements significant at p<0.0001 (bootstrap, 2000 replicates).
+
+### Reference: Non-Compliant Best (v2/v3, 50 total epochs — NOT for paper)
 
 | Dataset | Channels | Src MF1 | Trans MF1 | Delta | Published Src-only |
 |---|---|---|---|---|---|
@@ -351,22 +353,6 @@ Both CNN and translator use Adam(β=0.5, 0.99), wd=1e-4, 40 epochs, last-epoch, 
 | MFD (full) | 1 | 83.7 | 84.0 | +0.3 | 72.5 |
 
 3-dataset mean (HAR/HHAR/WISDM): Translator **84.9** vs AdaTime best E2E DIRT-T **78.8** / CoTMix **79.0**.
-
-### v4/v5 Protocol (40 total epochs — fully compliant)
-
-All 5 datasets complete.
-
-| Dataset | Best Config | Protocol | Src MF1 | Trans MF1 | Delta | Published Best | Win? |
-|---|---|---|---|---|---|---|---|
-| HAR | **v5_k24** (k=24) | v5 | 80.0 | **94.1** | +14.1 | DIRT-T 93.7 | **WIN +0.4** |
-| HHAR | **v4_cross3** (n_cross=3) | v4 | 56.5 | **86.6** | +30.1 | CoTMix 84.5 | **WIN +2.1** |
-| WISDM | **v4_lr67** (lr=6.7e-4) | v4 | 50.0 | **71.8** | +21.8 | CoTMix 66.3 | **WIN +5.5** |
-| SSC | **v5_nopretrain_d64** (d=64) | v5 | 58.0 | **66.0** | +7.9 | MMDA 63.5 | **WIN +2.5** |
-| MFD | **v5_nopretrain** (pretrain=0) | v5 | 77.5 | **96.0** | +18.5 | DIRT-T 92.8 | **WIN +3.2** |
-
-3-dataset mean (HAR/HHAR/WISDM): **84.2** vs CoTMix 79.0 (+5.2), DIRT-T 78.8 (+5.4).
-5-dataset mean: **82.9** vs DIRT-T 77.3 (+5.6).
-**Wins ALL 5/5 datasets with frozen backbone.** All improvements significant at p<0.0001 (bootstrap, 2000 replicates).
 
 HAR v5 sweep results (all pretrain=0, 40 task epochs, n_cross=3):
 | Config | Change from nopre_40 | Trans MF1 |
@@ -417,7 +403,7 @@ MFD v5 results (all Athena, chunk=128):
 | v5_chunk256 | residual | 10 | 32 | 5e-4 | 1.0 | 80.0 |
 | v5_kitchen_sink | residual | 10 | 32 | 5e-4 | 1.0 | 83.0 |
 
-Key insight: pretrain=0 is the decisive factor for MFD (+12.6 jump). Same pattern as SSC — pretraining on 1-channel data with Adam β=0.5 hurts. Among pretrain=0 configs, residual edges absolute (96.0 vs 94.1). v5_nopre_abs (pretrain=0, absolute) achieves 94.1 — still beats DIRT-T 92.8 but below residual. MFD v5_absolute (pretrain=10, absolute) achieves 95.6. All 5 datasets' winning configs use output_mode="residual". Seeds: s0=96.1, s1=96.2, s2=96.0, mean=96.1±0.1.
+Key insight: pretrain=0 is the decisive factor for MFD (+12.6 jump). Same pattern as SSC — pretraining on 1-channel data with Adam β=0.5 hurts. Among pretrain=0 configs, residual edges absolute (96.0 vs 94.1). v5_nopre_abs (pretrain=0, absolute) achieves 94.1 — still beats DIRT-T 92.8 but below residual. MFD v5_absolute (pretrain=10, absolute) achieves 95.6. All 5 datasets' winning configs use output_mode="residual". Seeds: s0=96.1, s1=96.2, s2=96.0, s3=96.0, s4=96.1, mean=96.1±0.1 (5 seeds).
 
 All v4 HAR/HHAR/WISDM variants:
 
@@ -455,7 +441,7 @@ All v4 HAR/HHAR/WISDM variants:
 | HHAR | v4_cross3 | 86.7 | 87.6 | 86.0 | 87.3 | 87.7 | **87.0±0.7** |
 | WISDM | v4_lr67 | 71.0 | 71.2 | 69.0 | 68.4 | 71.8 | **70.3±1.5** |
 | SSC | v5_nopretrain_d64 | 66.4 | 65.9 | 66.3 | 66.3 | 66.2 | **66.2±0.2** |
-| MFD | v5_nopretrain | 96.1 | 96.2 | 96.0 | -- | -- | **96.1±0.1** (3 seeds) |
+| MFD | v5_nopretrain | 96.1 | 96.2 | 96.0 | 96.0 | 96.1 | **96.1±0.1** |
 
 Original run (seed=42) results match: HAR 94.1, HHAR 86.6, WISDM 71.8, SSC 66.0, MFD 96.0.
 
@@ -464,7 +450,7 @@ Seed stability:
 - HHAR: worst seed 86.0 > CoTMix 84.5. **All 5 beat baseline.**
 - WISDM: worst seed 68.4 > CoTMix 66.3. **All 5 beat baseline.**
 - SSC: worst seed 65.9 > MMDA 63.5. **All 5 beat baseline.**
-- MFD: worst seed 96.0 > DIRT-T 92.8. **All 3 beat baseline.** (s3/s4 pending)
+- MFD: worst seed 96.0 > DIRT-T 92.8. **All 5 beat baseline.**
 
 ### Bootstrap Confidence Intervals (Apr 12, 2000 replicates, 95% CI)
 
@@ -486,7 +472,7 @@ Multi-seed (bootstrapped over seeds × scenarios):
 | HHAR | 5 | 87.0 | [79.3, 92.6] | +30.5 [+26.6, +34.5] | <0.0001 |
 | WISDM | 5 | 70.3 | [61.7, 78.0] | +20.3 [+14.4, +26.7] | <0.0001 |
 | SSC | 5 | 66.2 | [59.3, 70.9] | +8.7 [+7.0, +10.5] | <0.0001 |
-| MFD | 3 | 96.1 | -- | -- | seeds pending |
+| MFD | 5 | 96.1 | [93.0, 98.5] | +18.6 [+12.4, +24.9] | <0.0001 |
 
 All improvements statistically significant (p<0.0001). Results saved: `experiments/results/bootstrap_cis/adatime_bootstrap_cis.json`.
 
@@ -531,12 +517,11 @@ Note: CoTMix is from a separate paper (IEEE TAI 2023), not in AdaTime's Table 4.
 | MMDA | E2E | -- | -- | -- | **63.5** | 85.4 | -- | -- |
 | DIRT-T | E2E | **93.7** | 80.5 | 62.1 | 57.3 | **92.8** | 78.8 | 77.3 |
 | CoTMix | E2E | 86.1 | **84.5** | **66.3** | -- | -- | **79.0** | -- |
-| **Ours v4/v5 (compliant)** | **Frozen** | **94.1** | **86.6** | **71.8** | **66.0** | **96.0** | **84.2** | **82.9** |
+| **Ours v4/v5 (compliant, 5-seed)** | **Frozen** | **94.1** | **87.0** | **70.3** | **66.2** | **96.1** | **83.8** | **82.7** |
 
-**5-dataset v4/v5 results (fully compliant, 40 total epochs):**
-- **3-dataset mean (HAR/HHAR/WISDM): 84.2** vs CoTMix 79.0 (+5.2), DIRT-T 78.8 (+5.4)
-- **5-dataset mean: 82.9** vs DIRT-T 77.3 (+5.6), DANN 74.2 (+8.7)
-- **Wins ALL 5/5 datasets**: HAR (+0.4 vs DIRT-T), HHAR (+2.1 vs CoTMix), WISDM (+5.5 vs CoTMix), SSC (+2.5 vs MMDA), MFD (+3.2 vs DIRT-T)
+**5-dataset v4/v5 results (fully compliant, 40 total epochs, multi-seed means):**
+- **5-dataset mean: 82.7** vs DIRT-T 77.3 (+5.4), DANN 74.2 (+8.5)
+- **Wins ALL 5/5 datasets**: HAR (+0.4 vs DIRT-T), HHAR (+2.5 vs CoTMix), WISDM (+4.0 vs CoTMix), SSC (+2.7 vs MMDA), MFD (+3.3 vs DIRT-T)
 - All with **strictly frozen backbone** — AdaTime methods retrain the full model end-to-end.
 
 **Non-compliant reference (v3, 50 total epochs):**
@@ -666,8 +651,33 @@ The downsampled approach inflates translator gains because avg-pooling destroys 
 | `adatime_cnn_wisdm.json` | WISDM | adatime | a6000 WISDM |
 
 ### Run directories (`runs/adatime_cnn/`)
-Each dataset variant has scenario subdirectories with `results.json` and checkpoints.
-Key directories: `HAR_valloss`, `HHAR_valloss_v3`, `WISDM_valloss_v2`, `SSC_full_correct_cnn_fid1`, `MFD_full_correct_cnn`, `SSC_full` (chunk256).
+Each dataset variant has scenario subdirectories with `results.json` (and for multi-seed, also `translator/` checkpoints).
+
+**Current best-config run dirs (seed=42, protocol-compliant)**:
+| Dataset | Run dir |
+|---|---|
+| HAR | `HAR_v5_k24` |
+| HHAR | `HHAR_v4_cross3` |
+| WISDM | `WISDM_v4_lr67` |
+| SSC | `SSC_full_v5_nopretrain_d64` |
+| MFD | `MFD_full_v5_nopretrain` |
+
+**Multi-seed run dirs (5 seeds each, s0-s4)**:
+| Dataset | Seed dir pattern |
+|---|---|
+| HAR | `HAR_best_s{0-4}` |
+| HHAR | `HHAR_best_s{0-4}` |
+| WISDM | `WISDM_best_s{0-4}` |
+| SSC | `SSC_full_best_s{0-4}` |
+| MFD | `MFD_full_best_res_s{0-4}` (s3/s4 from Athena, synced Apr 13) |
+
+Superseded directories: `HAR_valloss`, `HHAR_valloss_v3`, `WISDM_valloss_v2`, `SSC_full_correct_cnn_fid1`, `MFD_full_correct_cnn`, `SSC_full` (chunk256).
+
+### Bootstrap CI artifacts
+- Script: `scripts/bootstrap_adatime_ci.py` (2000 replicates, multi-seed supported via `--multi-seed`)
+- Canonical output: `experiments/results/bootstrap_cis/adatime_bootstrap_cis.json` (all 5 datasets × 5 seeds, Apr 13)
+- Mirror copy: `runs/adatime_cnn/bootstrap_ci_final.json`
+- `BEST_CONFIGS` dict inside the script is the authoritative mapping from dataset → (best run_dir, seed_pattern, n_seeds, best_baseline) — update it when the best config changes.
 
 ---
 

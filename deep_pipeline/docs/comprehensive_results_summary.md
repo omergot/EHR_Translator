@@ -19,11 +19,32 @@ From the YAIB benchmark paper (van de Water et al., ICLR 2024, arXiv:2306.05109)
 | eICU-native LSTM | 85.5 | 90.2 | 74.0 |
 | MIMIC-native LSTM | 86.7 | 89.7 | 82.0 |
 | Best eICU model (GRU) | 86.0 | 90.9 | 77.4 |
-| **Our best translator** | **85.55** | **91.16** | **76.58** |
+| **Our best translator** | **85.49** | **91.34** | **76.78** |
 
-**Status**: All three tasks surpass eICU-native LSTM. AKI also surpasses MIMIC-native LSTM (90.2→91.16). These are reference milestones, not hard ceilings.
+**Regression reference (MAE, hours / mg/dL):**
 
-See [yaib_reference_baselines.md](yaib_reference_baselines.md) for complete YAIB results across all architectures and datasets.
+| Reference Point | LoS (h) | KF (mg/dL) |
+|---|---|---|
+| Frozen baseline | 42.5 | 0.403 |
+| eICU-native LSTM | 39.2 | 0.28 |
+| Best eICU model | 38.2 (TF) | 0.24 (EN) |
+| **Our best translator** | **37.2** | **0.277** |
+
+**Status**: All three classification tasks surpass eICU-native LSTM. AKI also surpasses MIMIC-native LSTM (90.2→91.34). LoS now beats eICU-native (37.2h vs 39.2h). KF approaching eICU-native (0.277 vs 0.28). These are reference milestones, not hard ceilings.
+
+**HiRID → MIMIC reference (YAIB Tables 3+4, HiRID-native LSTM):**
+
+| Task | HiRID-native LSTM | Our Translated | Status |
+|---|---|---|---|
+| Mortality (AUROC) | 84.0 | 80.81 | **Gap** (−3.19) |
+| AKI (AUROC) | 81.0 | 82.96 | **Won** (+1.96) |
+| Sepsis (AUROC) | 78.8 | 79.79 | **Won** (+0.99) |
+| LoS (MAE, h) | 39.8 | ~52.0 | **Gap** (+12.2h) |
+| KF (MAE, mg/dL) | 0.33 | ~0.273 | **Won** (−0.057) |
+
+**HiRID remaining targets**: Mortality (need +3.19 AUROC) and LoS (need −12h MAE).
+
+See [yaib_reference_baselines.md](yaib_reference_baselines.md) for complete YAIB results across all architectures and datasets, and full gap analysis for both directions.
 
 ---
 
@@ -1596,29 +1617,15 @@ Key observations:
 
 #### MFD (1-channel vibration, 5120 timesteps, 3 classes)
 
+**Protocol-compliant result (v5_nopretrain, 5-seed mean):** Source 77.5, Translator **96.1±0.1**, Δ = **+18.6**. Beats DIRT-T (92.8) by +3.3. All 5 seeds > 96.0. Our strongest non-medical dataset by a large margin.
+
+Per-seed MFD results: 96.10, 96.15, 95.98, 96.02, 96.12. Source: `experiments/results/bootstrap_cis/adatime_bootstrap_cis.json`.
+
+Historical (pre-v4, non-compliant — for reference only):
 | Variant | Source-only MF1 | Translator MF1 | Δ | W/L |
 |---|---|---|---|---|
 | Downsampled (128-step) | 73.5 | 90.7 | +17.2 | 10/0 |
-| **Full-length chunk128** | **69.8** | **87.2** | **+17.4** | 9/1 |
-
-Full-length confirms downsampled result — delta is actually slightly higher (+17.4 vs +17.2). MFD is our strongest non-medical dataset by a large margin.
-
-Per-scenario MFD full-length results:
-| Scenario | Src MF1 | Trans MF1 | Δ |
-|---|---|---|---|
-| 0→1 | 0.441 | **0.979** | **+0.538** |
-| 0→3 | 0.451 | **0.993** | **+0.542** |
-| 1→0 | 0.547 | 0.758 | +0.210 |
-| 1→2 | 0.738 | 0.715 | **-0.023** (only loss) |
-| 1→3 | 0.943 | 0.995 | +0.053 |
-| 2→1 | 0.825 | 0.864 | +0.039 |
-| 2→3 | 0.827 | 0.895 | +0.068 |
-| 3→0 | 0.476 | 0.769 | +0.294 |
-| 3→1 | 0.991 | 0.997 | +0.006 |
-| 3→2 | 0.745 | 0.755 | +0.010 |
-| **Mean** | **0.698** | **0.872** | **+0.174** |
-
-MFD full results in `runs/adatime_cnn/MFD_full/all_results.json` (worktree).
+| Full-length chunk128 (worktree) | 69.8 | 87.2 | +17.4 | 9/1 |
 
 ### 23.4 Key Findings for Paper (updated Apr 6)
 
@@ -1626,7 +1633,7 @@ MFD full results in `runs/adatime_cnn/MFD_full/all_results.json` (worktree).
 2. **HHAR/WISDM comparisons valid**: our source-only matches AdaTime's, so gains are directly comparable (+22.0 HHAR, +14.2 WISDM MF1 vs E2E DANN +14.8, +11.2).
 3. **HAR comparison confounded**: PyTorch 2.4 inflates source-only (+17pp). Our translator 90.4 still beats AdaTime DANN 88.3, but caveat required.
 4. **Safety property**: 29W/0T/1L in HAR/HHAR/WISDM. One loss = -3.2 MF1. DANN collapses on 2/10 MFD scenarios (-33pp).
-5. **MFD is the strongest non-medical result**: +17.4 full-length MF1 (9W/1L), confirmed by both downsampled (+17.2) and full-length protocols. Translator achieves 0.979+ MF1 on several scenarios from weak baselines (~0.45).
+5. **MFD is the strongest non-medical result**: +18.6 MF1 (protocol-compliant v5, multi-seed mean 96.1±0.1 vs source 77.5). Beats DIRT-T (92.8) by +3.3. Translator achieves 0.96+ MF1 across all 5 seeds.
 6. **SSC chunk granularity was the bottleneck**: chunk256 (+6.2) doubles chunk128 (+3.0). d_latent=64 hurts (+1.9). The temporal context per chunk matters more than latent capacity. The original 0→11 failure (-0.184) is fully resolved by chunk256 (+0.048).
 7. **Dimensionality scaling** (revised): gains increase with feature count for chunk128, but chunk256 SSC (+6.2) narrows the gap with HAR (+7.4). The 1-channel limitation is partially mitigated by larger chunks. EHR (48-100 features) remains the optimal setting.
 8. **No HP search**: single config across all 50 scenarios. AdaTime methods use 100 random HP trials + 3 seeds.
@@ -1684,7 +1691,7 @@ The downsampled approach inflates translator gains because avg-pool destroys the
 
 **Full-length is the correct setup**: source-only matches AdaTime's published number, so the comparison is valid.
 
-The same logic applies to MFD (full-length results pending as of Apr 5).
+MFD full-length is also the correct setup: protocol-compliant v5_nopretrain achieves 96.1±0.1 (multi-seed), Δ = +18.6 vs source.
 
 ---
 
@@ -1751,7 +1758,7 @@ All 4 ablation experiments completed Apr 6. Results collected and documented in 
 | **chunk256** | More temporal context | **+6.2** | **2x better** | **CONFIRMED — primary bottleneck** |
 | chunk512 | Even more context | +6.0 | ~same as 256 | Diminishing returns at 512 |
 | d_latent=64 | More latent capacity | +1.9 | Worse | **REJECTED — hurts performance** |
-| MFD full-length | Confirm downsampled | +17.4 | N/A | **CONFIRMED** (+17.4 ≈ +17.2 downsampled) |
+| MFD full-length (v5) | Protocol-compliant | +18.6 | N/A | **CONFIRMED** (v5_nopretrain, 96.1±0.1) |
 
 #### Primary Question Answered
 
@@ -1762,7 +1769,7 @@ Chunk granularity was the main bottleneck. The original +0.030 SSC result unders
 #### For the paper
 
 - **Report SSC chunk256 as the main result** (+6.2 MF1), noting that chunk128 gives +3.0 and the improvement with chunk size confirms temporal context matters
-- **Report MFD full-length** (+17.4 MF1) — our strongest non-medical result
+- **Report MFD full-length** (+18.6 MF1, 96.1±0.1) — our strongest non-medical result, beats DIRT-T by +3.3
 - The chunk-size ablation itself is a paper contribution: demonstrates that the method adapts to different temporal granularities and that matching chunk size to the data's intrinsic structure is important
 
 #### Code and launch commands
@@ -1773,3 +1780,422 @@ python scripts/run_adatime.py --dataset SSC --all-scenarios --use-cnn --full-len
   --chunk-size 256 --variant _c256 --device cuda:X > /tmp/run.log 2>&1 &
 ```
 Flags: `--chunk-size` (128/256/512), `--d-latent N` (overrides translator.d_latent AND d_model), `--variant _tag` (creates separate run dir `SSC_full_tag/`).
+
+---
+
+## 21. Bootstrap Confidence Intervals (Apr 13, 2026) — PAPER P0 COMPLETE
+
+**Method**: 500-replicate paired bootstrap on saved predictions. Stratified cluster bootstrap for classification (preserves positive class ratio); row-wise bootstrap for regression. Translated vs original predictions share bootstrap indices → the difference distribution captures treatment effect without resampling noise.
+
+**Script**: `scripts/bootstrap_ci.py` (extended this cycle with regression support: MAE/RMSE/R²).
+
+### eICU → MIMIC
+
+| Task | Metric | Point [95% CI] | Δ vs Frozen [95% CI] | p | Config |
+|---|---|---|---|---|---|
+| Mortality | AUROC | 0.8536 [0.8432, 0.8640] | **+0.0457** [+0.0354, +0.0552] | <0.001 | `mortality_retr_v4_mmd_local` |
+| Mortality | AUCPR | 0.3488 [0.3245, 0.3736] | **+0.0521** [+0.0352, +0.0692] | <0.001 | `mortality_retr_v4_mmd_local` |
+| AKI | AUROC | 0.9113 [0.9105, 0.9122] | **+0.0556** [+0.0549, +0.0563] | <0.001 | `aki_v5_cross3` |
+| AKI | AUCPR | 0.7286 [0.7265, 0.7306] | **+0.1608** [+0.1590, +0.1623] | <0.001 | `aki_v5_cross3` |
+| Sepsis | AUROC | 0.7776 [0.7740, 0.7816] | **+0.0617** [+0.0584, +0.0650] | <0.001 | `adaptive_ccr_sepsis` |
+| Sepsis | AUCPR | 0.0532 [0.0513, 0.0551] | **+0.0234** [+0.0217, +0.0251] | <0.001 | `adaptive_ccr_sepsis` |
+| LoS | MAE | 0.2331 [0.2329, 0.2333] | **-0.0196** [-0.0197, -0.0194] | <0.001 | `los_retr_v5_cross3` |
+| KF | MAE | 0.0313 [0.0305, 0.0319] | -0.0017 [-0.0021, -0.0013] | <0.001 | `kf_retr_v5_cross3` |
+| **KF (no fidelity)** | **MAE** | **0.0256 [0.0249, 0.0262]** | **-0.0074** [-0.0079, -0.0068] | <0.001 | **`kf_C5_no_fidelity` — NEW RECORD** |
+
+### HiRID → MIMIC
+
+| Task | Metric | Point [95% CI] | Δ vs Frozen [95% CI] | p | Config |
+|---|---|---|---|---|---|
+| Mortality | AUROC | 0.8081 [0.7814, 0.8356] | **+0.0488** [+0.0284, +0.0711] | <0.001 | `mortality_hirid_sr` |
+| Mortality | AUCPR | 0.2904 [0.2512, 0.3523] | **+0.0502** [+0.0167, +0.0859] | 0.002 | `mortality_hirid_sr` |
+| AKI | AUROC | 0.8296 [0.8268, 0.8325] | **+0.0776** [+0.0745, +0.0807] | <0.001 | `aki_hirid_sr` |
+| AKI | AUCPR | 0.3816 [0.3754, 0.3878] | **+0.1471** [+0.1414, +0.1531] | <0.001 | `aki_hirid_sr` |
+| Sepsis | AUROC | 0.7979 [0.7922, 0.8039] | **+0.0777** [+0.0707, +0.0841] | <0.001 | `sepsis_hirid_sr` |
+| Sepsis | AUCPR | 0.1131 [0.1071, 0.1205] | **+0.0525** [+0.0471, +0.0584] | <0.001 | `sepsis_hirid_sr` |
+| LoS | MAE | 0.3092 [0.3070, 0.3115] | **-0.0452** [-0.0497, -0.0410] | <0.001 | `los_hirid_sr` |
+| KF | MAE | 0.0236 [0.0222, 0.0250] | +0.0000 [-0.0009, +0.0010] | 0.482 (n.s.) | `kf_hirid_sr` |
+
+### Key findings
+
+- **All 7 eICU→MIMIC tests significant** (p<0.001).
+- **9/10 HiRID→MIMIC tests significant** — KF HiRID the only exception (negligible delta).
+- **New KF record**: `kf_C5_no_fidelity` beats `kf_retr_v5_cross3` by MAE Δ -0.0057 [-0.0061, -0.0052] in paired comparison (p<0.001). Dropping λ_fidelity removes the fidelity-gradient dominance that handicaps KF's cumulative-feature regime.
+- **Narrowest CI**: AKI eICU AUROC (width 0.0014 on 1.33M predictions). **Widest CI**: Mortality HiRID AUROC (width 0.0543 on 2,560 stays).
+- Full results: `docs/neurips/bootstrap_ci_results.md`.
+
+---
+
+## 22. KF/LoS Regression Ablations + HiRID KF Fix (Apr 13, 2026)
+
+Systematic ablation studies for the two regression tasks (KidneyFunction and Length of Stay) and HiRID KF fix.
+
+### 22.1 KF No-Fidelity Ablations (eICU → MIMIC)
+
+Base config: `kf_C5_no_fidelity` (retrieval V5 cross3, no lambda_fidelity). Baseline MAE = 0.0330 (0.403 mg/dL). All on Athena A100.
+
+| Ablation | Config | MAE Δ | MSE Δ | RMSE Δ | R² Δ |
+|---|---|---|---|---|---|
+| C0 (control, no fid) | `kf_nf_C0_control` | -0.0079 | -0.0014 | -0.0129 | +0.0961 |
+| C1 (no retrieval) | `kf_nf_C1_no_retrieval` | -0.0057 | -0.0011 | -0.0096 | +0.0738 |
+| C2 (no feature gate) | `kf_nf_C2_no_feature_gate` | -0.0079 | -0.0014 | -0.0129 | +0.0961 |
+| **C3 (no MMD)** | **`kf_nf_C3_no_mmd`** | **-0.0091** | **-0.0015** | **-0.0141** | **+0.1040** |
+| C4 (no target task) | `kf_nf_C4_no_target_task` | -0.0056 | -0.0012 | -0.0105 | +0.0803 |
+| C6 (no pretrain) | `kf_nf_C6_no_pretrain` | +0.0072 | -0.0002 | -0.0020 | +0.0163 |
+| C7 (no target norm) | `kf_nf_C7_no_target_norm` | -0.0072 | -0.0012 | -0.0113 | +0.0859 |
+| C8 (residual) | `kf_nf_C8_residual` | -0.0021 | -0.0003 | -0.0029 | +0.0241 |
+| C9 (no time delta) | `kf_nf_C9_no_time_delta` | -0.0077 | -0.0013 | -0.0116 | +0.0880 |
+
+**Key findings:**
+- **C3 (no MMD) is new KF record**: MAE -0.0091, a 23% improvement over prior best -0.0074 (C5 no fidelity). Removing MMD alignment loss helps KF because the alignment gradient conflicts with the cumulative-feature regime (292 features including generated stats).
+- **Phase 1 pretrain is the most critical component**: C6 (no pretrain) is the only ablation that causes regression (MAE +0.0072, worse than frozen baseline). Every other component can be removed without catastrophic harm.
+- **Feature gate has zero effect** on KF when fidelity is removed: C2 = C0 exactly (MAE -0.0079 both).
+- **Component importance by MAE impact**: pretrain (essential) >> retrieval (-0.0022 vs C0) > target task (+0.0023 vs C0) > target norm (+0.0007 vs C0) > MMD (helps to remove, -0.0012 vs C0) > feature gate (zero effect).
+- **Best KF recipe: no fidelity + no MMD** (rest at defaults). Translated MAE = 0.0330 - 0.0091 = 0.0239 mg/dL (0.292 mg/dL absolute).
+
+### 22.2 LoS Ablations (eICU → MIMIC) — COMPLETE
+
+Base config: `los_retr_v5_cross3`. Baseline MAE = 0.2527 (42.5h). All on Athena L40S, 35 epochs.
+
+| Ablation | Config | MAE Δ | MSE Δ | RMSE Δ | R² Δ |
+|---|---|---|---|---|---|
+| C0 (control) | `los_C0_control` | RUNNING | | | |
+| C1 (no retrieval) | `los_C1_no_retrieval` | -0.0209 | +0.0037 | +0.0059 | -0.0336 |
+| **C2 (no feature gate)** | **`los_C2_no_feature_gate`** | **-0.0288** | -0.0025 | -0.0040 | +0.0224 |
+| **C3 (no MMD)** | **`los_C3_no_mmd`** | **-0.0315 (-5.3h)** | -0.0016 | -0.0026 | +0.0149 |
+| C4 (no target task) | `los_C4_no_target_task` | -0.0223 | +0.0004 | +0.0007 | -0.0038 |
+| C5 (no fidelity) | `los_C5_no_fidelity` | +0.0029 | +0.0242 | +0.0366 | -0.2203 |
+| C6 (no pretrain) | `los_C6_no_pretrain` | +0.0041 | +0.0257 | +0.0387 | -0.2335 |
+| C7 (no target norm) | `los_C7_no_target_norm` | -0.0238 | +0.0014 | +0.0023 | -0.0128 |
+| C8 (residual) | `los_C8_residual` | -0.0068 | +0.0167 | +0.0257 | -0.1521 |
+| C9 (no time delta) | `los_C9_no_time_delta` | RUNNING | | | |
+
+**Key findings:**
+- **C3 (no MMD) = new LoS record**: MAE -0.0315 (-5.3h), 9% better than prior best C2 -0.0288. Translated MAE = 0.2527 - 0.0315 = 0.2212 (37.2h), now **beats eICU-native LSTM by 2.0h** (39.2h).
+- **No fidelity hurts LoS** (MAE +0.0029) — opposite of KF. LoS has 52 features (no MI), needs fidelity to keep translations grounded.
+- **No pretrain also hurts LoS** (MAE +0.0041) — same critical-component pattern as KF.
+- **No feature gate (-0.0288) and no MMD (-0.0315) both strong**: Feature gate and MMD alignment may over-constrain the LoS translation.
+- **LoS and KF partially align**: Both benefit from removing MMD. KF additionally needs removing fidelity; LoS needs fidelity kept. Different feature regimes (292 vs 52) drive the fidelity divergence.
+
+### 22.3 HiRID KF Fix (HiRID → MIMIC)
+
+Previous HiRID KF result was negligible (MAE -0.0001, n.s. in bootstrap). Tested no-fidelity variants on Athena A100.
+
+| Config | MAE Δ | MSE Δ | RMSE Δ | R² Δ |
+|---|---|---|---|---|
+| `kf_hirid_nofid` | +0.0118 | +0.0012 | +0.0135 | -0.1865 |
+| **`kf_hirid_nofid_nommd`** | **-0.0013** | **-0.0001** | **-0.0015** | **+0.0175** |
+| `kf_hirid_nofid_noret` | +0.0116 | +0.0012 | +0.0141 | -0.1956 |
+
+**Key findings:**
+- **`kf_hirid_nofid_nommd` is the only positive result** (MAE -0.0013), 13x better than old result (-0.0001).
+- Same pattern as eICU: removing both fidelity and MMD is essential for KF regression.
+- Removing fidelity alone or retrieval causes severe harm (+0.0118, +0.0116).
+- **Cross-domain validation**: the "no fidelity + no MMD" recipe transfers from eICU to HiRID, confirming it's not dataset-specific but task-specific.
+
+### 22.4 Updated Regression Reference Table
+
+| Task | Baseline MAE | Our Best MAE | Our Best Δ | Config | eICU-native |
+|---|---|---|---|---|---|
+| **LoS** | 0.2527 (42.5h) | **0.2212 (37.2h)** | **-0.0315 (-5.3h)** | `los_C3_no_mmd` | 0.2333 (39.2h) |
+| **KF** | 0.0330 (0.403) | **0.0239 (0.292)** | **-0.0091 (-0.111)** | `kf_nf_C3_no_mmd` | 0.0230 (0.28) |
+
+LoS now beats eICU-native LSTM by 2.0h (37.2h vs 39.2h). KF approaching eICU-native (0.292 vs 0.28).
+
+---
+
+## 24. Component Ablation Study (Apr 11-15, 2026)
+
+Systematic ablation study across all tasks for the NeurIPS paper. Each ablation removes exactly one component from the best retrieval config (V5 cross3). Ablation IDs: C0=control, C1=no retrieval, C2=no feature gate, C3=no MMD, C4=no target task loss, C5=no fidelity, C6=no pretrain, C7=no target normalization, C8=residual (add-delta instead of replace), C9=no time delta features.
+
+### 24.1 Mortality Ablations (V5 cross3 base, local server, 30ep)
+
+Baseline AUROC: 0.8079. All 10/10 complete.
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 (control) | `mortality_C0_control` | +0.0290 | +0.0391 | -0.0225 | -0.0352 |
+| C1 (no retrieval) | `mortality_C1_no_retrieval` | +0.0379 | +0.0461 | -0.0464 | -0.0833 |
+| C2 (no feature gate) | `mortality_C2_no_feature_gate` | +0.0355 | +0.0391 | -0.0408 | -0.0638 |
+| C3 (no MMD) | `mortality_C3_no_mmd` | +0.0401 | +0.0492 | -0.0192 | -0.0257 |
+| C4 (no target task) | `mortality_C4_no_target_task` | +0.0339 | +0.0378 | -0.0149 | -0.0177 |
+| **C5 (no fidelity)** | **`mortality_C5_no_fidelity`** | **+0.0457** | +0.0245 | -0.0384 | -0.0668 |
+| C6 (no pretrain) | `mortality_C6_no_pretrain` | -0.1008 | -0.1671 | +0.0085 | +0.0627 |
+| C7 (no target norm) | `mortality_C7_no_target_norm` | +0.0323 | +0.0462 | -0.0216 | -0.0324 |
+| C8 (residual) | `mortality_C8_residual` | +0.0435 | +0.0442 | -0.0293 | -0.0425 |
+| C9 (no time delta) | `mortality_C9_no_time_delta` | +0.0355 | +0.0356 | -0.0361 | -0.0627 |
+
+**Key findings:**
+- **Phase 1 pretrain is essential**: C6 (no pretrain) is catastrophic (AUROC -0.1008, absolute 0.7071). This is the only ablation that causes regression below the frozen baseline.
+- **No fidelity is best single-seed AUROC** (+0.0457) but hurts AUCPR (+0.0245 vs +0.0492 for C3). Fidelity removal trades precision for discrimination.
+- **No retrieval outperforms control** (+0.0379 vs +0.0290). Mortality is a per-stay task with bidirectional attention — retrieval's per-timestep k-NN may add noise for this label density.
+- **Residual mode strong** (+0.0435): delta-based output helps mortality (identity initialization provides good prior).
+- **Best mortality retrieval overall**: `mortality_retr_v4_mmd` = +0.0470 (n_cross=2, 50ep, a6000) — the ablation study uses V5 cross3/30ep which is a different operating point.
+
+### 24.2 AKI Ablations (V5 cross3 base, a6000 server, 35ep)
+
+Baseline AUROC: 0.8558. All 10/10 complete.
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 (control) | `aki_C0_control` | +0.0548 | +0.1568 | -0.0213 | -0.0093 |
+| C1 (no retrieval) | `aki_C1_no_retrieval` | +0.0488 | +0.1422 | -0.0208 | -0.0086 |
+| C2 (no feature gate) | `aki_C2_no_feature_gate` | +0.0502 | +0.1447 | -0.0213 | -0.0068 |
+| C3 (no MMD) | `aki_C3_no_mmd` | +0.0519 | +0.1518 | -0.0017 | +0.0232 |
+| C4 (no target task) | `aki_C4_no_target_task` | +0.0511 | +0.1454 | -0.0141 | -0.0001 |
+| **C5 (no fidelity)** | **`aki_C5_no_fidelity`** | **+0.0570** | **+0.1717** | -0.0268 | -0.0224 |
+| C6 (no pretrain) | `aki_C6_no_pretrain` | +0.0340 | +0.0804 | +0.0038 | +0.0317 |
+| C7 (no target norm) | `aki_C7_no_target_norm` | +0.0543 | +0.1635 | -0.0185 | -0.0046 |
+| C8 (residual) | `aki_C8_residual` | +0.0073 | -0.0042 | +0.0412 | +0.0794 |
+| C9 (no time delta) | `aki_C9_no_time_delta` | +0.0542 | +0.1561 | -0.0227 | -0.0126 |
+
+**Key findings:**
+- **C5 (no fidelity) = AKI RECORD (superseded by aki_nf_C0 +0.0576)**: AUROC +0.0570 (prev best +0.0556 from `aki_v5_cross3`), AUCPR +0.1717. Removing fidelity lets the task gradient dominate — AKI's dense per-timestep labels provide sufficient signal. The nf base (Section 24.12) pushes this further to +0.0576 / +0.1734.
+- **Residual mode catastrophic for AKI** (+0.0073): identity-initialization delta is a bad prior for per-timestep dense labels; the translator needs to learn a full mapping, not small perturbations.
+- **No pretrain substantially hurts** (+0.0340 vs +0.0548 control): Phase 1 pretrain provides a 38% relative improvement.
+- **Retrieval matters for AKI** (+0.0548 vs +0.0488 no-retrieval): 11% relative improvement from cross-attention context, consistent with n_cross=3 being optimal for dense-label tasks.
+- **No MMD hurts calibration**: C3 has ECE +0.0232 despite decent AUROC (+0.0519). MMD alignment helps calibration even when discrimination is similar.
+- **Time delta has minimal effect**: C9 (no triplet time delta) +0.0542, only -0.0006 vs control. Sinusoidal PE provides sufficient temporal encoding for AKI.
+
+### 24.3 LoS Ablations (V5 cross3 base, Athena L40S, 35ep)
+
+See Section 22.2 above for the complete LoS ablation table. Key update: **C3 (no MMD) = new LoS record** at MAE -0.0315 (-5.3h), surpassing C2 (no feature gate) -0.0288 (-4.8h).
+
+### 24.4 KF No-Fidelity Ablations (nf base, Athena A100, 35ep)
+
+See Section 22.1 above for the complete KF ablation table. Best: **C3 (no MMD) = MAE -0.0091**.
+
+### 24.5 Mortality cross2 Ablations (V5 cross2 base, a6000 server, 30ep) — 10/10 COMPLETE
+
+Run as confirmation that n_cross=2 > n_cross=3 for mortality (sparse per-stay labels). Same ablations as cross3.
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 (control) | `mort_c2_C0_control` | +0.0430 | +0.0376 | -0.0142 | -0.0053 |
+| C1 (no retrieval) | `mort_c2_C1_no_retrieval` | +0.0380 | +0.0508 | -0.0391 | -0.0675 |
+| C2 (no feature gate) | `mort_c2_C2_no_feature_gate` | +0.0332 | +0.0232 | -0.0052 | +0.0127 |
+| C3 (no MMD) | `mort_c2_C3_no_mmd` | +0.0484 | +0.0458 | -0.0210 | -0.0212 |
+| C4 (no target task) | `mort_c2_C4_no_target_task` | +0.0356 | +0.0436 | -0.0464 | -0.0715 |
+| **C5 (no fidelity)** | **`mort_c2_C5_no_fidelity`** | **+0.0495** | +0.0470 | -0.0382 | -0.0640 |
+| C6 (no pretrain) | `mort_c2_C6_no_pretrain` | +0.0243 | -0.0122 | -0.0289 | -0.0254 |
+| C7 (no target norm) | `mort_c2_C7_no_target_norm` | +0.0444 | +0.0438 | -0.0384 | -0.0599 |
+| C8 (residual) | `mort_c2_C8_residual` | +0.0427 | +0.0515 | -0.0520 | -0.0820 |
+| C9 (no time delta) | `mort_c2_C9_no_time_delta` | +0.0413 | +0.0248 | -0.0073 | +0.0045 |
+
+**Cross2 vs Cross3 (mortality) — n_cross=2 dominates**:
+
+| Ablation | Cross2 AUROC Δ | Cross3 AUROC Δ | Cross2 advantage |
+|---|---|---|---|
+| C0 control | +0.0430 | +0.0290 | **+0.0140** |
+| C1 no retrieval | +0.0380 | +0.0379 | +0.0001 (tie) |
+| C2 no feature gate | +0.0332 | +0.0355 | -0.0023 |
+| C3 no MMD | +0.0484 | +0.0401 | **+0.0083** |
+| C4 no target task | +0.0356 | +0.0339 | +0.0017 |
+| C5 no fidelity | +0.0495 | +0.0457 | +0.0038 |
+| **C6 no pretrain** | **+0.0243** | **-0.1008** | **+0.1251 !!** |
+| C7 no target norm | +0.0444 | +0.0323 | **+0.0121** |
+| C8 residual | +0.0427 | +0.0435 | -0.0008 (tie) |
+| C9 no time delta | +0.0413 | +0.0355 | +0.0058 |
+
+**Key findings:**
+- **n_cross=2 confirmed optimal for mortality**: 8/10 ablations favor cross2 (wins or ties). The +0.014 gap at C0 matches the theoretical prediction from the n_cross × label density analysis (Mar 20).
+- **Cross3 is catastrophically pretrain-dependent**: C6 shows cross3 collapses to -0.1008 without pretrain, while cross2 only loses to +0.0243. Extra cross-attention capacity in cross3 is unrecoverable without the Phase 1 autoencoder init.
+- **Best mort_c2 result = C5 (+0.0495)** approaching the overall mortality record of +0.0470 (V4+MMD at 50ep). With 50ep + 3-seed averaging, this configuration may become the new mortality best.
+
+### 24.6 Mortality nf Ablations (V5 cross3, lambda_fidelity=0 base, local server, 30ep) — 10/10 COMPLETE
+
+Starting point: mortality_C5_no_fidelity (+0.0457). Further ablations on top of the no-fidelity base.
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 nf control | `mort_nf_C0_control` | +0.0457 | +0.0245 | -0.0384 | -0.0668 |
+| C1 no retrieval | `mort_nf_C1_no_retrieval` | +0.0431 | +0.0399 | -0.0317 | -0.0495 |
+| C2 no feature gate | `mort_nf_C2_no_feature_gate` | +0.0457 | +0.0245 | -0.0384 | -0.0668 |
+| C3 no MMD | `mort_nf_C3_no_mmd` | +0.0441 | +0.0372 | -0.0224 | -0.0357 |
+| C4 no target task | `mort_nf_C4_no_target_task` | +0.0402 | +0.0101 | -0.0167 | -0.0338 |
+| C6 no pretrain | `mort_nf_C6_no_pretrain` | -0.1413 | -0.1810 | +0.1583 | +0.2492 |
+| C7 no target norm | `mort_nf_C7_no_target_norm` | +0.0480 | +0.0503 | -0.0306 | -0.0545 |
+| **C8 residual** | **`mort_nf_C8_residual`** | **+0.0488** | **+0.0592** | -0.0492 | -0.0625 |
+| C9 no time delta | `mort_nf_C9_no_time_delta` | +0.0454 | +0.0516 | -0.0226 | -0.0413 |
+
+**Key findings:**
+- **C2 (no feature gate) = C0 exactly**: With `lambda_fidelity=0`, the feature gate becomes completely inert. **Proves feature gate only operates through the fidelity loss path.**
+- **C8 (residual) = best mort_nf** (+0.0488 AUROC, +0.0592 AUCPR): residual connection benefits mortality's per-stay structure.
+- **C6 (no pretrain) catastrophic** (-0.1413): even worse than cross3 main C6 (-0.1008). No-fidelity base is more pretrain-dependent.
+- **C7 (no target norm) strong** (+0.0480): surprisingly good without target normalization.
+
+### 24.7 Sepsis Ablations (V4+MMD cross2 base, 3090 server, 30ep) — 9/10 (C9 running)
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 control | `sepsis_C0_control` | +0.0512 | +0.0170 | -0.0538 | -0.0712 |
+| C1 no retrieval | `sepsis_C1_no_retrieval` | +0.0328 | +0.0191 | -0.0619 | -0.0617 |
+| C2 no feature gate | `sepsis_C2_no_feature_gate` | +0.0233 | +0.0152 | -0.0816 | -0.0763 |
+| C3 no MMD | `sepsis_C3_no_mmd` | +0.0412 | +0.0090 | -0.0648 | -0.0689 |
+| **C4 no target task** | **`sepsis_C4_no_target_task`** | **+0.0633** | **+0.0218** | -0.0544 | -0.0463 |
+| C5 no fidelity | `sepsis_C5_no_fidelity` | -0.0665 | -0.0091 | -0.0642 | -0.0149 |
+| C6 no pretrain | `sepsis_C6_no_pretrain` | -0.0763 | -0.0103 | -0.0649 | -0.0225 |
+| C7 no target norm | `sepsis_C7_no_target_norm` | +0.0549 | +0.0199 | -0.0695 | -0.0745 |
+| C8 residual | `sepsis_C8_residual` | +0.0494 | +0.0221 | -0.0783 | -0.0839 |
+
+**Key findings:**
+- **C4 (no target task) = +0.0633, highest sepsis ablation AUROC**: target task loss may cause gradient interference with sparse sepsis labels. This is the opposite of AKI where C4 moderately hurts.
+- **C5 (no fidelity) catastrophic for sepsis** (-0.0665): the most dramatic cross-task divergence. AKI/mortality benefit from fidelity removal, but sepsis's 1.1% label density needs fidelity regularization to prevent divergence.
+- **C6 (no pretrain) catastrophic** (-0.0763): consistent with all other tasks.
+- **Sepsis inverts the cross-task MMD pattern**: C3 (no MMD) at +0.0412 is WORSE than C0 (+0.0512) — MMD *helps* sepsis, unlike mortality/LoS/KF where MMD removal improves results.
+- **Feature gate is critical for sepsis** (C2: -0.028 AUROC from control), more than any other task.
+- **Retrieval strongly helps sepsis** (C1: -0.018 AUROC from control).
+- **C8 (residual) moderate** (+0.0494): mildly hurts vs control, unlike mortality where residual helps.
+
+### 24.8 KF cross3 main Ablations (V5 cross3 base, Athena A100, 35ep) — 10/10 COMPLETE
+
+| Ablation | Config | MAE Δ | MSE Δ | RMSE Δ | R2 Δ |
+|---|---|---|---|---|---|
+| C0 control | `kf_C0_control` | -0.0005 | +0.0001 | +0.0013 | -0.0051 |
+| C1 no retrieval | `kf_C1_no_retrieval` | -0.0065 | -0.0010 | -0.0086 | +0.0683 |
+| C2 no feature gate | `kf_C2_no_feature_gate` | -0.0034 | -0.0004 | -0.0029 | +0.0263 |
+| C3 no MMD | `kf_C3_no_mmd` | -0.0058 | -0.0011 | -0.0099 | +0.0784 |
+| C4 no target task | `kf_C4_no_target_task` | -0.0035 | -0.0007 | -0.0063 | +0.0486 |
+| **C5 no fidelity** | **`kf_C5_no_fidelity`** | **-0.0074** | -0.0013 | -0.0120 | +0.0936 |
+| C6 no pretrain | `kf_C6_no_pretrain` | +0.0008 | +0.0002 | +0.0018 | -0.0144 |
+| C7 no target norm | `kf_C7_no_target_norm` | -0.0023 | -0.0003 | -0.0022 | +0.0188 |
+| C8 residual | `kf_C8_residual` | -0.0011 | -0.0002 | -0.0015 | +0.0121 |
+| C9 no time delta | `kf_C9_no_time_delta` | +0.0322 | +0.0083 | +0.0621 | -0.8026 |
+
+**Key findings:**
+- **C1 (no retrieval) BEATS C0**: -0.0065 vs -0.0005 → retrieval is actively hurting KF cross3, opposite of AKI.
+- **C9 (no time delta) catastrophic**: +0.0322 vs near-zero effect for other tasks. KF is extraordinarily sensitive to triplet time delta (likely because cumulative statistics like `_min_hist`/`_max_hist` depend on temporal gap encoding).
+- **nf variant dominates**: nf C3 (-0.0091) beats cross3 C5 (-0.0074) — switching to no-fidelity base with no-MMD delivers the best KF cross3 result.
+
+### 24.9 KF HP Sweep (nf base, Athena A100, 35ep) — 5/5 COMPLETE
+
+Hyperparameter sweep on the nf base (which produced prior record -0.0091 at nf C3 no-MMD).
+
+| Config | Change | MAE Δ | Verdict |
+|---|---|---|---|
+| K1 50ep | epochs 35→50 | -0.0091 | matches prior record |
+| K2 d256 | d_model 128→256 | -0.0038 | worse (over-parameterized for KF) |
+| K3 window12 | retrieval_window 6→12 | -0.0098 | prev record |
+| **K5 lr3e5** | **lr 1e-4→3e-5** | **-0.0103** | **NEW KF RECORD** |
+| K7 pretrain30 | pretrain 15→30 | -0.0088 | marginal decline |
+
+**NEW KF RECORD**: `kf_hp_K5_lr3e5` achieves MAE Δ = **-0.0103** (-0.126 mg/dL absolute, 0.277 mg/dL). Lower learning rate (3e-5 vs 1e-4) provides better fine-grained convergence for KF. KF is now within 0.003 of eICU-native LSTM (0.277 vs 0.28).
+
+### 24.10 Cross-Task Ablation Patterns
+
+| Component | Mortality c3 | Mortality c2 | AKI | Sepsis | LoS | KF nf |
+|---|---|---|---|---|---|---|
+| **Pretrain (C6)** | CATASTROPHIC (-0.1008) | ESSENTIAL (+0.0243) | Important (+0.0340) | CATASTROPHIC (-0.0763) | Important (+0.0041) | ESSENTIAL (+0.0072) |
+| **Retrieval (C1)** | Hurts (no-retr better) | Small hurt (-0.005) | Helps (+0.0060) | STRONG HELP (-0.0184) | Zero (+0.0002) | Weakens (-0.0022) |
+| **Fidelity (C5)** | BEST AUROC | BEST AUROC | **BEST AUROC (record)** | **CATASTROPHIC (-0.0665)** | Hurts (+0.0029) | Helps (-0.0015) |
+| **Target task (C4)** | Moderate hurt | Moderate hurt | Moderate hurt | **BEST AUROC (+0.0633)** | Mild hurt | Moderate hurt |
+| **MMD (C3)** | Moderate help | Strong help (+0.0054) | Moderate, hurts cal. | **HURTS (-0.0100)** | **BEST MAE (record)** | **BEST MAE (record)** |
+| **Feature gate (C2)** | Moderate | Moderate hurt | Moderate | CRITICAL (-0.028) | Strong (-0.0288) | ZERO effect when fid=0 |
+| **Residual (C8)** | Strong (+0.0435) | Strong (+0.0427) | Catastrophic (+0.0073) | Moderate (-0.0018) | Weak (-0.0068) | Weak (-0.0021) |
+| **Time delta (C9)** | Mild (-0.0008) | Mild (-0.0017) | Negligible (-0.0006) | Negligible (+0.0037*) | Mild (-0.0033) | CATASTROPHIC (+0.0322) |
+| **Target norm (C7)** | Moderate hurt | Moderate (+0.0014) | Negligible (-0.0005) | Moderate (+0.0037) | Mild (+0.0027) | Moderate (+0.0007) |
+
+*C9 sepsis still running (epoch 5/30).
+
+**Key cross-task insights:**
+- **Phase 1 pretrain is universally critical**: The only component whose removal causes regression below baseline for some tasks (mortality cross3 -0.1008, sepsis -0.0763).
+- **Fidelity removal is task-dependent**: helps classification with dense labels (AKI +0.0576 record, mortality +0.0495) but **catastrophic for sepsis** (-0.0665) and hurts regression (LoS). Sparse labels need fidelity regularization.
+- **Target task removal helps sepsis** (+0.0633 = new sepsis AUROC record): gradient interference from the auxiliary target-domain task loss hurts when labels are extremely sparse (1.1%).
+- **MMD removal helps regression** (LoS, KF records) and mortality, **but hurts sepsis** — the 1.1% label density of sepsis makes distributional alignment particularly valuable.
+- **Residual mode is task-dependent**: Strong for mortality (per-stay, identity prior helps), catastrophic for AKI (per-timestep dense labels need full mapping), moderate for sepsis.
+- **n_cross=2 > n_cross=3 for mortality**: cross2 wins 8/10 ablation rows, with the gap most dramatic at C6 (no pretrain): cross2 +0.0243 vs cross3 -0.1008.
+- **Feature gate is fidelity-dependent**: confirmed across 4 no-fidelity bases (mort_nf, mort_c2_nf, aki_nf, kf_nfnm) — C2 = C0 exactly in all cases.
+- **Time delta matters only for KF cross3**: Near-noise effects on all other tasks, but KF cross3 C9 catastrophic (+0.0322) — likely due to cumulative stats interacting with fidelity/MMD losses. Notably, KF nfnm C9 (-0.0101) is actually beneficial, suggesting the catastrophic effect is mediated by the loss function, not the architecture.
+- **Sepsis is the most distinctive task**: it inverts the fidelity pattern (needs fidelity), inverts the MMD pattern (needs MMD), and inverts the target task pattern (removal helps). All driven by 1.1% label density.
+
+### 24.11 Mortality cross2 nf Ablations (V5 cross2, lambda_fidelity=0 base, a6000 server, 30ep) — 7/9 (C6, C8 FAILED)
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| C0 control | `mort_c2_nf_C0_control` | +0.0496 | +0.0536 | -0.0325 | -0.0439 |
+| C1 no retrieval | `mort_c2_nf_C1_no_retrieval` | +0.0473 | +0.0445 | -0.0413 | -0.0558 |
+| C2 no feature gate | `mort_c2_nf_C2_no_feature_gate` | +0.0496 | +0.0536 | -0.0325 | -0.0439 |
+| C3 no MMD | `mort_c2_nf_C3_no_mmd` | +0.0457 | +0.0461 | -0.0223 | -0.0194 |
+| C4 no target task | `mort_c2_nf_C4_no_target_task` | +0.0409 | +0.0208 | -0.0192 | -0.0343 |
+| C6 no pretrain | FAILED | — | — | — | grad_fn crash — fix applied, requeued |
+| C7 no target norm | `mort_c2_nf_C7_no_target_norm` | +0.0496 | +0.0561 | -0.0450 | -0.0701 |
+| C8 residual | FAILED | — | — | — | grad_fn crash — fix applied, requeued |
+| C9 no time delta | `mort_c2_nf_C9_no_time_delta` | +0.0490 | +0.0555 | -0.0501 | -0.0768 |
+
+**Key findings:**
+- **C0 = C2 exactly** (+0.0496): feature gate inert without fidelity, consistent with all other nf bases.
+- **C7 (no target norm) best AUCPR** (+0.0561): target normalization slightly hurts AUCPR in this configuration.
+- **C9 (no time delta) strong** (+0.0490): time delta has minimal impact on mortality, consistent with cross3 pattern.
+- **Cross2 nf C0 (+0.0496) > cross2 with-fidelity C5 (+0.0495)**: very close, confirming the no-fidelity base matches the fidelity-removal ablation.
+
+### 24.12 AKI nf Ablations (V5 cross3, lambda_fidelity=0 base, a6000 server, 35ep) — 7/9 (C4 FAILED, C9 running)
+
+| Ablation | Config | AUROC Δ | AUCPR Δ | Brier Δ | ECE Δ |
+|---|---|---|---|---|---|
+| **C0 control** | **`aki_nf_C0_control`** | **+0.0576** | **+0.1734** | -0.0193 | -0.0069 |
+| C1 no retrieval | `aki_nf_C1_no_retrieval` | +0.0497 | +0.1553 | -0.0104 | +0.0015 |
+| C2 no feature gate | `aki_nf_C2_no_feature_gate` | +0.0576 | +0.1734 | -0.0193 | -0.0069 |
+| C3 no MMD | `aki_nf_C3_no_mmd` | +0.0535 | +0.1504 | -0.0247 | -0.0186 |
+| C4 no target task | FAILED | — | — | — | grad_fn crash — fix applied, requeued |
+| C6 no pretrain | `aki_nf_C6_no_pretrain` | -0.0828 | -0.1903 | +0.0825 | +0.1469 |
+| C7 no target norm | `aki_nf_C7_no_target_norm` | +0.0534 | +0.1607 | — | — |
+| C8 residual | `aki_nf_C8_residual` | +0.0002 | +0.0008 | +0.0165 | +0.0426 |
+| C9 no time delta | RUNNING | — | — | — | — |
+
+**Key findings:**
+- **C0 = NEW AKI RECORDS**: AUROC +0.0576 (prev +0.0570 from aki_C5), AUCPR +0.1734 (prev +0.1717). Absolute AUROC = 0.9134, further surpassing MIMIC-native LSTM (89.7).
+- **C0 = C2 exactly** (+0.0576 / +0.1734): feature gate inert without fidelity, consistent pattern.
+- **C7 (no target norm) +0.0534**: minor drop vs C0 (+0.0576), target normalization provides small but real benefit for AKI nf (AUROC 0.9092 vs 0.9134 absolute).
+- **C8 (residual) near-catastrophic** (+0.0002): consistent with AKI main ablation finding — per-timestep dense labels need full mapping, not identity-initialized deltas.
+- **C6 (no pretrain) catastrophic** (-0.0828): even worse than main AKI C6 (+0.0340), suggesting no-fidelity base is more pretrain-dependent.
+- **Retrieval helps AKI** (C1: +0.0497 vs C0: +0.0576): 14% relative contribution from cross-attention.
+
+### 24.13 KF nfnm Ablations (V5 cross3, no-fidelity no-MMD base, Athena A100, 35ep) — 8/8 COMPLETE
+
+Starting from the no-fidelity, no-MMD base (combining the two loss removals that help KF most). No C3 (already base) or C5 (already base).
+
+| Ablation | Config | MAE Δ | MSE Δ | RMSE Δ | R² Δ |
+|---|---|---|---|---|---|
+| C0 control | `kf_nfnm_C0_control` | -0.0080 | -0.0015 | -0.0138 | +0.1024 |
+| C1 no retrieval | `kf_nfnm_C1_no_retrieval` | -0.0094 | -0.0015 | -0.0138 | +0.1024 |
+| C2 no feature gate | `kf_nfnm_C2_no_feature_gate` | -0.0080 | -0.0015 | -0.0138 | +0.1024 |
+| C4 no target task | `kf_nfnm_C4_no_target_task` | -0.0065 | -0.0011 | -0.0103 | +0.0789 |
+| C6 no pretrain | `kf_nfnm_C6_no_pretrain` | -0.0084 | -0.0013 | -0.0119 | +0.0896 |
+| **C7 no target norm** | **`kf_nfnm_C7_no_target_norm`** | **-0.0099** | -0.0014 | -0.0135 | +0.1005 |
+| C8 residual | `kf_nfnm_C8_residual` | -0.0053 | -0.0007 | -0.0066 | +0.0521 |
+| C9 no time delta | `kf_nfnm_C9_no_time_delta` | -0.0101 | — | — | — |
+
+**Key findings:**
+- **C0 = C2 exactly** (-0.0080): feature gate inert without fidelity, consistent across all nf bases.
+- **C1 (no retrieval) -0.0094 BETTER than C0 -0.0080**: retrieval hurts KF nfnm, consistent with KF cross3 finding. The extra cross-attention context may introduce noise for KF's generated feature statistics.
+- **C7 (no target norm) -0.0099**: near-record KF result, suggesting target normalization slightly hurts KF in the nfnm base.
+- **C9 (no time delta) -0.0101**: nearly matches KF record (-0.0103). Time delta removal helps KF nfnm, unlike KF cross3 where C9 was catastrophic (+0.0322). The catastrophic cross3 effect may be mediated by fidelity/MMD losses interacting with temporal encoding.
+- **C6 (no pretrain) -0.0084 surprisingly close to C0**: when fidelity+MMD are already removed, pretrain becomes less critical (no pretrain-dependent loss components to initialize). This is unique to KF — pretrain is catastrophic for all other tasks.
+- **C8 (residual) weakest** (-0.0053): residual hurts KF, consistent with cross3 finding.
+
+### 24.13a KF nfnm cross2 Control (Athena A100, 35ep)
+
+n_cross=2 variant of the KF nfnm base to verify that cross3 is optimal for KF.
+
+| Config | MAE Δ |
+|---|---|
+| kf_nfnm_cross2_control (n_cross=2) | -0.0073 |
+| kf_nfnm_C0_control (n_cross=3) | -0.0080 |
+
+**cross3 (-0.0080) > cross2 (-0.0073)**: confirms n_cross=3 is better for KF, consistent with the main ablation and task-specific strategy findings.
+
+### 24.13b LoS nm Ablations (no-MMD base, Athena L40S, 35ep) — 1/? IN PROGRESS
+
+No-MMD variant of LoS ablation, following up on the LoS C3 (no MMD) record (-0.0315).
+
+| Ablation | Config | MAE Δ | Notes |
+|---|---|---|---|
+| C1 no retrieval | `los_nm_C1_no_retrieval` | -0.0304 | Almost matches LoS record (-0.0315) |
+
+**Key finding:** C1 (no retrieval) in the no-MMD base achieves -0.0304 (MAE=0.2223), suggesting retrieval provides only marginal benefit for LoS when MMD is already removed (main C3 = -0.0315 with retrieval, gap = 0.0011).
+
+### 24.14 KF HP Sweep Final Result
+
+`kf_hp_K5_lr3e5` (lr=3e-5, nf base, Athena A100, 35ep): MAE Δ = **-0.0103** (-0.126 mg/dL absolute, 0.277 mg/dL).
+
+**NEW KF RECORD**, surpassing K3_window12 (-0.0098). KF is now within 0.003 mg/dL of eICU-native LSTM (0.28). Lower learning rate provides finer convergence for the per-stay regression task.

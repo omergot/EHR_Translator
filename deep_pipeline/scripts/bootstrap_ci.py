@@ -25,12 +25,20 @@ from pathlib import Path
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 import numpy as np
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import roc_auc_score, average_precision_score, mean_absolute_error, mean_squared_error, r2_score
 
 
 def load_predictions(path: str) -> dict:
     data = np.load(path)
     return {"probs": data["probs"], "targets": data["targets"]}
+
+
+def is_regression(targets: np.ndarray) -> bool:
+    """Auto-detect regression vs classification from target values."""
+    unique = np.unique(targets)
+    if len(unique) > 2:
+        return True
+    return not np.allclose(unique, np.array([0, 1]))
 
 
 def infer_clusters(targets: np.ndarray) -> np.ndarray:
@@ -119,6 +127,100 @@ def stratified_cluster_bootstrap(
     return results
 
 
+def regression_bootstrap(
+    preds: np.ndarray,
+    targets: np.ndarray,
+    n_replicates: int = 2000,
+    seed: int = 42,
+) -> dict:
+    """Bootstrap CIs for regression metrics: MAE, RMSE, R2."""
+    rng = np.random.RandomState(seed)
+    n = len(preds)
+
+    maes = np.empty(n_replicates)
+    rmses = np.empty(n_replicates)
+    r2s = np.empty(n_replicates)
+
+    for i in range(n_replicates):
+        boot_idx = rng.randint(0, n, size=n)
+        bp = preds[boot_idx]
+        bt = targets[boot_idx]
+        maes[i] = mean_absolute_error(bt, bp)
+        rmses[i] = np.sqrt(mean_squared_error(bt, bp))
+        r2s[i] = r2_score(bt, bp)
+
+    results = {}
+    for name, vals, point_fn in [
+        ("MAE", maes, lambda: mean_absolute_error(targets, preds)),
+        ("RMSE", rmses, lambda: np.sqrt(mean_squared_error(targets, preds))),
+        ("R2", r2s, lambda: r2_score(targets, preds)),
+    ]:
+        valid = vals[~np.isnan(vals)]
+        point = point_fn()
+        ci_lo, ci_hi = np.percentile(valid, [2.5, 97.5])
+        results[name] = {
+            "point": float(point),
+            "ci_lo": float(ci_lo),
+            "ci_hi": float(ci_hi),
+            "ci_width": float(ci_hi - ci_lo),
+            "std": float(np.std(valid)),
+            "n_valid": int(len(valid)),
+        }
+    return results
+
+
+def paired_regression_bootstrap(
+    preds_a: np.ndarray,
+    targets_a: np.ndarray,
+    preds_b: np.ndarray,
+    targets_b: np.ndarray,
+    n_replicates: int = 2000,
+    seed: int = 42,
+) -> dict:
+    """Paired bootstrap test for regression: is A better (lower MAE) than B?"""
+    assert len(preds_a) == len(preds_b), "Paired test requires same number of predictions"
+    rng = np.random.RandomState(seed)
+    targets = targets_a
+    n = len(targets)
+
+    diff_maes = np.empty(n_replicates)
+    diff_rmses = np.empty(n_replicates)
+    diff_r2s = np.empty(n_replicates)
+
+    for i in range(n_replicates):
+        boot_idx = rng.randint(0, n, size=n)
+        bt = targets[boot_idx]
+        mae_a = mean_absolute_error(bt, preds_a[boot_idx])
+        mae_b = mean_absolute_error(bt, preds_b[boot_idx])
+        diff_maes[i] = mae_a - mae_b  # negative = A is better
+        rmse_a = np.sqrt(mean_squared_error(bt, preds_a[boot_idx]))
+        rmse_b = np.sqrt(mean_squared_error(bt, preds_b[boot_idx]))
+        diff_rmses[i] = rmse_a - rmse_b
+        r2_a = r2_score(bt, preds_a[boot_idx])
+        r2_b = r2_score(bt, preds_b[boot_idx])
+        diff_r2s[i] = r2_a - r2_b  # positive = A is better
+
+    results = {}
+    for name, diffs in [("MAE_diff", diff_maes), ("RMSE_diff", diff_rmses), ("R2_diff", diff_r2s)]:
+        valid = diffs[~np.isnan(diffs)]
+        if len(valid) < n_replicates * 0.9:
+            results[name] = {"error": "Too many NaN replicates"}
+            continue
+        ci_lo, ci_hi = np.percentile(valid, [2.5, 97.5])
+        point = np.mean(valid)
+        # For MAE/RMSE: significant if CI entirely below 0 (A better)
+        # For R2: significant if CI entirely above 0 (A better)
+        p_value = float(np.mean(valid >= 0)) if "R2" not in name else float(np.mean(valid <= 0))
+        results[name] = {
+            "mean_diff": float(point),
+            "ci_lo": float(ci_lo),
+            "ci_hi": float(ci_hi),
+            "p_value": float(p_value),
+            "significant": bool(ci_lo > 0 or ci_hi < 0),
+        }
+    return results
+
+
 def paired_bootstrap_test(
     probs_a: np.ndarray,
     targets_a: np.ndarray,
@@ -193,13 +295,21 @@ def main():
     args = parser.parse_args()
 
     pred = load_predictions(args.predictions)
-    n_pos = int(pred["targets"].sum())
-    n_neg = len(pred["targets"]) - n_pos
-    print(f"Loaded {len(pred['probs'])} predictions ({n_pos} pos, {n_neg} neg)")
+    regression = is_regression(pred["targets"])
+
+    if regression:
+        print(f"Loaded {len(pred['probs'])} predictions (regression, target range [{pred['targets'].min():.4f}, {pred['targets'].max():.4f}])")
+    else:
+        n_pos = int(pred["targets"].sum())
+        n_neg = len(pred["targets"]) - n_pos
+        print(f"Loaded {len(pred['probs'])} predictions ({n_pos} pos, {n_neg} neg)")
 
     # Single experiment CI
     print(f"\n--- Bootstrap CIs ({args.n_replicates} replicates) ---")
-    ci = stratified_cluster_bootstrap(pred["probs"], pred["targets"], args.n_replicates, args.seed)
+    if regression:
+        ci = regression_bootstrap(pred["probs"], pred["targets"], args.n_replicates, args.seed)
+    else:
+        ci = stratified_cluster_bootstrap(pred["probs"], pred["targets"], args.n_replicates, args.seed)
     for metric, vals in ci.items():
         if "error" in vals:
             print(f"  {metric}: {vals['error']}")
@@ -210,11 +320,18 @@ def main():
     if args.original:
         orig = load_predictions(args.original)
         print(f"\n--- Paired test (translated - original, {args.n_replicates} replicates) ---")
-        paired = paired_bootstrap_test(
-            pred["probs"], pred["targets"],
-            orig["probs"], orig["targets"],
-            args.n_replicates, args.seed,
-        )
+        if regression:
+            paired = paired_regression_bootstrap(
+                pred["probs"], pred["targets"],
+                orig["probs"], orig["targets"],
+                args.n_replicates, args.seed,
+            )
+        else:
+            paired = paired_bootstrap_test(
+                pred["probs"], pred["targets"],
+                orig["probs"], orig["targets"],
+                args.n_replicates, args.seed,
+            )
         for metric, vals in paired.items():
             if "error" in vals:
                 print(f"  {metric}: {vals['error']}")
@@ -228,11 +345,18 @@ def main():
         print(f"\n--- Comparison (A - B, {args.n_replicates} replicates) ---")
         print(f"  A: {args.predictions}")
         print(f"  B: {args.compare}")
-        paired = paired_bootstrap_test(
-            pred["probs"], pred["targets"],
-            comp["probs"], comp["targets"],
-            args.n_replicates, args.seed,
-        )
+        if regression:
+            paired = paired_regression_bootstrap(
+                pred["probs"], pred["targets"],
+                comp["probs"], comp["targets"],
+                args.n_replicates, args.seed,
+            )
+        else:
+            paired = paired_bootstrap_test(
+                pred["probs"], pred["targets"],
+                comp["probs"], comp["targets"],
+                args.n_replicates, args.seed,
+            )
         for metric, vals in paired.items():
             if "error" in vals:
                 print(f"  {metric}: {vals['error']}")

@@ -32,7 +32,7 @@
 | 1st backup | **ICLR 2027** | ~Oct 2026 | ~32% | NeurIPS notification (Sep 24) gives 3–4 weeks to revise. YAIB was ICLR 2024. Best topical fit for representation learning + DA. Highest acceptance rate of top-3. |
 | 2nd backup | **ICML 2027** | ~Jan 2027 | ~27% | More theory-heavy audience. Good if gradient alignment theory is strengthened. |
 | 3rd backup | **AAAI 2027** | Aug 1, 2026 | ~17.6% | Lower prestige for ML methods. Trending down in acceptance rate. Safety net only. |
-| Rolling | **TMLR** | Anytime | ~35–40% | Growing prestige (ICLR-affiliated). Avoids conference cycle delays. 2–4 month review. Legitimate for PhD but slightly below top-3 conferences for hiring committees. |
+| Rolling | **TMLR** | Anytime | ~35–40% | Growing prestige (ICLR-affiliated). Avoids conference cycle delays. 2–4 month review. Legitimate for PhD but slightly below top-3 conferences for hiring committees. **Archival** — cannot dual-submit with NeurIPS. Use only after NeurIPS rejection. |
 | Domain-specific | **CHIL 2027** | ~Feb 2027 | ~25–30% | Perfect topical fit but too niche as flagship CS PhD paper. Use alongside a top-venue publication, not instead of one. ACM venue, PMLR proceedings. |
 
 **Decision tree**:
@@ -48,45 +48,102 @@ NeurIPS 2026 decision (Sep 24, 2026)
     └── Expand scope → TMLR or JMLR
 ```
 
-### 1.3 Workshop: TS4H at NeurIPS 2026 (5/7 consensus)
+### 1.3 Non-Archival Workshops (Dual-Submittable with NeurIPS Main Track)
 
-| Workshop | Venue | Fit | Deadline (est.) | Format |
+**Dual submission rules**: NeurIPS main track + non-archival workshop = **no conflict**. Workshop papers presented at non-archival workshops do not count as prior publication.
+
+#### 1.3.1 ICML 2026 Workshops (Jul 10–11, Seoul) — VERIFIED Apr 12, 2026
+
+All 44 accepted ICML 2026 workshops were reviewed ([blog.icml.cc announcement, Apr 6 2026](https://blog.icml.cc/2026/04/06/announcing-the-icml-2026-workshops-and-affinity-workshops/)). Three are relevant and confirmed non-archival:
+
+| Workshop | Deadline | Non-Archival? | Format | Fit | URL |
+|---|---|---|---|---|---|
+| **SD4H** (Structured Data for Health) | **Apr 15, 2026 AoE** (body text; dates table says TBD — contact organizers) | **Yes** — *"This is a non-archival venue and there will be no formal proceedings."* | 4-page + unlimited refs, double-blind, OpenReview | **Perfect** — clinical EHR, structured data, time series for health | [structureddata4health.github.io](https://structureddata4health.github.io/call_for_papers.html) |
+| **FMSD** (Foundation Models for Structured Data, 2nd ed.) | **May 1, 2026 AoE** | **Yes** — *"This workshop is non-archival; even though all accepted papers will be available on OpenReview and this website, there are no formally-published proceedings."* | 4-page + unlimited refs, double-blind, OpenReview | **Strong** — tabular/TS domain adaptation, deployment, distribution shift | [icml-structured-fm-workshop.github.io](https://icml-structured-fm-workshop.github.io/call-for-papers/) |
+| **Forecasting as a New Frontier of Intelligence** | Abstract **May 15** / Paper **May 20, 2026 UTC** | **Unconfirmed** — no explicit "non-archival" statement. Allows previously published work (*"with proper disclosure"*), suggesting non-archival, but not declared. | 4-page + refs/appendix, double-blind, OpenReview | **Medium** — retrieval-augmented prediction framing. "Retrieval" track is explicit. | [forecasting-workshop.github.io](https://forecasting-workshop.github.io/) |
+
+**Other ICML 2026 workshops checked but not relevant or not yet active**: Continual Adaptation at Scale (no CFP posted), AdaptFM (inference efficiency, not DA), Multi-modal FM for Life Sciences (no 2026 CFP yet), Trustworthy AI for Good (marginal fit, non-archival, deadline Apr 30), Decision-Making Offline→Online (RL-focused). None of the remaining 44 are a strong fit.
+
+#### 1.3.2 NeurIPS 2026 Workshops (Dec 11–12, Georgia World Congress Center)
+
+Workshop call for proposals **not yet announced** (expected ~May–June 2026). Workshop paper deadlines expected ~Aug–Sep 2026.
+
+| Workshop | Deadline (est.) | Non-Archival? | Format | Fit |
 |---|---|---|---|---|
-| **TS4H** (Time Series for Health) | NeurIPS 2026 | **Perfect** — exact topic match (clinical TS, EHR, distribution shift) | ~Sep 2026 | 4-page, non-archival |
-| ML4H (Machine Learning for Health) | NeurIPS 2026 / standalone | Excellent — DA explicitly listed as topic of interest | ~Sep 2026 | 4-page findings (non-archival) or 8-page proceedings (archival) |
-| Algorithmic Foundations for Medical AI | ICML 2026 (Jul 10–11) | Strong — Zitnik (RAINCOAT author) is organizer. "Distribution shift + DA" explicitly in scope | TBD | 5-page, non-archival |
-| DistShift | NeurIPS 2026 (if recurs) | Good — methods/evaluations for distribution shifts | TBD | Non-archival |
+| **TS4H** (Time Series for Health) | ~Sep 2026 | **Yes** (historically: *"A non-archival venue is one where accepted papers are not formally published in proceedings."*) | 4-page, non-archival | **Perfect** — exact topic match (clinical TS, EHR, distribution shift). Note: TS4H 2025 rules allowed dual submission with other venues **except** NeurIPS main. Check 2026 rules. |
+| **ML4H Findings Track** (Machine Learning for Health) | ~Sep 2026 | **Yes** (Findings track is non-archival; Proceedings track is archival PMLR). Explicitly allows dual submission including work under review. | 4-page, non-archival | **Excellent** — DA explicitly listed as topic of interest |
+| Algorithmic Foundations for Medical AI | TBD | Non-archival (explicitly stated for 2025 edition) | 5-page, non-archival | Strong — Zitnik (RAINCOAT author) is organizer. "Distribution shift + DA" explicitly in scope |
+| DistShift | TBD (if recurs) | Non-archival (historically) | Non-archival | Good — methods/evaluations for distribution shifts |
 
-**Dual submission rules**: NeurIPS main track + non-archival workshop = **no conflict**. Workshop papers presented at non-archival workshops do not count as prior publication. Submit a 4-page version to TS4H regardless of main track outcome.
+#### 1.3.3 ECML PKDD 2026 (Sep 7–11, Naples) — CAUTION: Mostly Archival
 
-**Recommended strategy**:
+Most ECML PKDD workshops publish in **Springer LNCS (archival)**, making them **incompatible with NeurIPS dual submission**. Relevant workshops exist (REHMED: heterogeneous multi-source biomedical data; ML4ITS: irregular time series; Quantification under Dataset Shift) but archival status must be verified per-workshop before submitting. **Do not assume non-archival.**
+
+#### 1.3.4 MICCAI 2026 (Oct 4–8, Abu Dhabi)
+
+Full accepted workshop list not yet posted (workshops notified Mar 13, 2026). Most workshops are **archival (Springer LNCS)**. The **EMERGE non-archival track** (deadline May 15) is NeurIPS-compatible but focused on medical imaging. The historical DART (Domain Adaptation and Representation Transfer) workshop has no 2026 edition. **Low priority** — MICCAI is imaging-centric, not EHR/time-series.
+
+#### 1.3.5 Other Venues Investigated (Apr 12, 2026)
+
+| Venue | Status | Notes |
+|---|---|---|
+| **TMLR** (Transactions on ML Research) | **Archival** (journal). Conflicts with NeurIPS. | Cannot dual-submit. Useful only as backup after NeurIPS rejection. |
+| IJCAI 2026 workshops (Aug 15–21, Bremen) | Workshop deadlines TBD. GLOW (Generalizing from Limited Resources) is closest fit. | Archival status unverified. |
+| KDD 2026 workshops (Aug 9–13, Jeju) | DS-Health **not accepted** for 2026. KDD workshops are non-archival by default. | No relevant workshop found. |
+| AMIA 2026 Annual Symposium (Nov 7–11) | Manuscript deadline Mar 10 — **passed**. Podium Abstracts are non-archival. | Next opportunity: AMIA 2027 (~Mar 2027). |
+| CHIL 2026 (Jun 28–30) | Fully **archival** (PMLR). Deadline Feb 4 — passed. | Incompatible with NeurIPS. |
+| MLHC 2026 Research Track (Aug 12–14) | **Archival** (PMLR). Deadline Apr 17. | Incompatible with NeurIPS. |
+| MLHC 2026 Clinical Abstracts | Non-archival but **requires clinician first/senior author**. | Only viable with clinical collaborator. |
+| ICLR 2026 workshops (Apr 26–27) | Already occurred. Relevant ones were: "Catch, Adapt, Operate" (distribution shift), TTU (test-time updates), Time Series in Age of Large Models. | Passed. Watch for ICLR 2027 workshops (~Jan 2027). |
+| AAAI 2026 workshops (Jan 26–27) | Passed. Health Intelligence (W3PHIAI-26) and SECURE-AI4H were relevant. | — |
+| AISTATS 2026 workshops (May 5) | 3 workshops accepted, none on DA/healthcare. | — |
+| UAI 2026 workshops (Aug 21) | Accepted list not yet posted. | Monitor. |
+| "ACL Findings"-style tracks | No ML conference has an equivalent. ML4H Findings Track is the closest analog. | — |
+
+### 1.4 Recommended Submission Strategy (Updated Apr 12, 2026)
+
+Write one 4-page workshop paper. Submit to the earliest viable venue, then resubmit/extend if rejected.
 
 | Date | Action |
 |---|---|
+| **Apr 15, 2026** | Submit 4-page to **SD4H @ ICML** (confirm deadline with organizers) |
+| **May 1, 2026** | If SD4H missed/rejected: submit to **FMSD @ ICML** |
 | May 4, 2026 | NeurIPS 2026 abstract deadline |
 | May 6, 2026 | NeurIPS 2026 full paper deadline |
-| ~Sep 2026 | Submit 4-page version to TS4H and/or ML4H Findings |
+| May 20, 2026 | Fallback: submit to **Forecasting @ ICML** (verify non-archival first) |
+| ~Aug–Sep 2026 | Submit 4-page to **ML4H Findings** + **TS4H** (if dual-submission rules allow with NeurIPS main) |
 | Sep 24, 2026 | NeurIPS 2026 notification |
 | ~Oct 2026 | If rejected: revise with reviewer feedback → ICLR 2027 |
 | ~Jan 2027 | If still needed: → ICML 2027 |
 
-### 1.4 Venues Already Passed
+**Priority ranking** (prestige × fit × confirmed non-archival):
+1. **SD4H @ ICML** — perfect fit, confirmed non-archival, ICML prestige. Tight deadline.
+2. **FMSD @ ICML** — strong fit, confirmed non-archival, ICML prestige. Comfortable deadline.
+3. **ML4H Findings** — excellent fit, confirmed non-archival, established venue. Later deadline.
+4. **TS4H @ NeurIPS** — perfect fit, historically non-archival. Check 2026 NeurIPS main exclusion rule.
+
+### 1.5 Venues Already Passed
 
 | Venue | Deadline | Status |
 |---|---|---|
-| ICML 2026 | Jan 29, 2026 | Passed |
+| ICML 2026 (main track) | Jan 29, 2026 | Passed |
 | CHIL 2026 | Feb 4, 2026 | Passed |
 | KDD 2026 Cycle 2 | Feb 8, 2026 | Passed |
 | IJCAI 2026 | Jan 19, 2026 | Passed |
-| MLHC 2026 | Apr 17, 2026 | 22 days — too tight to split focus with NeurIPS |
+| AMIA 2026 | Mar 10, 2026 | Passed |
+| ICLR 2026 workshops | ~Feb 2026 | Passed |
+| AAAI 2026 workshops | ~Nov 2025 | Passed |
+| MLHC 2026 | Apr 17, 2026 | Archival — incompatible with NeurIPS |
 
-### 1.5 CS Career Prestige Ranking
+### 1.6 CS Career Prestige Ranking
 
 For a CS PhD student's CV, the venue prestige ordering is:
 
 **NeurIPS ≈ ICML ≈ ICLR >> AAAI > KDD > TMLR >> CHIL ≈ MLHC**
 
 Any of the top-3 (NeurIPS/ICML/ICLR) is a tier-1 publication. TMLR is growing but not yet equivalent.
+
+**Note**: TMLR is **archival** (peer-reviewed journal) — it conflicts with NeurIPS dual submission. ICML/NeurIPS **workshop** papers are non-archival and do not conflict. Workshop papers at tier-1 venues (NeurIPS, ICML, ICLR) count on a CV for visibility and networking, though they are not equivalent to main-track publications.
 
 ---
 

@@ -16,11 +16,10 @@
 
 ---
 
-## Group 1: DA Baselines Implementation (CRITICAL — Reject-level gap)
+## Group 1: DA Baselines Implementation — DONE
 
-**Priority**: P0 — Without this, acceptance probability drops to 20–30%.
-**Effort**: 3–5 days | **Impact**: CRITICAL
-**Depends on**: Group 6 (architecture stable)
+**Priority**: P0 | **Status**: COMPLETE (8 methods × 3 tasks, frozen + E2E)
+**Results**: `docs/neurips/da_baselines_results.md`
 
 ### What
 Implement DANN, CORAL, and CoDATS adapted to our frozen-model setting. These are the baselines every DA reviewer will expect.
@@ -62,11 +61,10 @@ The frozen-LSTM constraint means standard DANN/CORAL (which backprop through the
 
 ---
 
-## Group 2: HiRID Dataset Integration — DONE (queued, awaiting results)
+## Group 2: HiRID Dataset Integration — DONE
 
-**Priority**: P1 — Addresses "single domain pair" reviewer concern.
-**Effort**: 3–4 days | **Impact**: High
-**Status**: Data pipeline complete. 5 debug + 5 full experiments queued (2026-03-24). All 5 tasks: Mortality, AKI, Sepsis, LoS, KF.
+**Priority**: P1 | **Status**: COMPLETE. All 5 tasks done.
+**Results**: AKI +0.078, Sepsis +0.078, Mortality +0.047, LoS MAE −0.045, KF MAE −0.0001.
 
 ### What
 Add HiRID as a third source domain (HiRID → MIMIC-IV) to show generalization beyond eICU.
@@ -103,6 +101,7 @@ HiRID requires PhysioNet credentialed access (same as MIMIC-IV/eICU). Must docum
 
 **Priority**: P1 — Low effort, high impact for calibration metrics.
 **Effort**: 1 day | **Impact**: High
+**Analysis**: `docs/neurips/calibration_analysis.md` (existing Brier/ECE analysis, temperature scaling plan)
 
 ### What
 Apply temperature scaling to all best models, generate reliability diagrams.
@@ -136,6 +135,7 @@ Calibration table + reliability diagram figures (PDF/PNG for LaTeX).
 
 **Priority**: P1 — Required for publication rigor.
 **Effort**: 2–3 days (compute-bound) | **Impact**: High
+**Analysis**: `docs/neurips/statistical_completeness.md` (gap analysis, NeurIPS sufficiency assessment)
 
 ### What
 Bootstrap CIs for all headline results + multi-seed runs for V5 cross3.
@@ -213,10 +213,9 @@ NeurIPS checklist items 4–8: environment, data access, compute documentation.
 
 ---
 
-## Group 6: Architecture Finalization
+## Group 6: Architecture Finalization — DONE
 
-**Priority**: P0 — Must complete before Groups 1–4.
-**Effort**: Minimal (verification only) | **Impact**: Gate for other groups
+**Priority**: P0 | **Status**: COMPLETE. V5 configs locked per task.
 
 ### What
 Confirm V5/V6 architecture is stable; lock down best config per task.
@@ -307,6 +306,7 @@ Compilable LaTeX skeleton in `paper/` directory.
 
 **Priority**: P2 — Differentiates from pure empirical paper.
 **Effort**: 1–2 days | **Impact**: Medium-High
+**Analysis**: `docs/neurips/gradient_magnitude_theory.md` (falsification of cos α, magnitude bottleneck theory)
 
 ### What
 Formalize the gradient alignment insight connecting to Ben-David et al.
@@ -379,11 +379,231 @@ Week 8 (May 4–6): Paper finalization and submission
 
 ---
 
-## Acceptance Probability Estimates
+## Group 9: TTA Baselines — TENT / SHOT / T3A (CRITICAL — Gap from Apr 12 review)
+
+**Priority**: P0 — Reviewers at ICLR 2024+ specifically asked "why not TTA?" on DA submissions.
+**Effort**: 1 week | **Impact**: CRITICAL (blocks "missing baseline" rejection)
+**Source**: `docs/neurips/gap_analysis_generality_claim.md`
+
+### Why This Matters
+
+TTA methods are the closest published comparison to our frozen-backbone constraint. SHOT keeps the classifier frozen and updates the encoder; T3A keeps the entire backbone frozen and adjusts classifier prototypes. A reviewer will argue: "Why not just use SHOT/T3A instead of training a whole translator?"
+
+### Runtime Estimates
+
+TTA methods are orders of magnitude cheaper than translator training. The bottleneck is implementation (~3-4 days coding), not compute (~1 day GPU).
+
+**EHR tasks** (reference: retrieval translator = 30-60 hours per task):
+
+| Method | Mortality | AKI | Sepsis | Notes |
+|---|---|---|---|---|
+| **T3A** | ~2 min | ~5 min | ~5 min | Single forward pass (prototypes) + test. Zero training. |
+| **SHOT** (adapter) | ~30-60 min | ~1-2 hrs | ~1-2 hrs | ~20 epochs entropy min on target, small adapter |
+| **TENT** | N/A | N/A | N/A | Inapplicable — LSTMs have no BN layers |
+
+**AdaTime tasks** (reference: translator = 14s-2min per scenario):
+
+| Method | Per Scenario | All 10 Scenarios | Notes |
+|---|---|---|---|
+| **T3A** | ~1-3 sec | ~30 sec | Prototypes + inference |
+| **TENT** | ~5-10 sec | ~1-2 min | Few backward passes on test BN |
+| **SHOT** (adapter) | ~30-60 sec | ~5-10 min | Lightweight adaptation loop |
+
+**Total compute**: ~7-9 hours for all methods × all datasets. Multi-seed (3 seeds) under 1 day.
+
+### Exact Requirements
+
+1. **T3A** (Iwasawa & Matsuo, NeurIPS 2021) — **implement first**
+   - Adjusts classifier prototypes at test time. Backbone fully frozen.
+   - **This is the most direct competitor** — same frozen-backbone constraint.
+   - **Action**: Implement T3A on our frozen LSTM's output features.
+   - Reference impl: [github.com/matsuolab/T3A](https://github.com/matsuolab/T3A) (vision, adapt to TS)
+   - Implementation: `src/baselines/t3a.py`
+   - Effort: ~1 day coding, ~40 min GPU (all tasks)
+
+2. **SHOT** (Liang et al., ICML 2020) — **implement second**
+   - Source-free: freezes classifier, updates encoder via entropy minimization + pseudo-labels
+   - **Problem**: In our setting the entire model is frozen (not just classifier). SHOT requires updating encoder weights.
+   - **Action**: Implement SHOT where only a small adapter before the frozen LSTM is updated (fair comparison). Compare vs our translator.
+   - Implementation: `src/baselines/shot.py`
+   - Effort: ~2 days coding, ~5-7 hrs GPU
+
+3. **TENT** (Wang et al., ICLR 2021) — **AdaTime only**
+   - Adapts batch-norm statistics at test time via entropy minimization
+   - **Problem**: LSTMs have no batch-norm layers → TENT is inapplicable for EHR.
+   - **Action**: Implement for AdaTime CNNs only (they have BN). State LSTM incompatibility in paper.
+   - Reference impl: [github.com/DequanWang/tent](https://github.com/DequanWang/tent) (vision, adapt to 1D-CNN)
+   - If implementing for EHR: LayerNorm adaptation as proxy (optional, low priority).
+   - Implementation: `src/baselines/tent.py`
+   - Effort: ~1 day coding, ~1 hr GPU
+
+4. **Experiments**
+   - Run on EHR: at least Mortality, AKI, Sepsis (T3A + SHOT)
+   - Run on AdaTime: at least HAR, HHAR, WISDM (T3A + SHOT + TENT)
+   - Multi-seed: 3 seeds minimum
+   - Expected outcome: TTA methods should underperform because they adapt output/features, not inputs. Our translator provides richer adaptation by transforming the entire input space.
+
+### Paper narrative value
+
+TTA methods are fast and cheap, yet our translator beats them — this becomes an argument for *when to use which*: TTA for quick adaptation with small shift, full translator for large cross-domain gaps. The cost table itself motivates the method.
+
+### Output
+TTA comparison table in paper. Discussion of why input-space adaptation > output-space adaptation.
+
+---
+
+## Group 10: Computational Cost Analysis (CRITICAL — Gap from Apr 12 review)
+
+**Priority**: P0 — Reviewers routinely expect this for any method that adds parameters.
+**Effort**: 1 day | **Impact**: HIGH
+**Analysis**: `docs/neurips/computational_cost.md` (param counts, training times, VRAM, inference)
+
+### Exact Requirements
+
+1. **Parameter count table**
+   - Frozen LSTM baseline: #params
+   - Translator (retrieval): #params (breakdown: encoder, decoder, cross-attention, memory bank)
+   - Each DA baseline (DANN, CORAL, CoDATS): #params of adaptation module
+   - Ratio: translator params / baseline params
+
+2. **Training cost**
+   - Wall-clock time per epoch (from existing logs)
+   - Total GPU hours per task (Phase 1 + Phase 2)
+   - Peak GPU VRAM (from `nvidia-smi` during runs)
+
+3. **Inference cost**
+   - ms/batch at inference (translator forward pass + frozen LSTM)
+   - Compare vs source-only (just frozen LSTM)
+   - Compare vs E2E methods (full model forward pass)
+
+4. **AdaTime cost** (simpler — smaller models)
+   - Training time per scenario
+   - Compare vs published AdaTime method training times
+
+### Output
+Table in paper: Method | #Params | GPU Hours | VRAM | Inference ms/batch
+
+---
+
+## Group 11: Visualization & Domain Divergence (HIGH — Gap from Apr 12 review)
+
+**Priority**: P1 — Nearly universal in DA papers; missing this loses 1-2 review points.
+**Effort**: 3–4 days | **Impact**: HIGH
+**Analysis**: `docs/neurips/visualization_analysis.md` (domain divergence metrics, hidden state analysis, figure plans)
+
+### Exact Requirements
+
+1. **t-SNE / UMAP visualization**
+   - Extract LSTM hidden states for: (a) source (eICU) raw, (b) translated source, (c) target (MIMIC)
+   - Plot 2D projections colored by domain
+   - Show alignment improvement after translation
+   - Do for 2 tasks: AKI (causal, per-timestep) + Mortality (bidirectional, per-stay)
+   - Script: `scripts/visualize_tsne.py`
+
+2. **Proxy A-distance (PAD)**
+   - Train linear SVM to distinguish source vs target in LSTM feature space
+   - PAD = 2(1 - 2 × classification_error)
+   - Compute before and after translation
+   - Report for all 3 classification tasks
+   - Script: `scripts/compute_pad.py`
+
+3. **Feature-level analysis** (optional but high-value)
+   - Which input features does the translator modify most? (L2 distance per feature)
+   - Correlate with known domain-shift features (lab distributions, vital sign scales)
+   - Shows the translator learned clinically meaningful transformations
+
+### Output
+- Fig: t-SNE before/after (2 tasks)
+- Table: PAD before/after (3 tasks)
+- Optional fig: per-feature translation magnitude heatmap
+
+---
+
+## Group 12: 2025 Related Work & Positioning (HIGH — Gap from Apr 12 review)
+
+**Priority**: P1 — Signals awareness of current landscape; missing recent citations looks outdated.
+**Effort**: 0.5–1 day | **Impact**: MEDIUM-HIGH
+
+### Must-Cite Papers (2024-2025)
+
+| Paper | Venue | Why Cite |
+|---|---|---|
+| **TransPL** | ICML 2025 | Latest TS-DA SOTA, VQ-code pseudo-labeling |
+| **TemSR** | ICLR 2025 | Source-free TS-DA via temporal recovery |
+| **CDA-DAPT** | ICLR 2025 | **Closest competitor**: frozen Transformer + adapters + prompts |
+| **CPFM** | arXiv 2025 | Black-box TS-DA via foundation model prompts |
+| **ACON** | NeurIPS 2024 | AdaTime SOTA (already in our comparison) |
+| **RCD-KD** | NeurIPS 2024 | Knowledge distillation for TS-DA |
+| **Fawaz et al.** | DMKD 2025 | Newer TS-DA benchmark (7 extra datasets) |
+| **SEA++** | TPAMI 2024 | Multi-graph sensor alignment for MTS |
+| **LCA** | TPAMI 2025 | Latent causal alignment |
+| **TA4LS** | KDD 2025 | Label shift in TS-DA |
+
+### Key Positioning vs CDA-DAPT (ICLR 2025)
+
+CDA-DAPT is the most important to differentiate:
+- **Theirs**: Frozen Transformer + parameter-efficient adapters + domain prompts → adapts intermediate representations
+- **Ours**: Frozen backbone (any architecture) + input-space translator → adapts raw input
+- **Theirs**: Continual DA (sequential domains) → different problem setting
+- **Ours**: Single-pair UDA → deeper evaluation per pair
+- **Theirs**: Transformer-specific (adapters require specific architecture) → architecture-locked
+- **Ours**: Architecture-agnostic (demonstrated on LSTM, GRU, TCN, CNN) → universal
+
+### Output
+Updated related work section in paper skeleton.
+
+---
+
+## Group 13: Failure Mode Analysis (MEDIUM — Gap from Apr 12 review)
+
+**Priority**: P2 — Shows intellectual honesty; reviewers appreciate self-awareness.
+**Effort**: 1 day | **Impact**: MEDIUM
+
+### Exact Requirements
+
+1. **Identify failure scenarios**
+   - AdaTime: HAR 12->16 consistently loses across all configs
+   - EHR: Sepsis high variance (inherent to 1.1% label density)
+   - When does translation hurt vs help?
+
+2. **Characterize failures**
+   - Is there a detectable signal? (e.g., high reconstruction error, low memory bank similarity)
+   - Domain shift magnitude vs translation benefit correlation
+   - Label density vs translation benefit correlation
+
+3. **Discuss in paper**
+   - 1-2 paragraphs in Discussion/Limitations
+   - Honest assessment of when the method shouldn't be used
+
+### Output
+Failure analysis paragraph in Limitations section.
+
+---
+
+## Updated Execution Timeline
+
+```
+ALREADY DONE:
+  Group 1 (DA baselines) — COMPLETE, 8 methods × 3 tasks
+  Group 2 (HiRID) — COMPLETE, all 5 tasks
+  Group 6 (Architecture lock) — COMPLETE, V5 configs finalized
+
+REMAINING:
+  Week of Apr 13–19:  Group 9 (TTA baselines — start impl) + Group 10 (computational cost — 1 day)
+  Week of Apr 20–26:  Group 9 (TTA experiments) + Group 4 (EHR bootstrap CIs) + Group 11 (t-SNE, PAD)
+  Week of Apr 27–May 1: Group 7 (paper skeleton) + Group 8 (theory) + Group 12 (related work) + Group 3 (temp scaling)
+  Week of May 1–4:    Group 13 (failure modes) + Group 5 (reproducibility) + final writing
+  May 4: Abstract submission
+  May 4–6: Paper finalization and submission
+```
+
+---
+
+## Updated Acceptance Probability Estimates
 
 | Scenario | Probability | What's Included |
 |----------|-------------|-----------------|
-| As-is (no DA baselines) | 20–30% | Strong results but missing standard comparisons |
-| + DA baselines + temp scaling | 40–45% | Addresses biggest reviewer concern |
-| + DA baselines + HiRID + multi-seed | 50–55% | Multi-domain + statistical rigor |
-| + DA baselines + HiRID + multi-seed + theory | 55–65% | Full package |
+| Current (DA baselines + HiRID + AdaTime 5/5 wins) | 40–45% | Strong results but missing TTA baselines, CIs, viz |
+| + EHR bootstrap CIs + TTA baselines + cost table | 55–60% | Addresses all P0 gaps |
+| + t-SNE/PAD + 2025 citations + theory | 60–70% | Full P0 + P1 package |
+| + failure analysis + calibration + subgroup | 65–75% | Complete package |

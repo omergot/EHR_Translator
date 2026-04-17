@@ -21,15 +21,34 @@ def compute_sequence_lengths(dataset) -> list[int]:
     _CachedSubsetDataset, and Subset wrappers.
 
     Returns list of int lengths (one per sample).
+
+    Note: item[2] from YAIB is a *label* mask, not a *pad* mask.  For
+    per-timestep tasks (AKI, Sepsis, eICU-LoS) every valid timestep has
+    a label, so label_mask.sum() == actual length and the two are
+    interchangeable.  For HiRID-LoS (and potentially other regression
+    tasks) labels exist only at the *last* valid timestep, so
+    label_mask.sum() == 1 regardless of actual length.
+
+    We therefore compute length from the *data* tensor: the position of
+    the last non-zero row.  This is robust to both pad-mask and
+    label-mask conventions.
     """
     lengths = []
     for i in range(len(dataset)):
         item = dataset[i]
-        mask = item[2]  # pad_mask: 1=real, 0=padding
-        if isinstance(mask, torch.Tensor):
-            lengths.append(int(mask.sum().item()))
+        data = item[0]  # (T, F) dynamic features
+        if isinstance(data, torch.Tensor):
+            # Find last timestep with any non-zero feature value.
+            # YAIB right-pads with zeros, so trailing all-zero rows are padding.
+            nonzero_mask = data.abs().sum(dim=-1) > 0  # (T,) bool
+            if nonzero_mask.any():
+                last_valid = int(nonzero_mask.nonzero(as_tuple=False)[-1].item()) + 1
+                lengths.append(last_valid)
+            else:
+                lengths.append(1)  # safety: at least 1
         else:
-            lengths.append(int(mask.sum()))
+            # Fallback for non-tensor data
+            lengths.append(data.shape[0] if hasattr(data, 'shape') else 1)
     return lengths
 
 
@@ -105,17 +124,25 @@ def variable_length_collate(batch):
     Expects items as (data, labels, mask[, static]) tuples where:
       data: (T, F) — dynamic features
       labels: (T,) — per-timestep labels
-      mask: (T,) — pad mask (1=real, 0=pad)
+      mask: (T,) — label mask (1=has label, 0=no label)
       static: (S,) — static features (optional, not truncated)
+
+    Actual sequence length is derived from data (last non-zero row), not
+    from the mask, because the mask may be a sparse label mask (e.g.
+    HiRID LoS regression has only 1 label per stay at the last timestep).
     """
-    # Find max actual length from pad masks
+    # Find max actual length from data (last non-zero row)
     actual_lengths = []
     for item in batch:
-        mask = item[2]
-        if isinstance(mask, torch.Tensor):
-            actual_lengths.append(int(mask.sum().item()))
+        data = item[0]
+        if isinstance(data, torch.Tensor):
+            nonzero = data.abs().sum(dim=-1) > 0
+            if nonzero.any():
+                actual_lengths.append(int(nonzero.nonzero(as_tuple=False)[-1].item()) + 1)
+            else:
+                actual_lengths.append(1)
         else:
-            actual_lengths.append(int(mask.sum()))
+            actual_lengths.append(data.shape[0] if hasattr(data, 'shape') else 1)
     max_len = max(actual_lengths)
 
     if max_len <= 0:

@@ -149,6 +149,11 @@ def _gradient_diagnostic(
         optimizer.zero_grad()
         if x_out.grad is not None:
             x_out.grad = None
+        # Guard: if loss has no grad_fn (e.g. NaN-replaced constant 0.0),
+        # backward() would crash. Return zero vector instead.
+        if loss_val.grad_fn is None:
+            total_params = sum(p.numel() for p in all_params)
+            return torch.zeros(total_params, device=x_out.device)
         loss_val.backward(retain_graph=True)
         grads = [p.grad.detach().flatten() if p.grad is not None
                  else torch.zeros(p.numel(), device=x_out.device)
@@ -178,7 +183,9 @@ def _gradient_diagnostic(
     if x_out.grad is not None:
         x_out.grad = None
     optimizer.zero_grad()
-    l_task.backward(retain_graph=True)
+    # Guard: skip per-timestep analysis if l_task has no grad_fn
+    if l_task.grad_fn is not None:
+        l_task.backward(retain_graph=True)
     if x_out.grad is not None:
         grad = x_out.grad.detach().float()
         label_m = parts["M_label"].bool()
@@ -2538,7 +2545,8 @@ class RetrievalTranslatorTrainer:
                     if n_batches == 0 and epoch == 0:
                         logging.warning(
                             "l_task is NaN — replacing with 0.0 for this batch "
-                            "(frozen LSTM may overflow on translated source data)"
+                            "(frozen LSTM may overflow on translated source data; "
+                            "label_mask_sum=%d)", label_mask.sum().item(),
                         )
                     l_task = l_task.new_tensor(0.0)
 

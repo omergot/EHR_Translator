@@ -7828,3 +7828,155 @@ experiments:
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-18 01:11:40'
   slurm_job_id: '71988'
+# ============================================================
+# Multi-seed stability runs for NeurIPS ablation study
+# ============================================================
+
+# --- 1. Mortality cross2 (V5 cross2 nf base) — a6000, 30ep ---
+- name: mort_c2_nf_s7777
+  config: configs/seeds/mort_c2_nf_s7777.json
+  output: runs/seeds/mort_c2_nf_s7777/eval_mortality.parquet
+  status: pending
+  server: a6000
+  branch: master
+  notes: "Seed 7777 variant of mort_c2_nf control (V5 cross2, 30ep)"
+- name: mort_c2_nf_s42
+  config: configs/seeds/mort_c2_nf_s42.json
+  output: runs/seeds/mort_c2_nf_s42/eval_mortality.parquet
+  status: pending
+  server: a6000
+  branch: master
+  notes: "Seed 42 variant of mort_c2_nf control (V5 cross2, 30ep)"
+
+# --- 2a. Sepsis V5 cross3 — local+3090, 30ep ---
+- name: sepsis_v5_cross3_s2222
+  config: configs/seeds/sepsis_v5_cross3_s2222.json
+  output: runs/seeds/sepsis_v5_cross3_s2222/eval_sepsis.parquet
+  status: pending
+  server: local
+  branch: master
+  notes: "Seed 2222 variant of sepsis V5 cross3 (30ep)"
+- name: sepsis_v5_cross3_s7777
+  config: configs/seeds/sepsis_v5_cross3_s7777.json
+  output: runs/seeds/sepsis_v5_cross3_s7777/eval_sepsis.parquet
+  status: pending
+  server: 3090
+  branch: master
+  notes: "Seed 7777 variant of sepsis V5 cross3 (30ep)"
+- name: sepsis_v5_cross3_s42
+  config: configs/seeds/sepsis_v5_cross3_s42.json
+  output: runs/seeds/sepsis_v5_cross3_s42/eval_sepsis.parquet
+  status: pending
+  server: local
+  branch: master
+  notes: "Seed 42 variant of sepsis V5 cross3 (30ep)"
+
+# --- 2b. Sepsis V5 cross2 — 3090+local, 30ep ---
+- name: sepsis_v5_cross2_s2222
+  config: configs/seeds/sepsis_v5_cross2_s2222.json
+  output: runs/seeds/sepsis_v5_cross2_s2222/eval_sepsis.parquet
+  status: pending
+  server: 3090
+  branch: master
+  notes: "Seed 2222 variant of sepsis V5 cross2 (30ep, n_cross=2)"
+- name: sepsis_v5_cross2_s7777
+  config: configs/seeds/sepsis_v5_cross2_s7777.json
+  output: runs/seeds/sepsis_v5_cross2_s7777/eval_sepsis.parquet
+  status: pending
+  server: local
+  branch: master
+  notes: "Seed 7777 variant of sepsis V5 cross2 (30ep, n_cross=2)"
+- name: sepsis_v5_cross2_s42
+  config: configs/seeds/sepsis_v5_cross2_s42.json
+  output: runs/seeds/sepsis_v5_cross2_s42/eval_sepsis.parquet
+  status: pending
+  server: 3090
+  branch: master
+  notes: "Seed 42 variant of sepsis V5 cross2 (30ep, n_cross=2)"
+
+# --- 3. AKI V5 cross3 — a6000, 35ep ---
+- name: aki_v5_cross3_s7777
+  config: configs/seeds/aki_v5_cross3_s7777.json
+  output: runs/seeds/aki_v5_cross3_s7777/eval_aki.parquet
+  status: pending
+  server: a6000
+  branch: master
+  notes: "Seed 7777 variant of AKI V5 cross3 (35ep)"
+- name: aki_v5_cross3_s42
+  config: configs/seeds/aki_v5_cross3_s42.json
+  output: runs/seeds/aki_v5_cross3_s42/eval_aki.parquet
+  status: pending
+  server: a6000
+  branch: master
+  notes: "Seed 42 variant of AKI V5 cross3 (35ep)"
+
+# --- 4. KF V5 cross3 — Athena, 35ep ---
+- name: kf_v5_cross3_s7777
+  config: configs/seeds/kf_v5_cross3_s7777.json
+  output: runs/seeds/kf_v5_cross3_s7777/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 7777 variant of KF V5 cross3 (35ep)"
+- name: kf_v5_cross3_s42
+  config: configs/seeds/kf_v5_cross3_s42.json
+  output: runs/seeds/kf_v5_cross3_s42/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 42 variant of KF V5 cross3 (35ep)"
+
+# --- 5. KF no-fid no-mmd — Athena, 35ep ---
+- name: kf_nfnm_s7777
+  config: configs/seeds/kf_nfnm_s7777.json
+  output: runs/seeds/kf_nfnm_s7777/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 7777 variant of kf_nfnm control (35ep, no-fid no-mmd)"
+- name: kf_nfnm_s42
+  config: configs/seeds/kf_nfnm_s42.json
+  output: runs/seeds/kf_nfnm_s42/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 42 variant of kf_nfnm control (35ep, no-fid no-mmd)"
+
+# --- 6. KF K5 lr3e5 nfnm — Athena, 35ep ---
+- name: kf_lr3e5_nfnm_s2222
+  config: configs/seeds/kf_lr3e5_nfnm_s2222.json
+  output: runs/seeds/kf_lr3e5_nfnm_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 2222 variant of kf_hp_K5_lr3e5 (35ep, lr=3e-5, no-fid no-mmd)"
+- name: kf_lr3e5_nfnm_s7777
+  config: configs/seeds/kf_lr3e5_nfnm_s7777.json
+  output: runs/seeds/kf_lr3e5_nfnm_s7777/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 7777 variant of kf_hp_K5_lr3e5 (35ep, lr=3e-5, no-fid no-mmd)"
+- name: kf_lr3e5_nfnm_s42
+  config: configs/seeds/kf_lr3e5_nfnm_s42.json
+  output: runs/seeds/kf_lr3e5_nfnm_s42/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 42 variant of kf_hp_K5_lr3e5 (35ep, lr=3e-5, no-fid no-mmd)"
+
+# --- 7. LoS V5 cross3 — Athena, 35ep ---
+- name: los_v5_cross3_s7777
+  config: configs/seeds/los_v5_cross3_s7777.json
+  output: runs/seeds/los_v5_cross3_s7777/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 7777 variant of LoS V5 cross3 (35ep)"
+- name: los_v5_cross3_s42
+  config: configs/seeds/los_v5_cross3_s42.json
+  output: runs/seeds/los_v5_cross3_s42/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: "Seed 42 variant of LoS V5 cross3 (35ep)"

@@ -1,0 +1,103 @@
+% SD4H Experiments — TARGET: ~1.5 pages
+
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+\label{sec:setup}
+
+\vspace{-0.3em}
+\paragraph{Clinical benchmarks.}
+We evaluate on three ICU databases preprocessed via the YAIB benchmark~\citep{vandewater2024yaib}: \eicu{} (source, 200{,}859 stays across 208 US hospitals), \mimic{} (target, 73{,}181 stays), and \hirid{} (second source, 33{,}905 stays).
+Five tasks span classification and regression: \emph{Mortality24} (per-stay binary), \emph{AKI} (per-timestep, KDIGO Stage~$\geq$1, 12\% positive), \emph{Sepsis} (per-timestep, Sepsis-3, 1.1\% prevalence), \emph{Length of Stay} (LoS; per-timestep regression), and \emph{Kidney Function} (KF; per-stay regression, serum creatinine).
+Dataset and feature details are in Appendix~\ref{app:datasets}.
+The frozen predictor is a \mimic{}-trained LSTM from YAIB, used identically for all methods.
+
+\vspace{-0.5em}
+\paragraph{General time-series benchmarks.}
+We also evaluate on five datasets from the AdaTime benchmark~\citep{ragab2023adatime}: three wearable (HAR, HHAR, WISDM), one EEG (SSC), and one industrial (MFD) dataset.
+The frozen backbone is AdaTime's standard pretrained 1D-CNN; every AdaTime split ships with labeled source data.
+
+\vspace{-0.5em}
+\paragraph{Baselines.}
+Under the frozen-predictor constraint we compare against four DA methods, DANN~\citep{ganin2016dann}, Deep CORAL~\citep{sun2016coral}, CoDATS~\citep{wilson2020codats}, and ACON~\citep{liu2024acon}, all adapted so the predictor's weights never move.
+We add two reference baselines: an affine statistics-only renormalization (negative control, no learning), and end-to-end fine-tuning of the LSTM (upper bound; violates our frozen constraint). As a further stress test we also run three end-to-end DA methods that retrain the full LSTM on each clinical classification task, CLUDA~\citep{ozyurt2023cluda}, RAINCOAT~\citep{he2023raincoat}, and ACON~\citep{liu2024acon}; results are in Appendix~\ref{app:implementation}.
+We also compare against all six natively trained architectures from YAIB (LSTM, GRU, TCN, Transformer, LogReg, LGBM), the in-domain ceiling.
+For AdaTime, we compare against all eleven published end-to-end DA methods from \citet{ragab2023adatime} (full list in Appendix~\ref{app:implementation}), plus CLUDA~\citep{ozyurt2023cluda} and RAINCOAT~\citep{he2023raincoat}, all run under AdaTime's exact training recipe (Appendix~\ref{app:implementation}).
+We report \aucroc{} ($\times 100$) for classification and MAE for regression, with bootstrap 95\% CIs (500 replicates); all $p < 0.001$.
+Across every comparable setting (frozen-backbone DA, affine renormalization, end-to-end fine-tuning of the LSTM, end-to-end DA on the clinical classification tasks (Appendix~\ref{app:implementation}), and end-to-end DA on AdaTime), \retr{} strictly dominates.
+
+% TABLE 1 — Main EHR Results (full-width) — placed early so floats can settle on pages 3–4
+\begin{table*}[!tb]
+\centering
+\setlength{\tabcolsep}{5pt}
+\caption{Domain adaptation results across five clinical tasks. Classification: AUROC ($\times 100$, $\uparrow$); regression: MAE ($\downarrow$). Baselines grouped by constraint. $\dagger$\,surpasses eICU-native LSTM; $\ddagger$\,surpasses MIMIC-native LSTM. $\star$\,task-specific loss variant (Appendix~\ref{app:ablation}). Best method sharing our frozen-predictor constraint in \textbf{bold}. Bootstrap 95\% CIs (500 replicates) shown for classification; regression CIs in Appendix~\ref{app:regression}. Fine-tune LSTM modifies the predictor and is included as a non-frozen reference only.}
+\label{tab:main-results}
+\vskip 0.1in
+\small
+\begin{tabular}{@{}l ccc cc@{}}
+\toprule
+& \multicolumn{3}{c}{\textsc{Classification} (AUROC $\uparrow$)} & \multicolumn{2}{c}{\textsc{Regression} (MAE $\downarrow$)} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-6}
+\textbf{Method} & Mortality & AKI & Sepsis & LoS (h) & KF (mg/dL) \\
+\midrule
+\multicolumn{6}{l}{\emph{Frozen predictor (our constraint)}} \\
+Frozen baseline (source only) & 80.79 & 85.58 & 71.59 & 42.5 & 0.403 \\
+Affine statistics-only & 79.79 & 84.46 & 70.87 & --- & --- \\
+DANN & 84.38 & 88.74 & 73.23 & --- & --- \\
+Deep CORAL & 84.53 & 88.66 & 73.26 & --- & --- \\
+CoDATS & 84.31 & 86.84 & 71.22 & --- & --- \\
+ACON & 84.48 & 88.62 & 71.08 & --- & --- \\
+\retr{} (eICU$\to$MIMIC) & \textbf{85.74}$\,^{\dagger}$ & \textbf{91.14}$\,^{\dagger\ddagger}$ & \textbf{77.76}$\,^{\dagger}$ & \textbf{37.2}$\,^{\dagger\ddagger\star}$ & \textbf{0.292}$\,^{\star}$ \\
+{\scriptsize 95\% CI} & {\scriptsize [84.6, 86.5]} & {\scriptsize [91.1, 91.2]} & {\scriptsize [77.4, 78.2]} & & \\
+\midrule
+Fine-tune LSTM (end-to-end) & 84.61 & 90.48 & 74.59 & --- & --- \\
+\midrule
+\multicolumn{6}{l}{\emph{Reference: natively trained target-domain models}} \\
+\textit{eICU-native LSTM} & \textit{85.5} & \textit{90.2} & \textit{74.0} & \textit{39.2} & \textit{0.28} \\
+\textit{MIMIC-native LSTM} & \textit{86.7} & \textit{89.7} & \textit{82.0} & \textit{40.6} & \textit{0.28} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% TABLE 2 — AdaTime Results (single-column) — placed early alongside Table 1
+\begin{table}[!htbp]
+\centering
+\setlength{\tabcolsep}{4pt}
+\caption{AdaTime benchmark (Macro-F1 $\times 100$). Our frozen-backbone adapter (only adapter parameters trained) vs.\ best published end-to-end method per dataset (full model retrained). Mean$\pm$std over 5 seeds; all $p < 0.0001$.}
+\label{tab:adatime}
+\vskip 0.1in
+\footnotesize
+\begin{tabular}{@{}ll ccc r@{}}
+\toprule
+\textbf{Dataset} & \textbf{Domain} & \textbf{Source} & \textbf{Best E2E} & \textbf{Ours} & $\boldsymbol{\Delta}$ \\
+\midrule
+HAR & Wearable & 80.0 & 93.7\textsuperscript{a} & \textbf{94.1}{\scriptsize$\pm$0.0} & +0.4 \\
+HHAR & Wearable & 56.5 & 84.5\textsuperscript{b} & \textbf{87.0}{\scriptsize$\pm$0.7} & +2.5 \\
+WISDM & Wearable & 50.0 & 66.3\textsuperscript{b} & \textbf{70.3}{\scriptsize$\pm$1.5} & +4.0 \\
+SSC & EEG & 58.0 & 63.5\textsuperscript{c} & \textbf{66.2}{\scriptsize$\pm$0.2} & +2.7 \\
+MFD & Industrial & 77.5 & 92.8\textsuperscript{a} & \textbf{96.1}{\scriptsize$\pm$0.1} & +3.3 \\
+\midrule
+Mean & & 64.4 & 80.2 & \textbf{82.7} & +2.6 \\
+\bottomrule
+\end{tabular}
+
+\vskip 0.05in
+{\scriptsize \textsuperscript{a}DIRT-T \quad \textsuperscript{b}CoTMix \quad \textsuperscript{c}MMDA}
+\end{table}
+
+\subsection{Clinical Task Results}
+\label{sec:main-results}
+
+\retr{} surpasses all four frozen-backbone DA baselines by $1.3$--$3.7\times$, beats end-to-end fine-tuning on the three classification tasks ($+0.007$ to $+0.032$ \aucroc{}), and matches or exceeds the \eicu{}-native LSTM on four of five tasks, surpassing both native references on AKI and LoS (\Cref{tab:main-results}).
+On AKI, adapted predictions reach 91.14 \aucroc{}, above both the \eicu{}-native (90.2) and \mimic{}-native (89.7) LSTMs, with larger \aucpr{} gains of $+16.1$ points ($56.8 \to 72.9$).
+On Sepsis (1.1\% positive rate), the adapter reaches 77.76 \aucroc{}, above the \eicu{}-native LSTM (74.0); the margin over DA baselines widens to $3.7\times$ (Deep CORAL $+1.67$ vs.\ ours $+6.17$), since alignment-based methods spend gradient capacity on the domain objective, leaving little for the sparse task signal.
+LoS extends the approach to regression at 37.2\,h MAE, beating both native references (39.2/40.6\,h), and Mortality reaches 85.74 \aucroc{}, exceeding the \eicu{}-native LSTM (85.5).
+
+Adapted inputs move \emph{away} from the target distribution (Wasserstein $+3$--$5\times$) yet predictions improve, because the adapter disrupts forward-fill imputation artifacts (Appendix~\ref{app:interpretability}). On \hirid{}~$\to$~\mimic{}, gains grow: AKI and Sepsis each exceed the eICU best by over $0.02$ \aucroc{} (Sepsis reaches 79.8), and LoS drops to 35.4\,h MAE (Appendix~\ref{app:hirid}). An LSTM-trained adapter also transfers zero-shot to frozen GRU and TCN predictors, retaining 47--86\% of the LSTM improvement (Appendix~\ref{app:mas}).
+
+\subsection{Generality: Non-Medical Time-Series Benchmarks}
+\label{sec:adatime}
+
+To test whether input-space adaptation generalizes beyond clinical data, we evaluate on the AdaTime benchmark~\citep{ragab2023adatime}: a pretrained 1D-CNN is frozen; only the adapter is trained.
+Despite this strict constraint, under AdaTime's exact training recipe, the adapter outperforms all eleven published end-to-end DA methods on all five datasets (\Cref{tab:adatime}), mean $+2.6$ Macro-F1, with $+2.7$ F1 on sleep-stage EEG (SSC). Input-space adaptation is not limited to clinical data.

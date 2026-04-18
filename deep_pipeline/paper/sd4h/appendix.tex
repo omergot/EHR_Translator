@@ -1,0 +1,465 @@
+% SD4H Appendix — unlimited pages
+% \cmark and \xmark defined in main.tex preamble (via pifont)
+
+% ============================================================
+% APPENDIX A: Dataset Statistics
+% ============================================================
+\section{Dataset Statistics}
+\label{app:datasets}
+
+\begin{table}[h]
+\centering
+\caption{ICU databases used in this study. All data is preprocessed via the YAIB benchmark~\citep{vandewater2024yaib} with standardized cohort definitions, feature extraction, and train/validation/test splits.}
+\label{tab:datasets}
+\footnotesize
+\resizebox{\columnwidth}{!}{%
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrll@{}}
+\toprule
+\textbf{Dataset} & \textbf{Role} & \textbf{Stays} & \textbf{Hosp.} & \textbf{Country} & \textbf{Source} \\
+\midrule
+\eicu{}   & Source   & 200,859 & 208 & US & Telehealth net. \\
+\mimic{}  & Target   & 73,181  & 1   & US & Academic med.\ ctr. \\
+\hirid{}  & Source 2 & 33,905  & 1   & Switz. & Univ.\ hospital \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+\begin{table*}[h]
+\centering
+\caption{Clinical prediction tasks. MI = missing indicator features (binary flags for whether a value was measured or forward-filled). Per-timestep tasks produce a prediction at every hourly timestep; per-stay tasks produce a single prediction per ICU stay.}
+\label{tab:tasks}
+\small
+\begin{tabular}{@{}llllrl@{}}
+\toprule
+\textbf{Task} & \textbf{Type} & \textbf{Label} & \textbf{Granularity} & \textbf{Feature Dim} & \textbf{Pos.\ Rate} \\
+\midrule
+Mortality24 & Classification & ICU death within 24\,h & Per-stay & 96 (48 + 48 MI) & $\sim$5.5\% \\
+AKI & Classification & KDIGO Stage $\geq$1 & Per-timestep & 100 (48 + 48 MI + 4 static) & $\sim$12\% \\
+Sepsis & Classification & Sepsis-3 criteria & Per-timestep & 100 (48 + 48 MI + 4 static) & $\sim$1.1\% \\
+LoS & Regression & Hours remaining & Per-timestep & 52 (48 + 4 static) & N/A \\
+KF & Regression & Serum creatinine (mg/dL) & Per-stay & 292 (48 + 48 MI + 192 gen + 4 static) & N/A \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+The 48 clinical features include vital signs (heart rate, blood pressure, SpO$_2$, temperature, respiratory rate) and laboratory values (metabolic panels, blood gases, liver enzymes, cardiac markers, coagulation studies).
+The 4 static features encode patient demographics (age, sex, height, weight).
+KF uses 192 additional generated features: cumulative minimum, maximum, mean, and count statistics for each of the 48 clinical features, which must maintain internal consistency after adaptation.
+LoS omits missing indicators because the YAIB LoS LSTM was trained on a 52-feature schema.
+
+
+% ============================================================
+% APPENDIX B: Implementation Details
+% ============================================================
+\section{Implementation Details}
+\label{app:implementation}
+
+\begin{table}[h]
+\centering
+\caption{Hyperparameters for the \retr{} architecture.}
+\label{tab:hyperparams}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lp{0.55\columnwidth}@{}}
+\toprule
+\textbf{Hyperparameter} & \textbf{Value} \\
+\midrule
+$d_\text{model}$ & 128 \\
+$d_\text{latent}$ & 128 \\
+$n_\text{heads}$ & 8 \\
+$d_\text{ff}$ & 512 \\
+$n_\text{enc\_layers}$ & 4 \\
+$n_\text{dec\_layers}$ & 3 \\
+$n_\text{cross\_layers}$ & 2 (Mort., Sepsis) / 3 (AKI, LoS, KF) \\
+$k$ (neighbors) & 16 \\
+$W$ (retrieval window) & 6 timesteps (matches 6-hour clinical reassessment cycle) \\
+Learning rate & $5 \times 10^{-4}$ \\
+Optimizer & AdamW \\
+Batch size & 16 \\
+Phase~1 pretrain epochs & 10--50 (task-dependent) \\
+Phase~2 training epochs & 30--100 (early stopping) \\
+$\lambda_\text{fidelity}$ & 1.0 \\
+$\lambda_\text{range}$ & 0.1 \\
+Memory refresh ($R$) & 5 epochs \\
+Dropout & 0.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Task-specific settings.}
+Temporal attention mode is set to \emph{causal} for per-timestep tasks (AKI, Sepsis, LoS) to prevent information leakage from future timesteps, and \emph{bidirectional} for per-stay tasks (Mortality, KF) where the full sequence is available at prediction time.
+Cross-domain normalization (an affine transform matching per-feature mean and variance to target statistics, computed once from training data) is applied to all tasks.
+Phase~1 self-retrieval is optionally enabled: during autoencoder pretraining, a memory bank is built from the encoder's own target representations and provided to cross-attention blocks, avoiding degenerate zero-context initialization. We enable self-retrieval for all tasks in this work.
+Variable-length batching is used for per-timestep tasks and disabled for per-stay tasks.
+
+\paragraph{Hardware.}
+Primary development hardware: NVIDIA V100S-32GB.
+Multi-seed validation also used A6000-48GB, RTX 3090-24GB, L40S-48GB, and A100-40GB (SLURM cluster).
+Cross-server variance is within $\pm$0.003 \aucroc{} for all tasks.
+
+\paragraph{Model sizes.}
+The retrieval adapter contains 2.59M parameters (Mortality, Sepsis; $n_\text{cross}=2$) to 2.88M parameters (KF; $n_\text{cross}=3$).
+Frozen LSTM baselines range from 170K (Sepsis) to 1.42M (AKI) parameters.
+DA baselines: DANN 350K, Deep CORAL 251K, CoDATS 428K trainable parameters.
+
+\paragraph{AdaTime configuration.}
+The same \retr{} architecture is used with reduced capacity: $d_\text{model}=64$, $d_\text{latent}=64$, $d_\text{ff}=128$, $n_\text{enc\_layers}=2$, $n_\text{dec\_layers}=1$, $n_\text{cross\_layers}=2$--$3$.
+The frozen backbone is AdaTime's standard 3-block 1D-CNN ($\sim$200K parameters).
+Adapter size: 100K--450K parameters depending on dataset.
+All AdaTime runs (ours and every baseline) follow the benchmark's exact recipe: 40-epoch budget, Adam with $\beta=(0.5, 0.99)$, weight decay $10^{-4}$, last-epoch model, no source-validation split.
+
+\paragraph{AdaTime end-to-end baselines.}
+\citet{ragab2023adatime} benchmark eleven state-of-the-art end-to-end DA methods: DANN, Deep CORAL, CDAN, DSAN, HoMM, MMDA, CoDATS, AdvSKM, DIRT-T, CoTMix, and SASA. We also run CLUDA~\citep{ozyurt2023cluda} and RAINCOAT~\citep{he2023raincoat} under the same protocol. For each dataset, \Cref{tab:adatime} reports the best of these published methods.
+
+\paragraph{End-to-end DA on clinical tasks.}
+As a stress test for the frozen-predictor assumption, we also ran three end-to-end DA methods that retrain the full LSTM on each clinical task: CLUDA~\citep{ozyurt2023cluda}, RAINCOAT~\citep{he2023raincoat}, and ACON~\citep{liu2024acon}. All three were swept over published hyperparameters and trained under right-padded YAIB data (matching the frozen-baseline protocol; left-padding inflated per-timestep AUROC and was excluded). \Cref{tab:e2e-clinical} reports the best hyperparameter per method per task. \retr{}, despite never touching the predictor, beats the best end-to-end DA on all three tasks.
+
+\begin{table}[h]
+\centering
+\caption{End-to-end DA baselines on clinical tasks (right-padded, best hyperparameter per method). AUROC ($\times 100$, $\uparrow$). $\Delta$ vs.\ the frozen source-only baseline.}
+\label{tab:e2e-clinical}
+\footnotesize
+\begin{tabular}{@{}l ccc@{}}
+\toprule
+\textbf{Method} & \textbf{Mortality} & \textbf{AKI} & \textbf{Sepsis} \\
+\midrule
+Frozen source-only            & 80.79 & 85.58 & 71.59 \\
+\midrule
+E2E RAINCOAT                   & 81.52 & 89.55 & 76.24 \\
+E2E CLUDA                      & 81.81 & 87.35 & 76.61 \\
+E2E ACON                       & 82.23 & 70.79 & 75.30 \\
+\midrule
+\retr{} (ours, frozen)         & \textbf{85.74} & \textbf{91.14} & \textbf{77.76} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ============================================================
+% APPENDIX C: Extended Results
+% ============================================================
+\section{Extended Results}
+\label{app:extended}
+
+\subsection{AUCPR Results (eICU $\to$ MIMIC)}
+\label{app:aucpr}
+
+\begin{table}[h]
+\centering
+\caption{\aucpr{} results ($\times 100$) for classification tasks. Bootstrap 95\% CIs (500 replicates).}
+\label{tab:aucpr}
+\small
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& \textbf{Frozen Baseline} & \textbf{\retr{}} [95\% CI] & $\boldsymbol{\Delta}$ \\
+\midrule
+Mortality & 29.67 & 34.88 [32.45, 37.36] & +5.21 \\
+AKI       & 56.78 & 72.86 [72.65, 73.06] & +16.08 \\
+Sepsis    &  2.98 &  5.32 [5.13, 5.51]   & +2.34 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+AKI \aucpr{} gains (+16.08) are nearly 3$\times$ the \aucroc{} gains (+5.56): adaptation disproportionately improves precision at clinically relevant operating points.
+
+\subsection{Regression Extended Results (eICU $\to$ MIMIC)}
+\label{app:regression}
+
+\begin{table}[h]
+\centering
+\caption{Regression results across multiple metrics. Bootstrap 95\% CIs (500 replicates). MAE and RMSE: lower is better ($\downarrow$); $R^2$: higher is better ($\uparrow$).}
+\label{tab:regression}
+\resizebox{\columnwidth}{!}{%
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llccr@{}}
+\toprule
+\textbf{Task} & \textbf{Metric} & \textbf{Baseline} & \textbf{\retr{}} [95\% CI] & $\boldsymbol{\Delta}$ \\
+\midrule
+LoS & MAE ($\downarrow$) & 0.2527 & 0.2331 [.2329, .2333] & $-$0.0196 \\
+LoS & RMSE ($\downarrow$) & 0.3123 & 0.3004 [.3001, .3007] & $-$0.0119 \\
+LoS & $R^2$ ($\uparrow$) & 0.1130 & 0.1794 [.1782, .1806] & +0.0664 \\
+\addlinespace
+KF  & MAE ($\downarrow$) & 0.0330 & 0.0256 [.0249, .0262] & $-$0.0074 \\
+KF  & RMSE ($\downarrow$) & 0.0600 & 0.0477 [.0451, .0503] & $-$0.0123 \\
+KF  & $R^2$ ($\uparrow$) & 0.7489 & 0.8411 [.8266, .8553] & +0.0922 \\
+\bottomrule
+\end{tabular}%
+}
+\end{table}
+
+Table~\ref{tab:regression} reports the primary retrieval variant for each task. The best task-specific variants (starred in Table~\ref{tab:main-results}) go further: LoS without MMD alignment achieves MAE 0.2212 (approximately 37.2 hours when denormalized), a 5.3-hour reduction from the frozen baseline's 42.5 hours and 2.0 hours below the eICU-native LSTM (39.2h); KF without fidelity and without MMD achieves normalized MAE 0.0239 ($\Delta = -0.0091$, 0.292 mg/dL denormalized).
+KF $R^2$ improves from 0.749 to 0.841, nearly doubling the explained variance in serum creatinine predictions.
+Dropping the fidelity loss removes fidelity gradient dominance in KF's 292-feature cumulative-statistics regime.
+
+\subsection{HiRID $\to$ MIMIC Extended Results}
+\label{app:hirid}
+
+\begin{table}[h]
+\centering
+\caption{\hirid{} $\to$ \mimic{} results. Bootstrap 95\% CIs (500 replicates). All $p < 0.001$ except KF ($p = 0.482$, n.s.).}
+\label{tab:hirid}
+\small
+\begin{tabular}{@{}llcl@{}}
+\toprule
+\textbf{Task} & \textbf{Metric} & $\boldsymbol{\Delta}$ \textbf{vs Frozen} [95\% CI] & $\boldsymbol{p}$ \\
+\midrule
+Mortality & \aucroc{} & +0.0488 [+0.0284, +0.0711] & $<$0.001 \\
+Mortality & \aucpr{}  & +0.0502 [+0.0167, +0.0859] & 0.002 \\
+\addlinespace
+AKI & \aucroc{} & +0.0776 [+0.0745, +0.0807] & $<$0.001 \\
+AKI & \aucpr{}  & +0.1471 [+0.1414, +0.1531] & $<$0.001 \\
+\addlinespace
+Sepsis & \aucroc{} & +0.0777 [+0.0707, +0.0841] & $<$0.001 \\
+Sepsis & \aucpr{}  & +0.0525 [+0.0471, +0.0584] & $<$0.001 \\
+\addlinespace
+LoS & MAE & $-$0.0452 [$-$0.0497, $-$0.0410] & $<$0.001 \\
+\addlinespace
+KF & MAE & +0.0000 [$-$0.0009, +0.0010] & 0.482 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\hirid{} results show that the adapter works across source domains with very different data collection practices (Swiss vs.\ US ICUs).
+AKI and Sepsis improvements from \hirid{} (+0.078 \aucroc{} each) exceed those from \eicu{} (+0.056 and +0.062), possibly because greater domain distance provides more signal for adaptation.
+KF is the only non-significant result, likely due to \hirid{}'s smaller cohort size (33,905 vs.\ 200,859 stays) providing insufficient coverage of the 292-feature KF schema.
+
+\subsection{Seed Variance}
+\label{app:seed}
+
+\begin{table}[h]
+\centering
+\caption{Multi-seed \aucroc{} variance ($\times 100$). Spread = max $-$ min across seeds.}
+\label{tab:seed}
+\small
+\begin{tabular}{@{}llrcr@{}}
+\toprule
+\textbf{Task} & \textbf{Config} & \textbf{Seeds} & \textbf{Mean $\Delta$} & \textbf{Spread} \\
+\midrule
+AKI & V5, $n_\text{cross}=3$ & 5 & +5.47 & 0.27 \\
+Mortality & V4+MMD & 3 & +4.56 & 0.29 \\
+Sepsis & V4+MMD & 3 & +4.94 & 2.03 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+AKI and Mortality show low variance (spread $<$0.3 \aucroc{} points), both well within noise.
+AKI's 5-seed validation spans 3 physically distinct GPU servers (V100S, A6000, RTX 3090), with cross-server variance adding only 0.2 points.
+Sepsis exhibits higher variance (spread 2.03) due to its 1.1\% label density; this is inherent to the task rather than method-specific, as DA baselines show comparable variance.
+
+
+% ============================================================
+% APPENDIX D: Architecture-Agnostic Transfer
+% ============================================================
+\section{Architecture-Agnostic Transfer}
+\label{app:mas}
+
+To test whether the adapter learns a domain-invariant input mapping rather than LSTM-specific artifacts, we apply an LSTM-trained adapter \emph{zero-shot} to frozen GRU and TCN architectures (no retraining).
+
+\begin{table}[h]
+\centering
+\caption{Architecture-agnostic transfer: LSTM-trained adapter applied zero-shot to frozen GRU and TCN predictors. \aucroc{} improvement ($\Delta \times 100$) over each architecture's frozen baseline. Percentage indicates fraction of LSTM gain retained.}
+\label{tab:mas}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Task} & \textbf{LSTM $\Delta$} & \textbf{GRU $\Delta$ (\%)} & \textbf{TCN $\Delta$ (\%)} \\
+\midrule
+Mortality & +4.76 & +4.04 (85\%) & +3.42 (72\%) \\
+AKI       & +5.56 & +3.11 (56\%) & +3.16 (57\%) \\
+Sepsis    & +5.12 & +2.40 (47\%) & +4.42 (86\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All six source--architecture combinations show positive transfer, with gains ranging from 47\% to 86\% of the LSTM improvement.
+The strongest retention occurs for TCN on Sepsis (86\%) and GRU on Mortality (85\%); the input-space corrections appear largely architecture-independent.
+This supports the interpretation that the adapter resolves distributional mismatches (e.g., forward-fill imputation artifacts) at the input level, producing features that benefit any predictor trained on target-domain data.
+
+
+% ============================================================
+% APPENDIX E: Ablation Study
+% ============================================================
+\section{Ablation Study}
+\label{app:ablation}
+
+We ablate the main components of the retrieval adapter.
+Each row modifies exactly one setting from the control configuration.
+
+\begin{table}[h]
+\centering
+\caption{Component ablation on AKI (\eicu{} $\to$ \mimic{}, \aucroc{} $\times 100$). Each row removes exactly one component from the full retrieval adapter ($n_\text{cross}=3$).}
+\label{tab:ablation-aki}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{$\Delta$ \aucroc{}} & \textbf{Effect} \\
+\midrule
+Full method (control) & +5.48 & --- \\
+No retrieval (remove memory bank) & +4.88 & $-$0.60 \\
+No feature gate & +5.02 & $-$0.46 \\
+No MMD alignment & +5.19 & $-$0.29 \\
+No fidelity loss & \textbf{+5.70} & +0.22 \\
+No target normalization & +5.43 & $-$0.05 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Component ablation on Sepsis (\eicu{} $\to$ \mimic{}, \aucroc{} $\times 100$). Control: full retrieval adapter with $n_\text{cross}=2$.}
+\label{tab:ablation-sepsis}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+\textbf{Configuration} & \textbf{$\Delta$ \aucroc{}} & \textbf{Effect} \\
+\midrule
+Full method (control) & +4.99 & --- \\
+No smoothness loss & +4.75 & $-$0.24 \\
+Oversampling (20$\times$) & $-$3.31 & $-$8.30 \\
+$n_\text{cross}=3$ (vs 2) & +4.35 & $-$0.64 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Key findings.}
+\emph{Pretraining is essential}: removing Phase~1 (the autoencoder pretrain) collapses every classification task, with Mortality falling $10$ \aucroc{} points below the unadapted frozen baseline.
+\emph{Retrieval provides consistent benefit}: removing the memory bank reduces AKI by $0.60$ \aucroc{} and all other tasks show similar degradation.
+\emph{Oversampling is harmful for sparse labels}: 20$\times$ oversampling of positive examples causes catastrophic performance loss on Sepsis, likely due to gradient bias from repeated rare-event samples.
+
+
+% ============================================================
+% APPENDIX F: Interpretability — ACF Scatter Plots
+% ============================================================
+\section{Interpretability: Imputation vs.\ ACF Change}
+\label{app:interpretability}
+
+\begin{figure*}[t]
+\centering
+\begin{subfigure}[b]{0.78\textwidth}
+\includegraphics[width=\textwidth]{figures/fig_acf_aki.png}
+\caption{AKI ($\rho{=}0.81$)}
+\end{subfigure}\\[0.8em]
+\begin{subfigure}[b]{0.78\textwidth}
+\includegraphics[width=\textwidth]{figures/fig_acf_sepsis.png}
+\caption{Sepsis ($\rho{=}0.74$)}
+\end{subfigure}
+\caption{Feature imputation fraction vs.\ adaptation-induced autocorrelation change ($\Delta$ACF). Laboratory values (high imputation, upper quadrant) undergo large temporal restructuring; continuously-monitored vitals (lower left) are preserved. Spearman $\rho$ indicates the correlation between imputation fraction and ACF change, both $p < 10^{-9}$.}
+\label{fig:acf}
+\end{figure*}
+
+
+% ============================================================
+% APPENDIX G: Systematic Method Comparison
+% ============================================================
+\section{Systematic Method Comparison}
+\label{app:comparison}
+
+\Cref{tab:comparison} compares representative methods from five categories across seven dimensions that collectively define the desiderata for clinical time-series domain adaptation with a frozen predictor.
+No prior method satisfies all seven.
+
+\begin{table*}[t]
+\centering
+\caption{Systematic comparison of domain adaptation and frozen-model methods across key desiderata.
+\textbf{Model Frozen}: entire target predictor weights fixed (\cmark), partially fixed (P), or trainable (\xmark).
+\textbf{Adapt.\ Space}: Input (I), Representation (R), Weight (W), or Output (O) space.
+\textbf{Sample-Cond.}: transformation depends on the input instance.
+\textbf{Retrieval}: uses a domain-specific datastore for per-instance conditioning.
+\textbf{Var.-Len.\ TS}: handles variable-length time series natively.
+\textbf{Clinical Tasks}: number of distinct clinical prediction tasks evaluated ($0$ = non-clinical only).
+Only our method satisfies all desiderata simultaneously.}
+\label{tab:comparison}
+\vskip 0.1in
+\footnotesize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+\textbf{Method} &
+\rotatebox{60}{\textbf{Model Frozen}} &
+\rotatebox{60}{\textbf{Adapt.\ Space}} &
+\rotatebox{60}{\textbf{Sample-Cond.}} &
+\rotatebox{60}{\textbf{Retrieval}} &
+\rotatebox{60}{\textbf{Var.-Len.\ TS}} &
+\rotatebox{60}{\textbf{Clinical Tasks}} \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Clinical DA}} \\
+VRADA~\citep{purushotham2017vrada}   & \xmark & R & \cmark & \xmark & \cmark & 1 \\
+OTTEHR~\citep{ottehr2025}            & \xmark & R & \xmark & \xmark & \xmark & 3 \\
+Mutnuri et al.~\citep{mutnuri2024}   & \xmark & W & \cmark & \xmark & \cmark & 3 \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{General TS-DA}} \\
+CoDATS~\citep{wilson2020codats}       & \xmark & R & \cmark & \xmark & \xmark & 0 \\
+RAINCOAT~\citep{he2023raincoat}       & \xmark & R & \cmark & \xmark & \xmark & 0 \\
+CLUDA~\citep{ozyurt2023cluda}         & \xmark & R & \cmark & \xmark & \xmark & 0 \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Frozen-model / Input-space}} \\
+VPT~\citep{jia2022vpt}                & \cmark & I & \xmark & \xmark & \xmark & 0 \\
+Time-LLM~\citep{jin2024timellm}       & \cmark & I & \xmark & \xmark & \xmark & 0 \\
+TATO~\citep{qiu2026tato}              & \cmark & I & P      & \xmark & \cmark & 0 \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Retrieval-augmented}} \\
+$k$NN-MT~\citep{khandelwal2021knnmt}  & \cmark & O & \cmark & \cmark & \cmark & 0 \\
+TS-RAG~\citep{ning2025tsrag}          & \xmark & R & \cmark & \cmark & \cmark & 0 \\
+\midrule
+\multicolumn{7}{@{}l}{\textit{Foundation model}} \\
+ICareFM~\citep{burger2025icarefm}     & \xmark & W & \cmark & \xmark & \cmark & 4 \\
+\midrule
+\textbf{\retr{} (Ours)} & \cmark & \textbf{I} & \cmark & \cmark & \cmark & \textbf{5} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Representation-space (R) and weight-space (W) methods are architecturally coupled to the model's internals and cannot be formulated without access to intermediate representations or weight tensors, violating the frozen-model constraint.
+Input-space methods (VPT, Time-LLM, TATO) keep the model frozen but use input-independent perturbations (VPT, Time-LLM) or handcrafted transforms (TATO), limiting their capacity for heterogeneous clinical data where dozens of features shift simultaneously in different ways.
+$k$NN-MT~\citep{khandelwal2021knnmt} is closest in spirit (frozen model, retrieval, per-timestep conditioning) but operates in output space (interpolating token distributions) rather than input space.
+\retr{} is the only method combining a fully frozen predictor, learned input-space adaptation, sample-conditional neural transformation, target-domain retrieval, variable-length support, and evaluation across five clinical tasks.
+
+
+% ============================================================
+% APPENDIX H: Computational Cost
+% ============================================================
+\section{Computational Cost}
+\label{app:compute}
+
+\begin{table}[t]
+\centering
+\caption{Training time per task (single seed, V100S-32GB). Phase~1 checkpoints are reusable across experiments with matching architecture.}
+\label{tab:compute}
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Task} & \textbf{Phase 1 (h)} & \textbf{Phase 2 (h)} & \textbf{Total (h)} \\
+\midrule
+Mortality & 4.5  & 9.0  & 13.5 \\
+AKI       & 6.8  & 15.8 & 22.5 \\
+Sepsis    & 6.8  & 13.5 & 20.3 \\
+LoS       & 7.5  & 15.0 & 22.5 \\
+KF        & 2.5  & 5.0  & 7.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{tab:compute} reports single-seed training time per task. Phase~1 checkpoints are reusable, amortizing pretraining cost across experiments.
+
+\paragraph{Parameter counts.}
+Adapter: 2.59--2.88M parameters depending on task (dominated by 7 AxialBlocks at 265K each, plus 2--3 cross-attention blocks).
+Frozen LSTMs: 170K (Sepsis) to 1.42M (AKI).
+The adapter-to-model ratio ranges from 2.0$\times$ (AKI) to 15.2$\times$ (Sepsis), but the adapter operates in input space and never modifies the frozen model's parameters.
+
+\paragraph{Inference overhead.}
+At test time, the memory bank is pre-built once ($\sim$6 minutes for AKI on V100S).
+Per-stay inference latency is $\sim$15.5\,ms (AKI, including $k$-NN retrieval from a 424K-window bank), representing $\sim$9$\times$ overhead over the frozen LSTM alone; this is acceptable for clinical decision support where predictions are computed per hour.
+
+\paragraph{Total compute budget.}
+Full development required $\sim$2,400 GPU-hours across $\sim$700 experiments (architecture search, ablation studies, multi-seed validation, DA baselines, \hirid{} experiments).
+Minimum reproduction of the best configuration per task (single seed, all five EHR tasks plus five AdaTime datasets): $\sim$107 GPU-hours on V100S-32GB.
+Hardware: NVIDIA V100S-32GB (primary), A6000-48GB, RTX 3090-24GB, L40S-48GB, and A100-40GB (SLURM cluster).
+
+\paragraph{AdaTime.}
+Per-dataset training: $\sim$21\,h across 10 DA scenarios $\times$ 5 seeds.
+Total AdaTime compute: $\sim$108 GPU-hours for full 5-seed validation across all 5 datasets.

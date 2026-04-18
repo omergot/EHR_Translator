@@ -1,0 +1,8 @@
+% SD4H Conclusion — TARGET: ~0.25 pages
+% Brief, no new claims. Summarize + 1-2 sentences future work.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We introduced input-space domain adaptation: adapt the data, not the model. A single method outperforms every comparable baseline: four frozen-backbone DA methods (by $1.3$--$3.7\times$), affine renormalization, end-to-end LSTM fine-tuning, three end-to-end clinical DA methods on the classification tasks (Appendix~\ref{app:implementation}), and all eleven published end-to-end methods on AdaTime under its own training recipe, while matching or exceeding the \eicu{}-native LSTM on four of five clinical tasks and surpassing the \mimic{}-native LSTM on AKI and LoS.
+Because the predictor's weights never change, its SaMD clearance~\citep{fda2021samd} remains intact.

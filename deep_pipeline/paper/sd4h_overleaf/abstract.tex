@@ -1,0 +1,10 @@
+% SD4H Abstract — TARGET: 140-160 words
+% Farquhar 5-sentence: (1) Achievement, (2) Why hard, (3) How, (4) Evidence, (5) Most remarkable
+\begin{abstract}
+Clinical predictors degrade across hospitals, but regulatory and hardware constraints often forbid changing the validated model.
+We introduce \retr{}, a retrieval-guided input-space adapter that adapts the data, not the model, while the downstream predictor stays strictly frozen.
+Most domain adaptation methods assume source labels are unavailable and the encoder is trainable. These assumptions fit many settings, but a complementary and under-studied regime arises when the target predictor's weights cannot be changed and source labels are available, a common situation in SaMD transfer, firmware-embedded models, and edge deployment. In this regime, alignment losses cannot propagate through a frozen encoder and classical DA is structurally blocked.
+\retr{} encodes source windows, retrieves $k$ nearest target exemplars per timestep, and fuses them via cross-attention before decoding.
+Across five ICU tasks (\eicu{}, \hirid{}~$\to$~\mimic{}) and five AdaTime benchmarks, a single method strictly outperforms every comparable baseline: all four frozen-backbone DA methods, an affine statistics baseline, end-to-end fine-tuning of the predictor, three end-to-end DA methods on the clinical classification tasks, and all eleven published end-to-end methods on AdaTime under that benchmark's own training protocol.
+Adapted predictions exceed the target-native LSTM on two of five tasks and the source-native LSTM on four of five, with AKI reaching 91.1 \aucroc{} ($+16.1$ \aucpr{} over target-native).
+\end{abstract}

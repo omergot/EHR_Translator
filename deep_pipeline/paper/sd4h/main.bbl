@@ -1,0 +1,131 @@
+\begin{thebibliography}{18}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Burger et~al.(2025)]{burger2025icarefm}
+Burger, M. et~al.
+\newblock A foundation model for intensive care.
+\newblock \emph{medRxiv preprint}, 2025.
+\newblock ML4H 2025 Spotlight.
+
+\bibitem[Ganin et~al.(2016)Ganin, Ustinova, Ajakan, Germain, Larochelle,
+  Laviolette, Marchand, and Lempitsky]{ganin2016dann}
+Ganin, Y., Ustinova, E., Ajakan, H., Germain, P., Larochelle, H., Laviolette,
+  F., Marchand, M., and Lempitsky, V.
+\newblock Domain-adversarial training of neural networks.
+\newblock \emph{Journal of Machine Learning Research (JMLR)}, 17:\penalty0
+  1--35, 2016.
+
+\bibitem[He et~al.(2023)]{he2023raincoat}
+He, H. et~al.
+\newblock Domain adaptation for time series under feature and label shifts.
+\newblock In \emph{Proceedings of the International Conference on Machine
+  Learning (ICML)}, 2023.
+
+\bibitem[Jia et~al.(2022)]{jia2022vpt}
+Jia, M. et~al.
+\newblock Visual prompt tuning.
+\newblock In \emph{Proceedings of the European Conference on Computer Vision
+  (ECCV)}, 2022.
+
+\bibitem[Jin et~al.(2024)Jin, Wang, Ma, Chu, Zhang, Shi, Chen, Liang, Li, Pan,
+  and Wen]{jin2024timellm}
+Jin, M., Wang, S., Ma, L., Chu, Z., Zhang, J.~Y., Shi, X., Chen, P.-Y., Liang,
+  Y., Li, Y.-F., Pan, S., and Wen, Q.
+\newblock {Time-LLM}: Time series forecasting by reprogramming large language
+  models.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2024.
+
+\bibitem[Khandelwal et~al.(2021)Khandelwal, Fan, Jurafsky, Zettlemoyer, and
+  Lewis]{khandelwal2021knnmt}
+Khandelwal, U., Fan, A., Jurafsky, D., Zettlemoyer, L., and Lewis, M.
+\newblock Nearest neighbor machine translation.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2021.
+
+\bibitem[Liu et~al.(2024)]{liu2024acon}
+Liu, J. et~al.
+\newblock Boosting transferability and discriminability for time series domain
+  adaptation.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2024.
+
+\bibitem[Mutnuri et~al.(2024)]{mutnuri2024}
+Mutnuri, M.~K. et~al.
+\newblock Using domain adaptation and inductive transfer learning to improve
+  patient outcome prediction in the intensive care unit.
+\newblock \emph{JMIR Medical Informatics}, 2024.
+
+\bibitem[Ning et~al.(2025)]{ning2025tsrag}
+Ning, K. et~al.
+\newblock {TS-RAG}: Retrieval-augmented generation based time series foundation
+  models are stronger zero-shot forecaster.
+\newblock In \emph{Advances in Neural Information Processing Systems
+  (NeurIPS)}, 2025.
+
+\bibitem[{OTTEHR Authors}(2025)]{ottehr2025}
+{OTTEHR Authors}.
+\newblock Transport-based transfer learning on electronic health records.
+\newblock \emph{Journal of the American Medical Informatics Association},
+  33\penalty0 (1):\penalty0 15, 2025.
+
+\bibitem[Ozyurt et~al.(2023)Ozyurt, Feuerriegel, and Zhang]{ozyurt2023cluda}
+Ozyurt, Y., Feuerriegel, S., and Zhang, C.
+\newblock Contrastive learning for unsupervised domain adaptation of time
+  series.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2023.
+
+\bibitem[Purushotham et~al.(2017)Purushotham, Carvalho, Nilanon, and
+  Liu]{purushotham2017vrada}
+Purushotham, S., Carvalho, W., Nilanon, T., and Liu, Y.
+\newblock Variational recurrent adversarial deep domain adaptation.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2017.
+
+\bibitem[Qiu et~al.(2026)Qiu, Cen, Pei, Wang, and Wang]{qiu2026tato}
+Qiu, Y., Cen, Y., Pei, J., Wang, H., and Wang, W.
+\newblock Adapt data to model: Adaptive transformation optimization for
+  domain-shared time series foundation models.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2026.
+
+\bibitem[Ragab et~al.(2023)Ragab, Eldele, et~al.]{ragab2023adatime}
+Ragab, M., Eldele, E., et~al.
+\newblock {ADATIME}: A benchmarking suite for domain adaptation on time series
+  data.
+\newblock \emph{ACM Transactions on Knowledge Discovery from Data (TKDD)},
+  2023.
+
+\bibitem[Sun \& Saenko(2016)Sun and Saenko]{sun2016coral}
+Sun, B. and Saenko, K.
+\newblock Deep {CORAL}: Correlation alignment for deep domain adaptation.
+\newblock In \emph{Proceedings of the European Conference on Computer Vision
+  Workshops (ECCV-W)}, 2016.
+
+\bibitem[{U.S. Food and Drug Administration}(2021)]{fda2021samd}
+{U.S. Food and Drug Administration}.
+\newblock Artificial intelligence/machine learning ({AI/ML})-based software as
+  a medical device ({SaMD}) action plan.
+\newblock
+  \url{https://www.fda.gov/medical-devices/software-medical-device-samd}, 2021.
+
+\bibitem[van~de Water et~al.(2024)]{vandewater2024yaib}
+van~de Water, R. et~al.
+\newblock Yet another {ICU} benchmark: A flexible multi-center framework for
+  clinical {ML}.
+\newblock In \emph{Proceedings of the International Conference on Learning
+  Representations (ICLR)}, 2024.
+
+\bibitem[Wilson et~al.(2020)Wilson, Doppa, and Cook]{wilson2020codats}
+Wilson, G., Doppa, J.~R., and Cook, D.~J.
+\newblock Multi-source deep domain adaptation with weak supervision for
+  time-series sensor data.
+\newblock In \emph{Proceedings of the ACM SIGKDD International Conference on
+  Knowledge Discovery and Data Mining (KDD)}, 2020.
+
+\end{thebibliography}

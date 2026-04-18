@@ -527,7 +527,7 @@ experiments:
 - name: sepsis_C9_no_time_delta
   config: configs/ablation/sepsis_C9_no_time_delta.json
   output: experiments/results/sepsis_C9_no_time_delta.parquet
-  status: running
+  status: done
   branch: master
   server: '3090'
   notes: 'Part A ablation: C9_no_time_delta'
@@ -535,6 +535,13 @@ experiments:
   pid: 2522546
   started: '2026-04-17 15:59:29'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_C9_no_time_delta.json
+  finished: '2026-04-18 03:52:04'
+  results:
+    AUCROC: 0.0421
+    AUCPR: 0.0148
+    loss: -0.1083
+    brier: -0.0708
+    ece: -0.0689
 - name: debug_mortality_hirid
   config: configs/hirid/debug_mortality_hirid.json
   output: experiments/results/debug_mortality_hirid.parquet
@@ -6737,9 +6744,20 @@ experiments:
   config: configs/ablation/sepsis_C0_control.json
   output: runs/ablation/sepsis_C0_control/eval_sepsis.parquet
   command: translate_and_eval
-  status: pending
+  status: done
   server: '3090'
   notes: Eval-only for trained checkpoint (training done, missing result.json)
+  gpu: 0
+  pid: 2546918
+  started: '2026-04-18 03:52:09'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/eval_sepsis_C0_control.json
+  finished: '2026-04-18 04:08:29'
+  results:
+    AUCROC: 0.0512
+    AUCPR: 0.0171
+    loss: -0.0948
+    brier: -0.054
+    ece: -0.0714
 - name: los_C3_no_mmd_eval
   config: configs/ablation/los_C3_no_mmd.json
   output: runs/los_C3_no_mmd_eval/eval_los.parquet
@@ -7331,10 +7349,21 @@ experiments:
 - name: mort_c2_nf_C6_no_pretrain
   config: configs/ablation/mort_c2_nf_C6_no_pretrain.json
   output: runs/ablation/mort_c2_nf_C6_no_pretrain/eval_mortality.parquet
-  status: pending
+  status: done
   server: a6000
   branch: master
   notes: 'Mort cross2 nf ablation: C6 no pretrain (requeue #2: worktree updated with grad_fn fix)'
+  gpu: 3
+  pid: 3797608
+  started: '2026-04-18 01:59:50'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C6_no_pretrain.json
+  finished: '2026-04-18 03:09:13'
+  results:
+    AUCROC: -0.1318
+    AUCPR: -0.1781
+    loss: 0.0839
+    brier: -0.0178
+    ece: 0.0207
 - name: mort_c2_nf_C7_no_target_norm
   config: configs/ablation/mort_c2_nf_C7_no_target_norm.json
   output: runs/ablation/mort_c2_nf_C7_no_target_norm/eval_mortality.parquet
@@ -7356,7 +7385,7 @@ experiments:
 - name: mort_c2_nf_C8_residual
   config: configs/ablation/mort_c2_nf_C8_residual.json
   output: runs/ablation/mort_c2_nf_C8_residual/eval_mortality.parquet
-  status: running
+  status: done
   server: a6000
   branch: master
   notes: 'Mort cross2 nf ablation: C8 residual output mode (requeue: fix grad_fn crash)'
@@ -7364,6 +7393,13 @@ experiments:
   pid: 3498054
   started: '2026-04-17 21:24:13'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_C8_residual.json
+  finished: '2026-04-18 02:46:45'
+  results:
+    AUCROC: 0.046
+    AUCPR: 0.0511
+    loss: -0.0736
+    brier: -0.0335
+    ece: -0.0477
 - name: mort_c2_nf_C9_no_time_delta
   config: configs/ablation/mort_c2_nf_C9_no_time_delta.json
   output: runs/ablation/mort_c2_nf_C9_no_time_delta/eval_mortality.parquet
@@ -7457,7 +7493,7 @@ experiments:
 - name: aki_nf_C4_no_target_task
   config: configs/ablation/aki_nf_C4_no_target_task.json
   output: runs/ablation/aki_nf_C4_no_target_task/eval_aki.parquet
-  status: running
+  status: done
   server: a6000
   branch: master
   notes: 'AKI nf ablation: C4 no target task loss (requeue: fix grad_fn crash)'
@@ -7465,6 +7501,13 @@ experiments:
   pid: 3520965
   started: '2026-04-17 21:47:47'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C4_no_target_task.json
+  finished: '2026-04-18 06:48:37'
+  results:
+    AUCROC: 0.0237
+    AUCPR: 0.0707
+    loss: -0.05
+    brier: 0.0052
+    ece: 0.0366
 - name: aki_nf_C6_no_pretrain
   config: configs/ablation/aki_nf_C6_no_pretrain.json
   output: runs/ablation/aki_nf_C6_no_pretrain/eval_aki.parquet
@@ -7522,7 +7565,7 @@ experiments:
 - name: aki_nf_C9_no_time_delta
   config: configs/ablation/aki_nf_C9_no_time_delta.json
   output: runs/ablation/aki_nf_C9_no_time_delta/eval_aki.parquet
-  status: running
+  status: done
   server: a6000
   branch: master
   notes: 'AKI nf ablation: C9 no triplet time delta'
@@ -7530,6 +7573,13 @@ experiments:
   pid: 2603119
   started: '2026-04-17 08:32:22'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_nf_C9_no_time_delta.json
+  finished: '2026-04-18 01:59:43'
+  results:
+    AUCROC: 0.0534
+    AUCPR: 0.1644
+    loss: -0.1087
+    brier: -0.0169
+    ece: 0.0035
 - name: los_nm_C0_control
   config: configs/ablation/los_nm_C0_control.json
   output: runs/los_nm_C0_control/eval_los.parquet

@@ -1,0 +1,37 @@
+% SD4H Introduction — TARGET: ~0.75 pages (~600-650 words)
+% Structure: (1) Clinical problem, (2) Existing approaches + ours, (3) Contributions
+
+\section{Introduction}
+\label{sec:introduction}
+
+Clinical prediction models trained at one hospital degrade when deployed at another due to differences in equipment calibration, clinical protocols, and patient populations.
+On the YAIB benchmark \citep{vandewater2024yaib}, a MIMIC-trained LSTM sepsis predictor drops from 82.0 to 71.6 \aucroc{} when evaluated on eICU data, and an acute kidney injury (AKI) model falls from 89.7 to 85.6, losses that materially affect clinical utility.
+Across five tasks spanning both classification and regression, cross-domain degradation ranges from 4 to 10 \aucroc{} points, undermining the reliability that bedside deployment demands.
+Retraining on the new domain is the standard remedy, but natively trained target-domain models perform only marginally better than the cross-domain frozen predictor, and modifying a validated predictor triggers regulatory re-certification under the FDA's Software as a Medical Device framework \citep{fda2021samd}.
+The same constraint arises outside healthcare: firmware-embedded models on wearable devices, industrial IoT sensors, and edge-deployed sleep-staging systems cannot be retrained per-user or per-deployment site.
+The result is a practical impasse: the model cannot be changed, yet it degrades on new data.
+
+Domain adaptation (DA) methods~\citep{ganin2016dann,sun2016coral,wilson2020codats} align feature representations through a jointly trained encoder, but a frozen encoder blocks gradient-based alignment.
+Frozen-model alternatives from vision and NLP \citep{jia2022vpt,qiu2026tato} prepend learnable tokens or apply handcrafted transforms, which lack the capacity for clinical time series where dozens of features shift simultaneously.
+We propose \emph{input-space domain adaptation}: adapt the data, not the model.
+Classical DA has made strong progress under the assumption that source labels are unavailable and the encoder is trainable. Our focus is complementary: a deployment setting in which the target predictor is locked after certification and source labels are available. Under this regime, task loss on the source can supervise an adapter directly. Fully unlabeled source--target adaptation remains outside our scope, and we make no claim to improve on it; we target the frozen-predictor regime, where existing methods are structurally blocked.
+\retr{} encodes source and target windows into a shared latent space, retrieves $k$ nearest target exemplars from a memory bank, and fuses them via cross-attention before decoding, while the predictor remains frozen.
+Prior input-space methods apply handcrafted or unconditional transforms to single modalities such as images or univariate foundation-model inputs. \retr{} learns instance-conditional, retrieval-guided transformations on multivariate clinical time series with variable-length stays while keeping the predictor strictly frozen, a combination we demonstrate across five clinical tasks, three downstream architectures, and five non-clinical benchmarks.
+
+\vspace{-0.5em}
+\paragraph{Contributions.}
+\vspace{-0.3em}
+\begin{itemize}[nosep,leftmargin=*]
+    \item \textbf{Frozen predictors can be adapted through input-space learning.}
+    When alignment gradients cannot reach a locked encoder, a retrieval-guided adapter trained on source task labels can reshape the input instead.
+    The predictor's weights and regulatory certification stay intact, yet adapted predictions beat four frozen-backbone DA methods (DANN, Deep CORAL, CoDATS, ACON~\citep{liu2024acon}) by $1.3$--$3.7\times$, an affine statistics-only baseline by a wide margin, and end-to-end fine-tuning of the predictor by $+0.007$ to $+0.032$ \aucroc{}, across five clinical tasks and two source domains (\eicu{}, \hirid{}~$\to$~\mimic{}).
+    To our knowledge, no prior work addresses per-timestep frozen-predictor DA on clinical EHR, a setting that combines a strictly locked downstream model with instance-level target retrieval.
+
+    \item \textbf{Input-space adaptation can exceed natively trained models.}
+    On AKI and LoS, the adapted eICU signal surpasses both the eICU-native and MIMIC-native LSTMs (AKI $91.1$ vs $89.7$ \aucroc{}, $+16.1$ \aucpr{} reaching $72.9$ from $56.8$; LoS $37.2$\,h vs $40.6$\,h MAE). Mortality ($85.7$ vs $85.5$) and Sepsis ($77.8$ vs $74.0$) also surpass the eICU-native LSTM.
+
+    \item \textbf{The approach is general across domains, architectures, and modalities.}
+    On five non-clinical AdaTime benchmarks (wearable, EEG, industrial) with a frozen 1D-CNN, the adapter beats all eleven published end-to-end DA methods that retrain the full model ($+2.6$ mean Macro-F1), trained under AdaTime's exact recipe (Appendix~\ref{app:implementation}).
+    Separately, an LSTM-trained adapter transfers zero-shot to frozen GRU and TCN predictors (47--86\% of LSTM gain retained).
+    Input-space adaptation is not specific to clinical time series: the same architecture applies whenever the downstream predictor must remain frozen.
+\end{itemize}

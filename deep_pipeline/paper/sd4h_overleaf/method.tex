@@ -1,0 +1,68 @@
+% SD4H Methods — TARGET: ~1.0 page in ICML two-column format
+
+\section{Methods}
+\label{sec:method}
+
+\subsection{Problem Setting}
+\label{sec:problem}
+
+Let $\mathcal{X}_S \sim P_S$ denote source-domain clinical time series (\eicu{} or \hirid{}) and $\mathcal{X}_T \sim P_T$ denote the target domain (\mimic{}).
+A predictor $f_T : \mathbb{R}^{T \times F} \to \mathbb{R}^{T \times C}$, trained on $\mathcal{X}_T$, is \emph{entirely frozen}: all parameters satisfy $\nabla_\phi f_T = 0$.
+We learn an adapter $g_\theta : \mathbb{R}^{T \times F} \to \mathbb{R}^{T \times F}$ that maps source inputs into the target input space so that the composite system $f_T \circ g_\theta$ performs well on source labels $y_S$:
+\begin{multline}
+\label{eq:objective}
+\mathcal{L}(\theta) = \mathcal{L}_{\mathrm{task}}\!\bigl(f_T(g_\theta(x_S)),\, y_S\bigr) \\
++ \lambda_{\mathrm{fid}}\,\mathcal{L}_{\mathrm{fid}}\!\bigl(g_\theta(x_S),\, x_S\bigr)
++ \lambda_{\mathrm{range}}\,\mathcal{L}_{\mathrm{range}}\!\bigl(g_\theta(x_S)\bigr),
+\end{multline}
+where $\mathcal{L}_{\mathrm{task}}$ is cross-entropy (classification) or MSE (regression) evaluated through the frozen predictor, $\mathcal{L}_{\mathrm{fid}}$ is an MSE fidelity penalty regularizing toward identity, and $\mathcal{L}_{\mathrm{range}}$ penalizes outputs outside the physiological range observed in $\mathcal{X}_T$.
+\Cref{eq:objective} governs Phase~2 (adaptation training); Phase~1 uses a separate reconstruction objective on target data only (\S\ref{sec:training}).
+The frozen constraint reflects deployment reality: under the FDA SaMD framework, validated predictors cannot be modified post-certification~\citep{fda2021samd}.
+
+\subsection{Retrieval-Guided Architecture}
+\label{sec:architecture}
+
+\input{figures/fig_architecture}
+
+The \retr{} architecture (\Cref{fig:arch}) comprises four components: a shared encoder, a target-domain memory bank, cross-attention fusion blocks, and a decoder.
+
+\paragraph{Shared encoder and memory bank.}
+A shared encoder $E_\phi$ maps both source and target windows to a latent space of dimension $d_{\text{latent}}$: $z_s = E_\phi(x_s) \in \mathbb{R}^{T \times d_{\text{latent}}}$.
+Each encoder and decoder layer is an \emph{axial attention block} that applies self-attention along both temporal and feature dimensions, so the model handles per-feature dynamics and cross-feature interactions without concatenating the full $T \times F$ sequence.
+All target-domain training data is encoded and segmented into temporal windows of size $W$ timesteps, each mean-pooled into a compact descriptor (Appendix~\ref{app:implementation}).
+The resulting memory bank $\mathcal{M} = \{E_\phi(x_T^j)\}_{j=1}^{|\mathcal{X}_T|}$ resides on GPU for fast retrieval and is rebuilt every $R$ epochs as the encoder's representations evolve.
+
+\paragraph{Per-timestep $k$-NN retrieval.}
+For each source timestep $t$, a query is formed by mean-pooling source latents over a backward-looking window $[\max(0, t{-}W{+}1),\, t]$, preserving causal consistency.
+Learned importance weights $\sigma(\mathbf{w}) \in [0,1]^{d_{\text{latent}}}$ modulate a weighted Euclidean distance over latent dimensions, and the $k$ nearest target windows are retrieved, with $k$ selected by grid search (Appendix~\ref{app:implementation}).
+This per-timestep design matches local physiological states rather than full trajectories and outperforms wider retrieval windows in all tasks.
+
+\paragraph{Cross-attention fusion.}
+Retrieved target context is integrated through $L$ stacked cross-attention blocks.
+Let $\mathcal{N}_k(z_s^t)$ denote the $k$ nearest target latents for timestep $t$; each block computes:
+%
+\begin{equation}
+\label{eq:cross}
+z_{\mathrm{cross}}^t = \mathrm{CrossAttn}\!\bigl(Q{=}z_s^t,\; K{=}V{=}\mathcal{N}_k(z_s^t)\bigr) + z_s^t,
+\end{equation}
+%
+followed by causal self-attention and a feed-forward network, both with residual connections and pre-LayerNorm.
+Cross-attention allows selective, feature-level borrowing from target exemplars, so the model attends to different features from different neighbors rather than uniformly interpolating as in $k$NN-MT~\citep{khandelwal2021knnmt}.
+The decoder $D_\psi$ maps the fused representations back to input space:
+%
+\begin{equation}
+\label{eq:decode}
+\tilde{x} = D_\psi(z_{\mathrm{cross}}) \in \mathbb{R}^{T \times F}.
+\end{equation}
+%
+The cross-attention depth $L$ is selected per task (Appendix~\ref{app:implementation}).
+
+\subsection{Training}
+\label{sec:training}
+
+Training follows a two-phase protocol.
+\textbf{Phase~1} (autoencoder pretrain): $E_\phi$ and $D_\psi$ are trained on target data $\mathcal{X}_T$ only with a reconstruction objective; ablations (Appendix~\ref{app:ablation}) show this phase is critical.
+\textbf{Phase~2} (adaptation): end-to-end training on source data through the frozen predictor with the objective of \Cref{eq:objective}, where $\mathcal{L}_{\mathrm{task}}$ supplies the primary gradient through $f_T$ and $\mathcal{L}_{\mathrm{fid}}$, $\mathcal{L}_{\mathrm{range}}$ regularize the output; the memory bank is rebuilt every $R$ epochs as representations evolve.
+
+Before adaptation, source features undergo cross-domain normalization: an affine transform matching per-feature mean and variance to target statistics, computed once from training data.
+Attention is causal for per-timestep tasks (AKI, Sepsis, LoS) and bidirectional for per-stay tasks (Mortality, KF), preventing information leakage across time. AdaTime datasets (HAR, HHAR, WISDM, SSC, MFD) present fixed-length windows with a single label per window and use bidirectional attention throughout.

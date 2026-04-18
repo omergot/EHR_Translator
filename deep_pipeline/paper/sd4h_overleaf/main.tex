@@ -1,0 +1,119 @@
+%%%%%%%% SD4H @ ICML 2026 — Structured Data for Health Workshop %%%%%%%%
+% 4 pages + unlimited references and appendices
+% Double-blind, non-archival
+
+\documentclass{article}
+
+% Recommended packages
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+
+% Blind submission
+\usepackage{icml2026}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{enumitem}
+\usepackage{pifont}
+\usepackage{tikz}
+\usepackage{dblfloatfix}  % Allow double-column floats at bottom of page
+
+% More aggressive float placement — tables should fit even when prose is dense
+\renewcommand{\topfraction}{0.9}
+\renewcommand{\bottomfraction}{0.8}
+\renewcommand{\dbltopfraction}{0.9}
+\renewcommand{\textfraction}{0.07}
+\renewcommand{\floatpagefraction}{0.7}
+\renewcommand{\dblfloatpagefraction}{0.7}
+
+% Checkmark / crossmark symbols for comparison tables
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit, calc, backgrounds}
+
+% --- Custom commands ---
+\newcommand{\ours}{EHR-Adapter}
+\newcommand{\retr}{\textsc{RetrAdapter}}
+\newcommand{\eicu}{eICU}
+\newcommand{\mimic}{MIMIC-IV}
+\newcommand{\hirid}{HiRID}
+\newcommand{\aucroc}{AUROC}
+\newcommand{\aucpr}{AUCPR}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% Short running title
+\icmltitlerunning{Input-Space Domain Adaptation for Frozen Time-Series Predictors}
+
+\begin{document}
+
+\twocolumn[
+  \icmltitle{Retrieval-Guided Input-Space Adaptation\\for Frozen Time-Series Predictors}
+
+  % Author info hidden in blind submission — icml2026.sty handles this
+  \icmlsetsymbol{equal}{*}
+
+  \begin{icmlauthorlist}
+    \icmlauthor{Anonymous Author 1}{inst1}
+    \icmlauthor{Anonymous Author 2}{inst1}
+  \end{icmlauthorlist}
+
+  \icmlaffiliation{inst1}{Anonymous Institution}
+
+  \icmlcorrespondingauthor{Anonymous Author 1}{anon@example.com}
+
+  \icmlkeywords{domain adaptation, frozen model, time series, retrieval-augmented adaptation, clinical ML, input-space adaptation}
+
+  \vskip 0.3in
+]
+
+\printAffiliationsAndNotice{}
+
+% ============================================================
+% ABSTRACT (~150 words)
+% ============================================================
+\input{abstract}
+
+% ============================================================
+% 1. INTRODUCTION (~0.75 pages)
+% ============================================================
+\input{introduction}
+
+% ============================================================
+% 2. METHOD (~1.25 pages)
+% ============================================================
+\input{method}
+
+% ============================================================
+% 3. EXPERIMENTS (~1.5 pages)
+% ============================================================
+\input{experiments}
+
+% ============================================================
+% 4. CONCLUSION (~0.25 pages)
+% ============================================================
+\input{conclusion}
+
+% ============================================================
+% REFERENCES (unlimited)
+% ============================================================
+\bibliography{references}
+\bibliographystyle{icml2026}
+
+% ============================================================
+% APPENDIX (unlimited)
+% ============================================================
+\appendix
+\input{appendix}
+
+\end{document}

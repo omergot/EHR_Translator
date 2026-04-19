@@ -41,6 +41,40 @@ def load_config(config_path: Path) -> dict:
     with open(config_path, 'r') as f:
         return json.load(f)
 
+def _get_split_seed(config: dict) -> int:
+    """Return the canonical data-split seed (fixed to 2222 by default).
+
+    This seed controls YAIB's StratifiedKFold(random_state=...) inside
+    preprocess_data, i.e. the train/val/test partition. Historically, the
+    top-level ``config["seed"]`` was reused for this and therefore caused
+    multi-seed runs to land on different folds, conflating training
+    randomness with test-fold resampling. ``split_seed`` is now decoupled
+    from the training seed and defaults to 2222 so that historical
+    single-seed runs (which used ``seed: 2222``) remain comparable.
+    """
+    return int(config.get("split_seed", 2222))
+
+
+def _get_training_seed(config: dict) -> int:
+    """Return the training seed (weight init, dropout, shuffle ordering).
+
+    Preference order (first found wins):
+      1) ``config["training"]["training_seed"]`` (explicit override)
+      2) ``config["training"]["seed"]``
+      3) ``config["seed"]``
+      4) 42
+    """
+    training = config.get("training", {})
+    ts = training.get("training_seed")
+    if ts is not None:
+        return int(ts)
+    if training.get("seed") is not None:
+        return int(training["seed"])
+    if config.get("seed") is not None:
+        return int(config["seed"])
+    return 42
+
+
 def _build_runtime_from_config(
     config: dict,
     data_dir_override: str | None = None,
@@ -49,7 +83,10 @@ def _build_runtime_from_config(
 ) -> YAIBRuntime:
     data_dir = Path(data_dir_override) if data_dir_override else Path(config["data_dir"])
     batch_size = batch_size_override if batch_size_override is not None else config.get("batch_size", 1)
-    seed = seed_override if seed_override is not None else config.get("seed", 42)
+    # Data-split seed: canonical fixed fold unless explicitly overridden.
+    # NOTE: seed_override is retained for backward compatibility with callers,
+    # but it should be treated as a split_seed override (not a training seed).
+    seed = seed_override if seed_override is not None else _get_split_seed(config)
     vars_cfg = copy.deepcopy(config["vars"])
     file_names_cfg = copy.deepcopy(config["file_names"])
     return YAIBRuntime(
@@ -81,7 +118,16 @@ def _get_training_config(config: dict) -> dict:
         "lambda_mmd": training.get("lambda_mmd", 0.0),
         "lambda_mmd_transition": training.get("lambda_mmd_transition", 0.0),
         "early_stopping_patience": training.get("early_stopping_patience", 0),
-        "seed": training.get("seed", config.get("seed", 42)),
+        # NOTE: "seed" here historically doubled as both the data-split seed
+        # (YAIB StratifiedKFold random_state) AND the training seed. It has
+        # been decoupled: the data-split seed is now resolved via
+        # _get_split_seed() (defaulting to 2222) and the training seed via
+        # _get_training_seed(). "seed" remains in this dict for backward
+        # compatibility with downstream code that reads training_cfg["seed"],
+        # but it is NO LONGER passed to YAIBRuntime as the split seed.
+        "seed": _get_training_seed(config),
+        "split_seed": _get_split_seed(config),
+        "training_seed_resolved": _get_training_seed(config),
         "best_metric": training.get("best_metric", config.get("best_metric", "val_total")),
         "oversampling_factor": training.get("oversampling_factor", 0),
         # C1: Focal loss
@@ -596,10 +642,24 @@ def train_translator(args):
         logging.info("  translator.%s: %s", k, v)
     logging.info("==============================")
 
-    # training_seed controls weight init, dropout, shuffle ordering.
-    # seed (YAIB split seed) is used separately for _build_runtime_from_config.
-    training_seed = training_cfg.get("training_seed") or training_cfg["seed"]
-    logging.info("  data_split_seed: %s, training_seed: %s", training_cfg["seed"], training_seed)
+    # Decoupled seeds (see _get_split_seed / _get_training_seed):
+    #   split_seed    -> YAIB StratifiedKFold random_state (fold identity)
+    #   training_seed -> weight init, dropout, shuffle ordering
+    # NOTE: prior to the split_seed fix, varying the top-level "seed"
+    # silently resampled the test fold. split_seed now defaults to 2222
+    # (canonical fold). training_seed comes from config["seed"] (or
+    # training.training_seed / training.seed if explicitly set).
+    split_seed = training_cfg["split_seed"]
+    training_seed = training_cfg["training_seed_resolved"]
+    logging.info(
+        "=== Seeds (decoupled) === split_seed=%s (YAIB fold); training_seed=%s (weight init / shuffle)",
+        split_seed, training_seed,
+    )
+    if split_seed != 2222:
+        logging.warning(
+            "split_seed=%s is NOT the canonical value 2222; results may not be "
+            "directly comparable to historical single-seed runs.", split_seed,
+        )
     import random
     random.seed(training_seed)
     torch.manual_seed(training_seed)
@@ -613,7 +673,7 @@ def train_translator(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         train_loader = yaib_runtime.create_dataloader(
@@ -664,7 +724,7 @@ def train_translator(args):
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
         if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
-                train_loader, neg_subsample, seed=config.get("seed", 2222)
+                train_loader, neg_subsample, seed=_get_split_seed(config)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
@@ -690,7 +750,7 @@ def train_translator(args):
                 config,
                 data_dir_override=target_data_dir,
                 batch_size_override=training_cfg["batch_size"],
-                seed_override=training_cfg["seed"],
+                seed_override=training_cfg["split_seed"],
             )
             target_runtime.load_data()
             target_train_loader = target_runtime.create_dataloader(
@@ -871,7 +931,7 @@ def train_translator(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         # Load baseline UNFROZEN — the key difference
@@ -923,7 +983,7 @@ def train_translator(args):
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
         if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
-                train_loader, neg_subsample, seed=config.get("seed", 2222)
+                train_loader, neg_subsample, seed=_get_split_seed(config)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
@@ -949,7 +1009,7 @@ def train_translator(args):
                 config,
                 data_dir_override=target_data_dir,
                 batch_size_override=training_cfg["batch_size"],
-                seed_override=training_cfg["seed"],
+                seed_override=training_cfg["split_seed"],
             )
             target_runtime.load_data()
             target_train_loader = target_runtime.create_dataloader(
@@ -1076,7 +1136,7 @@ def train_translator(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         train_loader = yaib_runtime.create_dataloader(
@@ -1118,7 +1178,7 @@ def train_translator(args):
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
         if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
-                train_loader, neg_subsample, seed=config.get("seed", 2222)
+                train_loader, neg_subsample, seed=_get_split_seed(config)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
@@ -1144,7 +1204,7 @@ def train_translator(args):
             config,
             data_dir_override=target_data_dir,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         target_runtime.load_data()
         target_train_loader = target_runtime.create_dataloader(
@@ -1280,7 +1340,7 @@ def train_translator(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         train_loader = yaib_runtime.create_dataloader(
@@ -1322,7 +1382,7 @@ def train_translator(args):
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
         if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
-                train_loader, neg_subsample, seed=config.get("seed", 2222)
+                train_loader, neg_subsample, seed=_get_split_seed(config)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
@@ -1348,7 +1408,7 @@ def train_translator(args):
             config,
             data_dir_override=target_data_dir,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         target_runtime.load_data()
         target_train_loader = target_runtime.create_dataloader(
@@ -1509,7 +1569,7 @@ def train_translator(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         train_loader = yaib_runtime.create_dataloader(
@@ -1550,7 +1610,7 @@ def train_translator(args):
         neg_subsample = training_cfg.get("negative_subsample_count", 0)
         if neg_subsample > 0 and task_type != "regression":
             train_loader = _apply_negative_subsampling(
-                train_loader, neg_subsample, seed=config.get("seed", 2222)
+                train_loader, neg_subsample, seed=_get_split_seed(config)
             )
 
         oversampling_factor = training_cfg.get("oversampling_factor", 0)
@@ -1576,7 +1636,7 @@ def train_translator(args):
             config,
             data_dir_override=target_data_dir,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         target_runtime.load_data()
         target_train_loader = target_runtime.create_dataloader(
@@ -1728,7 +1788,7 @@ def train_translator(args):
     yaib_runtime = _build_runtime_from_config(
         config,
         batch_size_override=training_cfg["batch_size"],
-        seed_override=training_cfg["seed"],
+        seed_override=training_cfg["split_seed"],
     )
     
     yaib_runtime.load_data()
@@ -1789,7 +1849,7 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         test_loader = yaib_runtime.create_dataloader(
@@ -1911,7 +1971,7 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         test_loader = yaib_runtime.create_dataloader(
@@ -2007,7 +2067,7 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         test_loader = yaib_runtime.create_dataloader(
@@ -2094,7 +2154,7 @@ def translate_and_eval(args):
             config,
             data_dir_override=config.get("target_data_dir"),
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         target_runtime.load_data()
         target_train_loader = target_runtime.create_dataloader(
@@ -2169,7 +2229,7 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         test_loader = yaib_runtime.create_dataloader(
@@ -2288,7 +2348,7 @@ def translate_and_eval(args):
         yaib_runtime = _build_runtime_from_config(
             config,
             batch_size_override=training_cfg["batch_size"],
-            seed_override=training_cfg["seed"],
+            seed_override=training_cfg["split_seed"],
         )
         yaib_runtime.load_data()
         test_loader = yaib_runtime.create_dataloader(

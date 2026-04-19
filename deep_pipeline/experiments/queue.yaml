@@ -8667,11 +8667,13 @@ experiments:
   notes: sepsis_v5_cross2 C0 (control) seed=2222
   output: runs/seeds/sepsis_v5_cross2_C0_control_s2222/eval_sepsis.parquet
   server: '3090'
-  status: running
+  status: failed
   gpu: 0
   pid: 2616722
   started: '2026-04-19 12:55:33'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross2_C0_control_s2222.json
+  finished: '2026-04-19 13:03:46'
+  error: Process died on 3090 (no success markers in log, no output file)
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C1_no_retrieval_s2222.json
   name: sepsis_v5_cross2_C1_no_retrieval_s2222
@@ -9599,3 +9601,969 @@ experiments:
   status: cancelled_split_seed_bug
   notes_split_seed_bug: previous top-level seed was used as YAIB StratifiedKFold random_state; cancelled/flagged by split_seed
     fix
+- branch: master
+  config: configs/seeds/mort_c2_nf_s7777.json
+  name: mort_c2_nf_s7777_v2
+  notes: Seed 7777 variant of mort_c2_nf control (V5 cross2, 30ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_nf_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: running
+  gpu: 0
+  pid: 1689952
+  started: '2026-04-19 13:06:56'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_s7777_v2.json
+- branch: master
+  config: configs/seeds/mort_c2_nf_s42.json
+  name: mort_c2_nf_s42_v2
+  notes: Seed 42 variant of mort_c2_nf control (V5 cross2, 30ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_nf_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: running
+  gpu: 1
+  pid: 1690287
+  started: '2026-04-19 13:07:03'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_nf_s42_v2.json
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_s7777.json
+  name: sepsis_v5_cross3_s7777_v2
+  notes: Seed 7777 variant of sepsis V5 cross3 (30ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_s42.json
+  name: sepsis_v5_cross3_s42_v2
+  notes: Seed 42 variant of sepsis V5 cross3 (30ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_s7777.json
+  name: sepsis_v5_cross2_s7777_v2
+  notes: Seed 7777 variant of sepsis V5 cross2 (30ep, n_cross=2) [superseded by full ablation suite] [requeued post split_seed+drop_last
+    fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_s42.json
+  name: sepsis_v5_cross2_s42_v2
+  notes: Seed 42 variant of sepsis V5 cross2 (30ep, n_cross=2) [superseded by full ablation suite] [requeued post split_seed+drop_last
+    fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_s7777.json
+  name: aki_v5_cross3_s7777_v2
+  notes: Seed 7777 variant of AKI V5 cross3 (35ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: running
+  gpu: 3
+  pid: 1690630
+  started: '2026-04-19 13:07:09'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_s7777_v2.json
+- branch: master
+  config: configs/seeds/aki_v5_cross3_s42.json
+  name: aki_v5_cross3_s42_v2
+  notes: Seed 42 variant of AKI V5 cross3 (35ep) [superseded by full ablation suite] [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_s7777.json
+  name: kf_v5_cross3_s7777_v2
+  notes: Seed 7777 variant of KF V5 cross3 (35ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_s42.json
+  name: kf_v5_cross3_s42_v2
+  notes: Seed 42 variant of KF V5 cross3 (35ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_nfnm_s7777.json
+  name: kf_nfnm_s7777_v2
+  notes: Seed 7777 variant of kf_nfnm control (35ep, no-fid no-mmd) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_nfnm_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_nfnm_s42.json
+  name: kf_nfnm_s42_v2
+  notes: Seed 42 variant of kf_nfnm control (35ep, no-fid no-mmd) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_nfnm_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_lr3e5_nfnm_s7777.json
+  name: kf_lr3e5_nfnm_s7777_v2
+  notes: Seed 7777 variant of kf_hp_K5_lr3e5 (35ep, lr=3e-5, no-fid no-mmd) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_lr3e5_nfnm_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_lr3e5_nfnm_s42.json
+  name: kf_lr3e5_nfnm_s42_v2
+  notes: Seed 42 variant of kf_hp_K5_lr3e5 (35ep, lr=3e-5, no-fid no-mmd) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_lr3e5_nfnm_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_s7777.json
+  name: los_v5_cross3_s7777_v2
+  notes: Seed 7777 variant of LoS V5 cross3 (35ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_s42.json
+  name: los_v5_cross3_s42_v2
+  notes: Seed 42 variant of LoS V5 cross3 (35ep) [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/mort_c2_C0_control_s7777.json
+  name: mort_c2_C0_control_s7777_v2
+  notes: mort_c2 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C0_control_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C1_no_retrieval_s7777.json
+  name: mort_c2_C1_no_retrieval_s7777_v2
+  notes: mort_c2 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C1_no_retrieval_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C2_no_feature_gate_s7777.json
+  name: mort_c2_C2_no_feature_gate_s7777_v2
+  notes: mort_c2 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C2_no_feature_gate_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C3_no_mmd_s7777.json
+  name: mort_c2_C3_no_mmd_s7777_v2
+  notes: mort_c2 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C3_no_mmd_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C4_no_target_task_s7777.json
+  name: mort_c2_C4_no_target_task_s7777_v2
+  notes: mort_c2 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C4_no_target_task_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C5_no_fidelity_s7777.json
+  name: mort_c2_C5_no_fidelity_s7777_v2
+  notes: mort_c2 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C5_no_fidelity_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C6_no_pretrain_s7777.json
+  name: mort_c2_C6_no_pretrain_s7777_v2
+  notes: mort_c2 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C6_no_pretrain_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C7_no_target_norm_s7777.json
+  name: mort_c2_C7_no_target_norm_s7777_v2
+  notes: mort_c2 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C7_no_target_norm_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C8_residual_s7777.json
+  name: mort_c2_C8_residual_s7777_v2
+  notes: mort_c2 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C8_residual_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C9_no_time_delta_s7777.json
+  name: mort_c2_C9_no_time_delta_s7777_v2
+  notes: mort_c2 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C9_no_time_delta_s7777_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C0_control_s42.json
+  name: mort_c2_C0_control_s42_v2
+  notes: mort_c2 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C0_control_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C1_no_retrieval_s42.json
+  name: mort_c2_C1_no_retrieval_s42_v2
+  notes: mort_c2 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C1_no_retrieval_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C2_no_feature_gate_s42.json
+  name: mort_c2_C2_no_feature_gate_s42_v2
+  notes: mort_c2 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C2_no_feature_gate_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C3_no_mmd_s42.json
+  name: mort_c2_C3_no_mmd_s42_v2
+  notes: mort_c2 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C3_no_mmd_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C4_no_target_task_s42.json
+  name: mort_c2_C4_no_target_task_s42_v2
+  notes: mort_c2 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C4_no_target_task_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C5_no_fidelity_s42.json
+  name: mort_c2_C5_no_fidelity_s42_v2
+  notes: mort_c2 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C5_no_fidelity_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C6_no_pretrain_s42.json
+  name: mort_c2_C6_no_pretrain_s42_v2
+  notes: mort_c2 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C6_no_pretrain_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C7_no_target_norm_s42.json
+  name: mort_c2_C7_no_target_norm_s42_v2
+  notes: mort_c2 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C7_no_target_norm_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C8_residual_s42.json
+  name: mort_c2_C8_residual_s42_v2
+  notes: mort_c2 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C8_residual_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/mort_c2_C9_no_time_delta_s42.json
+  name: mort_c2_C9_no_time_delta_s42_v2
+  notes: mort_c2 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/mort_c2_C9_no_time_delta_s42_v2/eval_mortality.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C0_control_s7777.json
+  name: sepsis_v5_cross3_C0_control_s7777_v2
+  notes: sepsis_v5_cross3 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C0_control_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_s7777.json
+  name: sepsis_v5_cross3_C1_no_retrieval_s7777_v2
+  notes: sepsis_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C1_no_retrieval_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C2_no_feature_gate_s7777.json
+  name: sepsis_v5_cross3_C2_no_feature_gate_s7777_v2
+  notes: sepsis_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C2_no_feature_gate_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C3_no_mmd_s7777.json
+  name: sepsis_v5_cross3_C3_no_mmd_s7777_v2
+  notes: sepsis_v5_cross3 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C3_no_mmd_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C4_no_target_task_s7777.json
+  name: sepsis_v5_cross3_C4_no_target_task_s7777_v2
+  notes: sepsis_v5_cross3 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C4_no_target_task_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C5_no_fidelity_s7777.json
+  name: sepsis_v5_cross3_C5_no_fidelity_s7777_v2
+  notes: sepsis_v5_cross3 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C5_no_fidelity_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C6_no_pretrain_s7777.json
+  name: sepsis_v5_cross3_C6_no_pretrain_s7777_v2
+  notes: sepsis_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C6_no_pretrain_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C7_no_target_norm_s7777.json
+  name: sepsis_v5_cross3_C7_no_target_norm_s7777_v2
+  notes: sepsis_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C7_no_target_norm_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C8_residual_s7777.json
+  name: sepsis_v5_cross3_C8_residual_s7777_v2
+  notes: sepsis_v5_cross3 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C8_residual_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C9_no_time_delta_s7777.json
+  name: sepsis_v5_cross3_C9_no_time_delta_s7777_v2
+  notes: sepsis_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C9_no_time_delta_s7777_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C0_control_s42.json
+  name: sepsis_v5_cross3_C0_control_s42_v2
+  notes: sepsis_v5_cross3 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C0_control_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_s42.json
+  name: sepsis_v5_cross3_C1_no_retrieval_s42_v2
+  notes: sepsis_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C1_no_retrieval_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C2_no_feature_gate_s42.json
+  name: sepsis_v5_cross3_C2_no_feature_gate_s42_v2
+  notes: sepsis_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C2_no_feature_gate_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C3_no_mmd_s42.json
+  name: sepsis_v5_cross3_C3_no_mmd_s42_v2
+  notes: sepsis_v5_cross3 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C3_no_mmd_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C4_no_target_task_s42.json
+  name: sepsis_v5_cross3_C4_no_target_task_s42_v2
+  notes: sepsis_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C4_no_target_task_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C5_no_fidelity_s42.json
+  name: sepsis_v5_cross3_C5_no_fidelity_s42_v2
+  notes: sepsis_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C5_no_fidelity_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C6_no_pretrain_s42.json
+  name: sepsis_v5_cross3_C6_no_pretrain_s42_v2
+  notes: sepsis_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C6_no_pretrain_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C7_no_target_norm_s42.json
+  name: sepsis_v5_cross3_C7_no_target_norm_s42_v2
+  notes: sepsis_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C7_no_target_norm_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C8_residual_s42.json
+  name: sepsis_v5_cross3_C8_residual_s42_v2
+  notes: sepsis_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C8_residual_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross3_C9_no_time_delta_s42.json
+  name: sepsis_v5_cross3_C9_no_time_delta_s42_v2
+  notes: sepsis_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross3_C9_no_time_delta_s42_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C0_control_s7777.json
+  name: sepsis_v5_cross2_C0_control_s7777_v2
+  notes: sepsis_v5_cross2 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C0_control_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C1_no_retrieval_s7777.json
+  name: sepsis_v5_cross2_C1_no_retrieval_s7777_v2
+  notes: sepsis_v5_cross2 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C1_no_retrieval_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C2_no_feature_gate_s7777.json
+  name: sepsis_v5_cross2_C2_no_feature_gate_s7777_v2
+  notes: sepsis_v5_cross2 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C2_no_feature_gate_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C3_no_mmd_s7777.json
+  name: sepsis_v5_cross2_C3_no_mmd_s7777_v2
+  notes: sepsis_v5_cross2 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C3_no_mmd_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C4_no_target_task_s7777.json
+  name: sepsis_v5_cross2_C4_no_target_task_s7777_v2
+  notes: sepsis_v5_cross2 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C4_no_target_task_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C5_no_fidelity_s7777.json
+  name: sepsis_v5_cross2_C5_no_fidelity_s7777_v2
+  notes: sepsis_v5_cross2 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C5_no_fidelity_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C6_no_pretrain_s7777.json
+  name: sepsis_v5_cross2_C6_no_pretrain_s7777_v2
+  notes: sepsis_v5_cross2 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C6_no_pretrain_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C7_no_target_norm_s7777.json
+  name: sepsis_v5_cross2_C7_no_target_norm_s7777_v2
+  notes: sepsis_v5_cross2 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C7_no_target_norm_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C8_residual_s7777.json
+  name: sepsis_v5_cross2_C8_residual_s7777_v2
+  notes: sepsis_v5_cross2 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C8_residual_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C9_no_time_delta_s7777.json
+  name: sepsis_v5_cross2_C9_no_time_delta_s7777_v2
+  notes: sepsis_v5_cross2 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C9_no_time_delta_s7777_v2/eval_sepsis.parquet
+  server: local
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C0_control_s42.json
+  name: sepsis_v5_cross2_C0_control_s42_v2
+  notes: sepsis_v5_cross2 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C0_control_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C1_no_retrieval_s42.json
+  name: sepsis_v5_cross2_C1_no_retrieval_s42_v2
+  notes: sepsis_v5_cross2 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C1_no_retrieval_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C2_no_feature_gate_s42.json
+  name: sepsis_v5_cross2_C2_no_feature_gate_s42_v2
+  notes: sepsis_v5_cross2 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C2_no_feature_gate_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C3_no_mmd_s42.json
+  name: sepsis_v5_cross2_C3_no_mmd_s42_v2
+  notes: sepsis_v5_cross2 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C3_no_mmd_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C4_no_target_task_s42.json
+  name: sepsis_v5_cross2_C4_no_target_task_s42_v2
+  notes: sepsis_v5_cross2 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C4_no_target_task_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C5_no_fidelity_s42.json
+  name: sepsis_v5_cross2_C5_no_fidelity_s42_v2
+  notes: sepsis_v5_cross2 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C5_no_fidelity_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C6_no_pretrain_s42.json
+  name: sepsis_v5_cross2_C6_no_pretrain_s42_v2
+  notes: sepsis_v5_cross2 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C6_no_pretrain_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C7_no_target_norm_s42.json
+  name: sepsis_v5_cross2_C7_no_target_norm_s42_v2
+  notes: sepsis_v5_cross2 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C7_no_target_norm_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C8_residual_s42.json
+  name: sepsis_v5_cross2_C8_residual_s42_v2
+  notes: sepsis_v5_cross2 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C8_residual_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/sepsis_v5_cross2_C9_no_time_delta_s42.json
+  name: sepsis_v5_cross2_C9_no_time_delta_s42_v2
+  notes: sepsis_v5_cross2 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/sepsis_v5_cross2_C9_no_time_delta_s42_v2/eval_sepsis.parquet
+  server: 3090
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C0_control_s7777.json
+  name: aki_v5_cross3_C0_control_s7777_v2
+  notes: aki_v5_cross3 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C0_control_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C1_no_retrieval_s7777.json
+  name: aki_v5_cross3_C1_no_retrieval_s7777_v2
+  notes: aki_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C1_no_retrieval_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C2_no_feature_gate_s7777.json
+  name: aki_v5_cross3_C2_no_feature_gate_s7777_v2
+  notes: aki_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C2_no_feature_gate_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C3_no_mmd_s7777.json
+  name: aki_v5_cross3_C3_no_mmd_s7777_v2
+  notes: aki_v5_cross3 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C3_no_mmd_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C4_no_target_task_s7777.json
+  name: aki_v5_cross3_C4_no_target_task_s7777_v2
+  notes: aki_v5_cross3 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C4_no_target_task_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C5_no_fidelity_s7777.json
+  name: aki_v5_cross3_C5_no_fidelity_s7777_v2
+  notes: aki_v5_cross3 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C5_no_fidelity_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C6_no_pretrain_s7777.json
+  name: aki_v5_cross3_C6_no_pretrain_s7777_v2
+  notes: aki_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C6_no_pretrain_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C7_no_target_norm_s7777.json
+  name: aki_v5_cross3_C7_no_target_norm_s7777_v2
+  notes: aki_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C7_no_target_norm_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C8_residual_s7777.json
+  name: aki_v5_cross3_C8_residual_s7777_v2
+  notes: aki_v5_cross3 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C8_residual_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C9_no_time_delta_s7777.json
+  name: aki_v5_cross3_C9_no_time_delta_s7777_v2
+  notes: aki_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C9_no_time_delta_s7777_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C0_control_s42.json
+  name: aki_v5_cross3_C0_control_s42_v2
+  notes: aki_v5_cross3 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C0_control_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C1_no_retrieval_s42.json
+  name: aki_v5_cross3_C1_no_retrieval_s42_v2
+  notes: aki_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C1_no_retrieval_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C2_no_feature_gate_s42.json
+  name: aki_v5_cross3_C2_no_feature_gate_s42_v2
+  notes: aki_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C2_no_feature_gate_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C3_no_mmd_s42.json
+  name: aki_v5_cross3_C3_no_mmd_s42_v2
+  notes: aki_v5_cross3 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C3_no_mmd_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C4_no_target_task_s42.json
+  name: aki_v5_cross3_C4_no_target_task_s42_v2
+  notes: aki_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C4_no_target_task_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C5_no_fidelity_s42.json
+  name: aki_v5_cross3_C5_no_fidelity_s42_v2
+  notes: aki_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C5_no_fidelity_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C6_no_pretrain_s42.json
+  name: aki_v5_cross3_C6_no_pretrain_s42_v2
+  notes: aki_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C6_no_pretrain_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C7_no_target_norm_s42.json
+  name: aki_v5_cross3_C7_no_target_norm_s42_v2
+  notes: aki_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C7_no_target_norm_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C8_residual_s42.json
+  name: aki_v5_cross3_C8_residual_s42_v2
+  notes: aki_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C8_residual_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/aki_v5_cross3_C9_no_time_delta_s42.json
+  name: aki_v5_cross3_C9_no_time_delta_s42_v2
+  notes: aki_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/aki_v5_cross3_C9_no_time_delta_s42_v2/eval_aki.parquet
+  server: a6000
+  status: pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C0_control_s7777.json
+  name: kf_v5_cross3_C0_control_s7777_v2
+  notes: kf_v5_cross3 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C0_control_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C1_no_retrieval_s7777.json
+  name: kf_v5_cross3_C1_no_retrieval_s7777_v2
+  notes: kf_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C1_no_retrieval_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C2_no_feature_gate_s7777.json
+  name: kf_v5_cross3_C2_no_feature_gate_s7777_v2
+  notes: kf_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C2_no_feature_gate_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_s7777.json
+  name: kf_v5_cross3_C3_no_mmd_s7777_v2
+  notes: kf_v5_cross3 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C3_no_mmd_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C4_no_target_task_s7777.json
+  name: kf_v5_cross3_C4_no_target_task_s7777_v2
+  notes: kf_v5_cross3 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C4_no_target_task_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C5_no_fidelity_s7777.json
+  name: kf_v5_cross3_C5_no_fidelity_s7777_v2
+  notes: kf_v5_cross3 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C5_no_fidelity_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C6_no_pretrain_s7777.json
+  name: kf_v5_cross3_C6_no_pretrain_s7777_v2
+  notes: kf_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C6_no_pretrain_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C7_no_target_norm_s7777.json
+  name: kf_v5_cross3_C7_no_target_norm_s7777_v2
+  notes: kf_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C7_no_target_norm_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C8_residual_s7777.json
+  name: kf_v5_cross3_C8_residual_s7777_v2
+  notes: kf_v5_cross3 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C8_residual_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C9_no_time_delta_s7777.json
+  name: kf_v5_cross3_C9_no_time_delta_s7777_v2
+  notes: kf_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C9_no_time_delta_s7777_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C0_control_s42.json
+  name: kf_v5_cross3_C0_control_s42_v2
+  notes: kf_v5_cross3 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C0_control_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C1_no_retrieval_s42.json
+  name: kf_v5_cross3_C1_no_retrieval_s42_v2
+  notes: kf_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C1_no_retrieval_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C2_no_feature_gate_s42.json
+  name: kf_v5_cross3_C2_no_feature_gate_s42_v2
+  notes: kf_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C2_no_feature_gate_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_s42.json
+  name: kf_v5_cross3_C3_no_mmd_s42_v2
+  notes: kf_v5_cross3 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C3_no_mmd_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C4_no_target_task_s42.json
+  name: kf_v5_cross3_C4_no_target_task_s42_v2
+  notes: kf_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C4_no_target_task_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C5_no_fidelity_s42.json
+  name: kf_v5_cross3_C5_no_fidelity_s42_v2
+  notes: kf_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C5_no_fidelity_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C6_no_pretrain_s42.json
+  name: kf_v5_cross3_C6_no_pretrain_s42_v2
+  notes: kf_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C6_no_pretrain_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C7_no_target_norm_s42.json
+  name: kf_v5_cross3_C7_no_target_norm_s42_v2
+  notes: kf_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C7_no_target_norm_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C8_residual_s42.json
+  name: kf_v5_cross3_C8_residual_s42_v2
+  notes: kf_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C8_residual_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/kf_v5_cross3_C9_no_time_delta_s42.json
+  name: kf_v5_cross3_C9_no_time_delta_s42_v2
+  notes: kf_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/kf_v5_cross3_C9_no_time_delta_s42_v2/eval_kf.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C0_control_s7777.json
+  name: los_v5_cross3_C0_control_s7777_v2
+  notes: los_v5_cross3 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C0_control_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C1_no_retrieval_s7777.json
+  name: los_v5_cross3_C1_no_retrieval_s7777_v2
+  notes: los_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C1_no_retrieval_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C2_no_feature_gate_s7777.json
+  name: los_v5_cross3_C2_no_feature_gate_s7777_v2
+  notes: los_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C2_no_feature_gate_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_s7777.json
+  name: los_v5_cross3_C3_no_mmd_s7777_v2
+  notes: los_v5_cross3 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C3_no_mmd_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C4_no_target_task_s7777.json
+  name: los_v5_cross3_C4_no_target_task_s7777_v2
+  notes: los_v5_cross3 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C4_no_target_task_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C5_no_fidelity_s7777.json
+  name: los_v5_cross3_C5_no_fidelity_s7777_v2
+  notes: los_v5_cross3 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C5_no_fidelity_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C6_no_pretrain_s7777.json
+  name: los_v5_cross3_C6_no_pretrain_s7777_v2
+  notes: los_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C6_no_pretrain_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C7_no_target_norm_s7777.json
+  name: los_v5_cross3_C7_no_target_norm_s7777_v2
+  notes: los_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C7_no_target_norm_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C8_residual_s7777.json
+  name: los_v5_cross3_C8_residual_s7777_v2
+  notes: los_v5_cross3 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C8_residual_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C9_no_time_delta_s7777.json
+  name: los_v5_cross3_C9_no_time_delta_s7777_v2
+  notes: los_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C9_no_time_delta_s7777_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C0_control_s42.json
+  name: los_v5_cross3_C0_control_s42_v2
+  notes: los_v5_cross3 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C0_control_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C1_no_retrieval_s42.json
+  name: los_v5_cross3_C1_no_retrieval_s42_v2
+  notes: los_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C1_no_retrieval_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C2_no_feature_gate_s42.json
+  name: los_v5_cross3_C2_no_feature_gate_s42_v2
+  notes: los_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C2_no_feature_gate_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_s42.json
+  name: los_v5_cross3_C3_no_mmd_s42_v2
+  notes: los_v5_cross3 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C3_no_mmd_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C4_no_target_task_s42.json
+  name: los_v5_cross3_C4_no_target_task_s42_v2
+  notes: los_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C4_no_target_task_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C5_no_fidelity_s42.json
+  name: los_v5_cross3_C5_no_fidelity_s42_v2
+  notes: los_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C5_no_fidelity_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C6_no_pretrain_s42.json
+  name: los_v5_cross3_C6_no_pretrain_s42_v2
+  notes: los_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C6_no_pretrain_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C7_no_target_norm_s42.json
+  name: los_v5_cross3_C7_no_target_norm_s42_v2
+  notes: los_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C7_no_target_norm_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C8_residual_s42.json
+  name: los_v5_cross3_C8_residual_s42_v2
+  notes: los_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C8_residual_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending
+- branch: master
+  config: configs/seeds/los_v5_cross3_C9_no_time_delta_s42.json
+  name: los_v5_cross3_C9_no_time_delta_s42_v2
+  notes: los_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
+  output: runs/seeds_v2/los_v5_cross3_C9_no_time_delta_s42_v2/eval_los.parquet
+  server: athena
+  status: athena_pending

@@ -363,10 +363,10 @@ class YAIBRuntime:
             if hasattr(dataset, "vars") and not hasattr(dataset_to_use, "vars"):
                 dataset_to_use.vars = dataset.vars
             if drop_last is None:
-                drop_last = True
+                drop_last = (split == DataSplit.train)
 
         if drop_last is None:
-            drop_last = True
+            drop_last = (split == DataSplit.train)
 
         batch_size = self.batch_size
         if split == DataSplit.test and subset_fraction is None and 1==2:

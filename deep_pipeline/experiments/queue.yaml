@@ -6401,7 +6401,7 @@ experiments:
 - name: los_C2_no_feature_gate
   config: configs/ablation/los_C2_no_feature_gate.json
   output: runs/los_C2_no_feature_gate/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 17:09:42'
@@ -6433,7 +6433,7 @@ experiments:
 - name: los_C6_no_pretrain
   config: configs/ablation/los_C6_no_pretrain.json
   output: runs/los_C6_no_pretrain/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 17:10:18'
@@ -6441,7 +6441,7 @@ experiments:
 - name: los_C7_no_target_norm
   config: configs/ablation/los_C7_no_target_norm.json
   output: runs/los_C7_no_target_norm/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 17:10:23'
@@ -6457,7 +6457,7 @@ experiments:
 - name: los_C9_no_time_delta
   config: configs/ablation/los_C9_no_time_delta.json
   output: runs/los_C9_no_time_delta/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-13 16:49:57'
@@ -6481,7 +6481,7 @@ experiments:
 - name: kf_C2_no_feature_gate
   config: configs/ablation/kf_C2_no_feature_gate.json
   output: runs/kf_C2_no_feature_gate/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 00:00:49'
@@ -6513,7 +6513,7 @@ experiments:
 - name: kf_C6_no_pretrain
   config: configs/ablation/kf_C6_no_pretrain.json
   output: runs/kf_C6_no_pretrain/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 00:01:11'
@@ -6521,7 +6521,7 @@ experiments:
 - name: kf_C7_no_target_norm
   config: configs/ablation/kf_C7_no_target_norm.json
   output: runs/kf_C7_no_target_norm/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 00:01:16'
@@ -6537,7 +6537,7 @@ experiments:
 - name: kf_C9_no_time_delta
   config: configs/ablation/kf_C9_no_time_delta.json
   output: runs/kf_C9_no_time_delta/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-12 00:01:27'
@@ -6561,7 +6561,7 @@ experiments:
 - name: kf_nf_C2_no_feature_gate
   config: configs/ablation/kf_nf_C2_no_feature_gate.json
   output: runs/kf_nf_C2_no_feature_gate/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: KF ablation with no-fidelity base
   submitted: '2026-04-12 17:17:03'
@@ -6585,7 +6585,7 @@ experiments:
 - name: kf_nf_C6_no_pretrain
   config: configs/ablation/kf_nf_C6_no_pretrain.json
   output: runs/kf_nf_C6_no_pretrain/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: KF ablation with no-fidelity base
   submitted: '2026-04-12 17:17:22'
@@ -6593,7 +6593,7 @@ experiments:
 - name: kf_nf_C7_no_target_norm
   config: configs/ablation/kf_nf_C7_no_target_norm.json
   output: runs/kf_nf_C7_no_target_norm/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: KF ablation with no-fidelity base
   submitted: '2026-04-12 17:17:28'
@@ -6609,7 +6609,7 @@ experiments:
 - name: kf_nf_C9_no_time_delta
   config: configs/ablation/kf_nf_C9_no_time_delta.json
   output: runs/kf_nf_C9_no_time_delta/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: KF ablation with no-fidelity base
   submitted: '2026-04-12 17:17:40'
@@ -6777,7 +6777,7 @@ experiments:
 - name: los_C6_no_pretrain_eval
   config: configs/ablation/los_C6_no_pretrain.json
   output: runs/los_C6_no_pretrain_eval/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-13 16:49:25'
@@ -7599,7 +7599,7 @@ experiments:
 - name: los_nm_C2_no_feature_gate
   config: configs/ablation/los_nm_C2_no_feature_gate.json
   output: runs/los_nm_C2_no_feature_gate/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'LoS nm ablation: C2_no_feature_gate'
   submitted: '2026-04-17 19:21:13'
@@ -7623,7 +7623,7 @@ experiments:
 - name: los_nm_C6_no_pretrain
   config: configs/ablation/los_nm_C6_no_pretrain.json
   output: runs/los_nm_C6_no_pretrain/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'LoS nm ablation: C6_no_pretrain'
   submitted: '2026-04-17 19:21:35'
@@ -7631,7 +7631,7 @@ experiments:
 - name: los_nm_C7_no_target_norm
   config: configs/ablation/los_nm_C7_no_target_norm.json
   output: runs/los_nm_C7_no_target_norm/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'LoS nm ablation: C7_no_target_norm'
   submitted: '2026-04-17 19:21:44'
@@ -7647,7 +7647,7 @@ experiments:
 - name: los_nm_C9_no_time_delta
   config: configs/ablation/los_nm_C9_no_time_delta.json
   output: runs/los_nm_C9_no_time_delta/eval_los.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'LoS nm ablation: C9_no_time_delta'
   submitted: '2026-04-17 19:21:56'
@@ -7671,7 +7671,7 @@ experiments:
 - name: kf_nfnm_C2_no_feature_gate
   config: configs/ablation/kf_nfnm_C2_no_feature_gate.json
   output: runs/kf_nfnm_C2_no_feature_gate/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF nfnm ablation: C2_no_feature_gate'
   submitted: '2026-04-15 12:00:54'
@@ -7687,7 +7687,7 @@ experiments:
 - name: kf_nfnm_C6_no_pretrain
   config: configs/ablation/kf_nfnm_C6_no_pretrain.json
   output: runs/kf_nfnm_C6_no_pretrain/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF nfnm ablation: C6_no_pretrain'
   submitted: '2026-04-15 12:01:06'
@@ -7695,7 +7695,7 @@ experiments:
 - name: kf_nfnm_C7_no_target_norm
   config: configs/ablation/kf_nfnm_C7_no_target_norm.json
   output: runs/kf_nfnm_C7_no_target_norm/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF nfnm ablation: C7_no_target_norm'
   submitted: '2026-04-15 12:01:12'
@@ -7711,7 +7711,7 @@ experiments:
 - name: kf_nfnm_C9_no_time_delta
   config: configs/ablation/kf_nfnm_C9_no_time_delta.json
   output: runs/kf_nfnm_C9_no_time_delta/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF nfnm ablation: C9_no_time_delta'
   submitted: '2026-04-15 12:01:24'
@@ -7751,7 +7751,7 @@ experiments:
 - name: kf_lr_C2_no_feature_gate
   config: configs/ablation/kf_lr_C2_no_feature_gate.json
   output: runs/kf_lr_C2_no_feature_gate/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF lr ablation: C2 no feature gate'
   submitted: '2026-04-17 19:26:18'
@@ -7767,7 +7767,7 @@ experiments:
 - name: kf_lr_C6_no_pretrain
   config: configs/ablation/kf_lr_C6_no_pretrain.json
   output: runs/kf_lr_C6_no_pretrain/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF lr ablation: C6 no pretrain'
   submitted: '2026-04-17 19:26:31'
@@ -7775,7 +7775,7 @@ experiments:
 - name: kf_lr_C7_no_target_norm
   config: configs/ablation/kf_lr_C7_no_target_norm.json
   output: runs/kf_lr_C7_no_target_norm/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF lr ablation: C7 no target norm'
   submitted: '2026-04-17 19:26:37'
@@ -7791,7 +7791,7 @@ experiments:
 - name: kf_lr_C9_no_time_delta
   config: configs/ablation/kf_lr_C9_no_time_delta.json
   output: runs/kf_lr_C9_no_time_delta/eval_kf.parquet
-  status: athena_pending
+  status: deferred_low_priority
   server: athena
   notes: 'KF lr ablation: C9 no time delta'
   submitted: '2026-04-17 19:26:49'
@@ -8410,7 +8410,7 @@ experiments:
   notes: sepsis_v5_cross3 C2 (no_feature_gate) seed=2222
   output: runs/seeds/sepsis_v5_cross3_C2_no_feature_gate_s2222/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C3_no_mmd_s2222.json
   name: sepsis_v5_cross3_C3_no_mmd_s2222
@@ -8438,14 +8438,14 @@ experiments:
   notes: sepsis_v5_cross3 C6 (no_pretrain) seed=2222
   output: runs/seeds/sepsis_v5_cross3_C6_no_pretrain_s2222/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C7_no_target_norm_s2222.json
   name: sepsis_v5_cross3_C7_no_target_norm_s2222
   notes: sepsis_v5_cross3 C7 (no_target_norm) seed=2222
   output: runs/seeds/sepsis_v5_cross3_C7_no_target_norm_s2222/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C8_residual_s2222.json
   name: sepsis_v5_cross3_C8_residual_s2222
@@ -8459,7 +8459,7 @@ experiments:
   notes: sepsis_v5_cross3 C9 (no_time_delta) seed=2222
   output: runs/seeds/sepsis_v5_cross3_C9_no_time_delta_s2222/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C0_control_s7777.json
   name: sepsis_v5_cross3_C0_control_s7777
@@ -8687,7 +8687,7 @@ experiments:
   notes: sepsis_v5_cross2 C2 (no_feature_gate) seed=2222
   output: runs/seeds/sepsis_v5_cross2_C2_no_feature_gate_s2222/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C3_no_mmd_s2222.json
   name: sepsis_v5_cross2_C3_no_mmd_s2222
@@ -8715,14 +8715,14 @@ experiments:
   notes: sepsis_v5_cross2 C6 (no_pretrain) seed=2222
   output: runs/seeds/sepsis_v5_cross2_C6_no_pretrain_s2222/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C7_no_target_norm_s2222.json
   name: sepsis_v5_cross2_C7_no_target_norm_s2222
   notes: sepsis_v5_cross2 C7 (no_target_norm) seed=2222
   output: runs/seeds/sepsis_v5_cross2_C7_no_target_norm_s2222/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C8_residual_s2222.json
   name: sepsis_v5_cross2_C8_residual_s2222
@@ -8736,7 +8736,7 @@ experiments:
   notes: sepsis_v5_cross2 C9 (no_time_delta) seed=2222
   output: runs/seeds/sepsis_v5_cross2_C9_no_time_delta_s2222/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C0_control_s7777.json
   name: sepsis_v5_cross2_C0_control_s7777
@@ -9747,7 +9747,7 @@ experiments:
   notes: mort_c2 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C2_no_feature_gate_s7777_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C3_no_mmd_s7777.json
   name: mort_c2_C3_no_mmd_s7777_v2
@@ -9775,14 +9775,14 @@ experiments:
   notes: mort_c2 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C6_no_pretrain_s7777_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C7_no_target_norm_s7777.json
   name: mort_c2_C7_no_target_norm_s7777_v2
   notes: mort_c2 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C7_no_target_norm_s7777_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C8_residual_s7777.json
   name: mort_c2_C8_residual_s7777_v2
@@ -9796,7 +9796,7 @@ experiments:
   notes: mort_c2 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C9_no_time_delta_s7777_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C0_control_s42.json
   name: mort_c2_C0_control_s42_v2
@@ -9817,7 +9817,7 @@ experiments:
   notes: mort_c2 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C2_no_feature_gate_s42_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C3_no_mmd_s42.json
   name: mort_c2_C3_no_mmd_s42_v2
@@ -9845,14 +9845,14 @@ experiments:
   notes: mort_c2 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C6_no_pretrain_s42_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C7_no_target_norm_s42.json
   name: mort_c2_C7_no_target_norm_s42_v2
   notes: mort_c2 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C7_no_target_norm_s42_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/mort_c2_C8_residual_s42.json
   name: mort_c2_C8_residual_s42_v2
@@ -9866,7 +9866,7 @@ experiments:
   notes: mort_c2 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/mort_c2_C9_no_time_delta_s42_v2/eval_mortality.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C0_control_s7777.json
   name: sepsis_v5_cross3_C0_control_s7777_v2
@@ -9887,7 +9887,7 @@ experiments:
   notes: sepsis_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C2_no_feature_gate_s7777_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C3_no_mmd_s7777.json
   name: sepsis_v5_cross3_C3_no_mmd_s7777_v2
@@ -9915,14 +9915,14 @@ experiments:
   notes: sepsis_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C6_no_pretrain_s7777_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C7_no_target_norm_s7777.json
   name: sepsis_v5_cross3_C7_no_target_norm_s7777_v2
   notes: sepsis_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C7_no_target_norm_s7777_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C8_residual_s7777.json
   name: sepsis_v5_cross3_C8_residual_s7777_v2
@@ -9936,7 +9936,7 @@ experiments:
   notes: sepsis_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C9_no_time_delta_s7777_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C0_control_s42.json
   name: sepsis_v5_cross3_C0_control_s42_v2
@@ -9957,7 +9957,7 @@ experiments:
   notes: sepsis_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C2_no_feature_gate_s42_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C3_no_mmd_s42.json
   name: sepsis_v5_cross3_C3_no_mmd_s42_v2
@@ -9985,14 +9985,14 @@ experiments:
   notes: sepsis_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C6_no_pretrain_s42_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C7_no_target_norm_s42.json
   name: sepsis_v5_cross3_C7_no_target_norm_s42_v2
   notes: sepsis_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C7_no_target_norm_s42_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C8_residual_s42.json
   name: sepsis_v5_cross3_C8_residual_s42_v2
@@ -10006,7 +10006,7 @@ experiments:
   notes: sepsis_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C9_no_time_delta_s42_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C0_control_s7777.json
   name: sepsis_v5_cross2_C0_control_s7777_v2
@@ -10027,7 +10027,7 @@ experiments:
   notes: sepsis_v5_cross2 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C2_no_feature_gate_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C3_no_mmd_s7777.json
   name: sepsis_v5_cross2_C3_no_mmd_s7777_v2
@@ -10055,14 +10055,14 @@ experiments:
   notes: sepsis_v5_cross2 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C6_no_pretrain_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C7_no_target_norm_s7777.json
   name: sepsis_v5_cross2_C7_no_target_norm_s7777_v2
   notes: sepsis_v5_cross2 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C7_no_target_norm_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C8_residual_s7777.json
   name: sepsis_v5_cross2_C8_residual_s7777_v2
@@ -10076,7 +10076,7 @@ experiments:
   notes: sepsis_v5_cross2 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C9_no_time_delta_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C0_control_s42.json
   name: sepsis_v5_cross2_C0_control_s42_v2
@@ -10097,7 +10097,7 @@ experiments:
   notes: sepsis_v5_cross2 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C2_no_feature_gate_s42_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C3_no_mmd_s42.json
   name: sepsis_v5_cross2_C3_no_mmd_s42_v2
@@ -10125,14 +10125,14 @@ experiments:
   notes: sepsis_v5_cross2 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C6_no_pretrain_s42_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C7_no_target_norm_s42.json
   name: sepsis_v5_cross2_C7_no_target_norm_s42_v2
   notes: sepsis_v5_cross2 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C7_no_target_norm_s42_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C8_residual_s42.json
   name: sepsis_v5_cross2_C8_residual_s42_v2
@@ -10146,7 +10146,7 @@ experiments:
   notes: sepsis_v5_cross2 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C9_no_time_delta_s42_v2/eval_sepsis.parquet
   server: 3090
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C0_control_s7777.json
   name: aki_v5_cross3_C0_control_s7777_v2
@@ -10167,7 +10167,7 @@ experiments:
   notes: aki_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C2_no_feature_gate_s7777_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C3_no_mmd_s7777.json
   name: aki_v5_cross3_C3_no_mmd_s7777_v2
@@ -10195,14 +10195,14 @@ experiments:
   notes: aki_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C6_no_pretrain_s7777_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C7_no_target_norm_s7777.json
   name: aki_v5_cross3_C7_no_target_norm_s7777_v2
   notes: aki_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C7_no_target_norm_s7777_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C8_residual_s7777.json
   name: aki_v5_cross3_C8_residual_s7777_v2
@@ -10216,7 +10216,7 @@ experiments:
   notes: aki_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C9_no_time_delta_s7777_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C0_control_s42.json
   name: aki_v5_cross3_C0_control_s42_v2
@@ -10237,7 +10237,7 @@ experiments:
   notes: aki_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C2_no_feature_gate_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C3_no_mmd_s42.json
   name: aki_v5_cross3_C3_no_mmd_s42_v2
@@ -10265,14 +10265,14 @@ experiments:
   notes: aki_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C6_no_pretrain_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C7_no_target_norm_s42.json
   name: aki_v5_cross3_C7_no_target_norm_s42_v2
   notes: aki_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C7_no_target_norm_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/aki_v5_cross3_C8_residual_s42.json
   name: aki_v5_cross3_C8_residual_s42_v2
@@ -10286,7 +10286,7 @@ experiments:
   notes: aki_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C9_no_time_delta_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C0_control_s7777.json
   name: kf_v5_cross3_C0_control_s7777_v2
@@ -10307,7 +10307,7 @@ experiments:
   notes: kf_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C2_no_feature_gate_s7777_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C3_no_mmd_s7777.json
   name: kf_v5_cross3_C3_no_mmd_s7777_v2
@@ -10335,14 +10335,14 @@ experiments:
   notes: kf_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C6_no_pretrain_s7777_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C7_no_target_norm_s7777.json
   name: kf_v5_cross3_C7_no_target_norm_s7777_v2
   notes: kf_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C7_no_target_norm_s7777_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C8_residual_s7777.json
   name: kf_v5_cross3_C8_residual_s7777_v2
@@ -10356,7 +10356,7 @@ experiments:
   notes: kf_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C9_no_time_delta_s7777_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C0_control_s42.json
   name: kf_v5_cross3_C0_control_s42_v2
@@ -10377,7 +10377,7 @@ experiments:
   notes: kf_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C2_no_feature_gate_s42_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C3_no_mmd_s42.json
   name: kf_v5_cross3_C3_no_mmd_s42_v2
@@ -10405,14 +10405,14 @@ experiments:
   notes: kf_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C6_no_pretrain_s42_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C7_no_target_norm_s42.json
   name: kf_v5_cross3_C7_no_target_norm_s42_v2
   notes: kf_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C7_no_target_norm_s42_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/kf_v5_cross3_C8_residual_s42.json
   name: kf_v5_cross3_C8_residual_s42_v2
@@ -10426,7 +10426,7 @@ experiments:
   notes: kf_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/kf_v5_cross3_C9_no_time_delta_s42_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C0_control_s7777.json
   name: los_v5_cross3_C0_control_s7777_v2
@@ -10447,7 +10447,7 @@ experiments:
   notes: los_v5_cross3 C2 (no_feature_gate) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C2_no_feature_gate_s7777_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C3_no_mmd_s7777.json
   name: los_v5_cross3_C3_no_mmd_s7777_v2
@@ -10475,14 +10475,14 @@ experiments:
   notes: los_v5_cross3 C6 (no_pretrain) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C6_no_pretrain_s7777_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C7_no_target_norm_s7777.json
   name: los_v5_cross3_C7_no_target_norm_s7777_v2
   notes: los_v5_cross3 C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C7_no_target_norm_s7777_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C8_residual_s7777.json
   name: los_v5_cross3_C8_residual_s7777_v2
@@ -10496,7 +10496,7 @@ experiments:
   notes: los_v5_cross3 C9 (no_time_delta) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C9_no_time_delta_s7777_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C0_control_s42.json
   name: los_v5_cross3_C0_control_s42_v2
@@ -10517,7 +10517,7 @@ experiments:
   notes: los_v5_cross3 C2 (no_feature_gate) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C2_no_feature_gate_s42_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C3_no_mmd_s42.json
   name: los_v5_cross3_C3_no_mmd_s42_v2
@@ -10545,14 +10545,14 @@ experiments:
   notes: los_v5_cross3 C6 (no_pretrain) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C6_no_pretrain_s42_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C7_no_target_norm_s42.json
   name: los_v5_cross3_C7_no_target_norm_s42_v2
   notes: los_v5_cross3 C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C7_no_target_norm_s42_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority
 - branch: master
   config: configs/seeds/los_v5_cross3_C8_residual_s42.json
   name: los_v5_cross3_C8_residual_s42_v2
@@ -10566,4 +10566,4 @@ experiments:
   notes: los_v5_cross3 C9 (no_time_delta) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/los_v5_cross3_C9_no_time_delta_s42_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: deferred_low_priority

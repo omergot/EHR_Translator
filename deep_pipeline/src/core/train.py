@@ -1,3 +1,5 @@
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Optional
@@ -17,6 +19,126 @@ from ..adapters.yaib import YAIBRuntime
 from ..core.translator import Translator
 from ..core.schema import SchemaResolver
 from ..core.mmd import multi_kernel_mmd
+
+
+# ============================================================================
+# Resume-checkpoint integrity helpers
+# ----------------------------------------------------------------------------
+# These helpers close a silent-contamination bug observed on 2026-04-20: a
+# pre-fix run left `latest_checkpoint.pt` behind, and a `_v2` requeue that
+# reused the same run_dir silently resumed from the stale file. Because the
+# pre-fix run was trained on a different StratifiedKFold fold, ~80% of the
+# v2 test set was memorized during pre-fix training → leakage.
+#
+# Contract: every resume-checkpoint save embeds (split_seed, training_seed,
+# config_fingerprint). On load, mismatches raise unless `--force-resume` is
+# set. Untagged checkpoints (pre-dating this fix) are rejected by default.
+# ============================================================================
+
+_CONFIG_FINGERPRINT_FIELDS = (
+    # Architecture
+    "translator_type", "d_model", "d_latent",
+    "n_enc_layers", "n_dec_layers", "n_cross_layers",
+    "output_mode",
+    # Loss weights
+    "lambda_recon", "lambda_range", "lambda_align",
+    "lambda_target_task", "lambda_label_pred",
+    "lambda_smooth", "lambda_importance_reg",
+    # Structural toggles
+    "feature_gate", "phase1_self_retrieval", "use_target_normalization",
+    # Training schedule
+    "pretrain_epochs", "epochs", "lr", "batch_size",
+)
+
+
+def compute_config_fingerprint(training_config: dict, translator_config: dict | None = None) -> str:
+    """SHA-256/16 hash over the subset of config fields that change training dynamics.
+
+    Intentionally excludes split_seed / training_seed — those are validated separately.
+    """
+    tc = training_config or {}
+    xc = translator_config or {}
+    key_fields = {
+        "translator_type": xc.get("type"),
+        "d_model": xc.get("d_model"),
+        "d_latent": xc.get("d_latent"),
+        "n_enc_layers": xc.get("n_enc_layers"),
+        "n_dec_layers": xc.get("n_dec_layers"),
+        # n_cross_layers can live in either section
+        "n_cross_layers": xc.get("n_cross_layers", tc.get("n_cross_layers")),
+        "output_mode": xc.get("output_mode", tc.get("output_mode")),
+        "lambda_recon": tc.get("lambda_recon"),
+        "lambda_range": tc.get("lambda_range"),
+        "lambda_align": tc.get("lambda_align"),
+        "lambda_target_task": tc.get("lambda_target_task"),
+        "lambda_label_pred": tc.get("lambda_label_pred"),
+        "lambda_smooth": tc.get("lambda_smooth"),
+        "lambda_importance_reg": tc.get("lambda_importance_reg"),
+        "feature_gate": tc.get("feature_gate"),
+        "phase1_self_retrieval": tc.get("phase1_self_retrieval"),
+        "use_target_normalization": tc.get("use_target_normalization"),
+        "pretrain_epochs": tc.get("pretrain_epochs"),
+        "epochs": tc.get("epochs"),
+        "lr": tc.get("lr"),
+        "batch_size": tc.get("batch_size"),
+    }
+    blob = json.dumps(key_fields, sort_keys=True, default=str).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def validate_resume_checkpoint(
+    ckpt: dict,
+    expected_split_seed: int | None,
+    expected_training_seed: int | None,
+    expected_fingerprint: str | None,
+    resume_path: Path,
+    force_resume: bool = False,
+) -> None:
+    """Fail loudly on a resume that would silently contaminate results.
+
+    On mismatch, raises RuntimeError with instructions. When ``force_resume``
+    is True, a loud warning is logged instead of raising.
+    """
+    got_split = ckpt.get("split_seed")
+    got_training = ckpt.get("training_seed")
+    got_fp = ckpt.get("config_fingerprint")
+
+    problems = []
+    if got_split is None and got_training is None and got_fp is None:
+        problems.append(
+            "checkpoint has NO integrity tags (predates the split_seed fix). "
+            "This is the exact class of checkpoint that caused the mort_c2 "
+            "contamination bug on 2026-04-20."
+        )
+    else:
+        if expected_split_seed is not None and got_split != expected_split_seed:
+            problems.append(
+                f"split_seed mismatch: checkpoint={got_split}, current run={expected_split_seed}. "
+                "The checkpoint was trained on a different StratifiedKFold — resuming would leak test data."
+            )
+        if expected_training_seed is not None and got_training != expected_training_seed:
+            problems.append(
+                f"training_seed mismatch: checkpoint={got_training}, current run={expected_training_seed}."
+            )
+        if expected_fingerprint is not None and got_fp != expected_fingerprint:
+            problems.append(
+                f"config_fingerprint mismatch: checkpoint={got_fp}, current run={expected_fingerprint}. "
+                "Training config (architecture / loss weights / schedule) has changed."
+            )
+
+    if not problems:
+        return
+
+    msg = (
+        f"Resume-checkpoint integrity check FAILED for {resume_path}:\n  - "
+        + "\n  - ".join(problems)
+        + f"\n\nRemedy: delete {resume_path} to train from scratch, "
+        "or pass --force-resume to override (logs a warning)."
+    )
+    if force_resume:
+        logging.warning("--force-resume: suppressing checkpoint integrity errors:\n%s", msg)
+        return
+    raise RuntimeError(msg)
 
 
 def _create_lr_scheduler(optimizer, scheduler_type, total_epochs, lr_min=0.0, warmup_epochs=0):
@@ -1868,6 +1990,14 @@ class RetrievalTranslatorTrainer:
         # MIMIC target task loss and latent label prediction
         _tc = training_config or {}
         self._training_config = _tc
+        # Resume-checkpoint integrity tags (see compute_config_fingerprint docs).
+        # split_seed / training_seed are injected by cli.py via training_config.
+        self._split_seed = _tc.get("split_seed")
+        self._training_seed = _tc.get("training_seed_resolved", _tc.get("seed"))
+        self._config_fingerprint = compute_config_fingerprint(
+            _tc, _tc.get("_translator_config_for_fingerprint")
+        )
+        self._force_resume = bool(_tc.get("force_resume", False))
         self.task_type = _tc.get("task_type", "classification")
         self.window_stride = _tc.get("window_stride", None)  # None = window_size (non-overlapping)
         self.lambda_target_task = _tc.get("lambda_target_task", 0.0)
@@ -2858,6 +2988,17 @@ class RetrievalTranslatorTrainer:
         resume_path = self.run_dir / "latest_checkpoint.pt"
         if resume_path.exists():
             rk = torch.load(resume_path, map_location=self.device, weights_only=False)
+            # Integrity check — fail on mismatched split_seed / training_seed /
+            # config_fingerprint (or untagged pre-fix checkpoints). See
+            # `validate_resume_checkpoint` docstring for background.
+            validate_resume_checkpoint(
+                rk,
+                expected_split_seed=self._split_seed,
+                expected_training_seed=self._training_seed,
+                expected_fingerprint=self._config_fingerprint,
+                resume_path=resume_path,
+                force_resume=self._force_resume,
+            )
             self.translator.load_state_dict(rk["translator_state_dict"])
             self.optimizer.load_state_dict(rk["optimizer_state_dict"])
             self.scaler.load_state_dict(rk["scaler_state_dict"])
@@ -2996,6 +3137,10 @@ class RetrievalTranslatorTrainer:
                 "epochs_without_improvement": epochs_without_improvement,
                 "renorm_scale": self.renorm_scale,
                 "renorm_offset": self.renorm_offset,
+                # Integrity tags — MUST match the current run on resume.
+                "split_seed": self._split_seed,
+                "training_seed": self._training_seed,
+                "config_fingerprint": self._config_fingerprint,
             }
             if self.feature_gate is not None:
                 resume_ckpt["feature_gate_state_dict"] = self.feature_gate.state_dict()

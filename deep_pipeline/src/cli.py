@@ -254,6 +254,11 @@ def _get_training_config(config: dict) -> dict:
         "gradient_checkpointing": training.get("gradient_checkpointing", False),
         # Ablation C9: zero out triplet time delta component
         "disable_triplet_time_delta": training.get("disable_triplet_time_delta", False),
+        # Resume-checkpoint integrity: capture translator config so the trainer
+        # can compute a full-spec fingerprint including arch fields.
+        "_translator_config_for_fingerprint": dict(config.get("translator", {}) or {}),
+        # Opt-out for resume integrity check (wired from --force-resume).
+        "force_resume": False,
     }
 
 
@@ -621,6 +626,10 @@ def train_translator(args):
 
     config = load_config(args.config)
     training_cfg = _get_training_config(config)
+    # --force-resume is passed through to any trainer that has a resume path.
+    training_cfg["force_resume"] = bool(getattr(args, "force_resume", False))
+    if training_cfg["force_resume"]:
+        logging.warning("--force-resume ENABLED: resume-checkpoint integrity check will be suppressed.")
     output_cfg = _get_output_config(config)
     debug_mode = config.get("debug", False)
     debug_fraction = config.get("debug_fraction", 0.2)
@@ -2783,7 +2792,9 @@ def main():
     train_parser = subparsers.add_parser("train_translator", help="Train translator model")
     train_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
     train_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
+    train_parser.add_argument("--force-resume", action="store_true", help="Suppress resume-checkpoint integrity check (DANGEROUS)")
+
+
     eval_parser = subparsers.add_parser("translate_and_eval", help="Translate and evaluate")
     eval_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")
     eval_parser.add_argument("--input_test_parquet", type=str, help="Input test parquet (optional, uses config data_dir)")
@@ -2798,6 +2809,7 @@ def main():
     train_eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
     train_eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     train_eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    train_eval_parser.add_argument("--force-resume", action="store_true", help="Suppress resume-checkpoint integrity check (DANGEROUS)")
 
     e2e_parser = subparsers.add_parser("run_e2e_baseline", help="Train and evaluate end-to-end DA baseline (CLUDA, RAINCOAT, ACON)")
     e2e_parser.add_argument("--config", type=str, required=True, help="Path to config JSON file")

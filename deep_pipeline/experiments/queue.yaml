@@ -10517,7 +10517,11 @@ experiments:
     fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C4_no_target_task_s42_v2/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: running
+  gpu: 0
+  pid: 2789528
+  started: '2026-04-22 17:06:24'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_C4_no_target_task_s42_v2.json
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C5_no_fidelity_s42.json
   name: sepsis_v5_cross3_C5_no_fidelity_s42_v2
@@ -11968,3 +11972,19 @@ experiments:
     loss: -0.0897
     brier: -0.0637
     ece: -0.0567
+- name: kf_lr3e5_nfnm_s123_v2
+  config: configs/seeds/kf_lr3e5_nfnm_s123_v2.json
+  output: runs/seeds_v2/kf_lr3e5_nfnm_s123_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_lr3e5_nfnm extra seed (training_seed=123, split_seed=2222) for n=5 pool
+    on KF winning config
+- name: kf_lr3e5_nfnm_s456_v2
+  config: configs/seeds/kf_lr3e5_nfnm_s456_v2.json
+  output: runs/seeds_v2/kf_lr3e5_nfnm_s456_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_lr3e5_nfnm extra seed (training_seed=456, split_seed=2222) for n=5 pool
+    on KF winning config

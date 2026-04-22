@@ -7211,50 +7211,6 @@ experiments:
   notes: HiRID Mortality no fidelity (best eICU finding). L40S 12h_4g.
   submitted: '2026-04-14 12:50:20'
   slurm_job_id: '70932'
-- name: kf_hp_K1_50ep
-  config: configs/hp_sweep/kf_hp_K1_50ep.json
-  output: runs/hp_sweep/kf_hp_K1_50ep/eval_kf.parquet
-  status: athena_pending
-  server: athena
-  notes: KF HP K1 - 50 epochs (vs 35 baseline). A100 12h_4g. Pretrain reused.
-  submitted: '2026-04-14 12:50:33'
-  slurm_job_id: '70933'
-- name: kf_hp_K2_d256
-  config: configs/hp_sweep/kf_hp_K2_d256.json
-  output: runs/hp_sweep/kf_hp_K2_d256/eval_kf.parquet
-  status: athena_pending
-  server: athena
-  notes: KF HP K2 - d_latent=256 d_model=256 (wider bottleneck for 292 features).
-    A100 12h_4g. New Phase 1.
-  submitted: '2026-04-14 12:50:39'
-  slurm_job_id: '70934'
-- name: kf_hp_K3_window12
-  config: configs/hp_sweep/kf_hp_K3_window12.json
-  output: runs/hp_sweep/kf_hp_K3_window12/eval_kf.parquet
-  status: athena_pending
-  server: athena
-  notes: KF HP K3 - retrieval_window=12 (wider temporal context). A100 12h_4g. Pretrain
-    reused.
-  submitted: '2026-04-14 12:50:44'
-  slurm_job_id: '70935'
-- name: kf_hp_K5_lr3e5
-  config: configs/hp_sweep/kf_hp_K5_lr3e5.json
-  output: runs/hp_sweep/kf_hp_K5_lr3e5/eval_kf.parquet
-  status: athena_pending
-  server: athena
-  notes: KF HP K5 - lr=3e-5 (slower convergence for noisy per-stay regression). A100
-    12h_4g. Pretrain reused.
-  submitted: '2026-04-14 12:50:51'
-  slurm_job_id: '70936'
-- name: kf_hp_K7_pretrain30
-  config: configs/hp_sweep/kf_hp_K7_pretrain30.json
-  output: runs/hp_sweep/kf_hp_K7_pretrain30/eval_kf.parquet
-  status: athena_pending
-  server: athena
-  notes: KF HP K7 - pretrain_epochs=30 (longer Phase 1 for 292-feature autoencoder).
-    A100 24h_1g. New Phase 1.
-  submitted: '2026-04-14 12:50:56'
-  slurm_job_id: '70937'
 - name: los_hirid_nommd_v2
   config: configs/hirid/los_hirid_nommd.json
   output: runs/los_hirid_nommd_v2/eval_los.parquet
@@ -10543,17 +10499,24 @@ experiments:
     fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C3_no_mmd_s42_v2/eval_sepsis.parquet
   server: local
-  status: running
+  status: done
   pid: 1044822
   gpu: 2
   started: '2026-04-22 02:34:00'
+  finished: '2026-04-22 16:54:51'
+  results:
+    AUCROC: 0.0435
+    AUCPR: 0.0154
+    loss: -0.1014
+    brier: -0.0563
+    ece: -0.0567
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C4_no_target_task_s42.json
   name: sepsis_v5_cross3_C4_no_target_task_s42_v2
   notes: sepsis_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last
     fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C4_no_target_task_s42_v2/eval_sepsis.parquet
-  server: local
+  server: '3090'
   status: pending
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C5_no_fidelity_s42.json
@@ -10561,7 +10524,7 @@ experiments:
   notes: sepsis_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last
     fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C5_no_fidelity_s42_v2/eval_sepsis.parquet
-  server: local
+  server: '3090'
   status: pending
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C6_no_pretrain_s42.json
@@ -10585,7 +10548,7 @@ experiments:
   notes: sepsis_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last
     fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C8_residual_s42_v2/eval_sepsis.parquet
-  server: local
+  server: '3090'
   status: pending
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C9_no_time_delta_s42.json

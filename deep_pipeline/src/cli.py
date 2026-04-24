@@ -1853,6 +1853,27 @@ def translate_and_eval(args):
     lr_target_loader = None
     results = None
 
+    from_pretrain_only = getattr(args, "from_pretrain_only", False) or bool(
+        config.get("eval_from_pretrain_only", False)
+    )
+
+    def _resolve_checkpoint_path(default_name: str) -> str:
+        if args.translator_checkpoint:
+            return args.translator_checkpoint
+        fname = "pretrain_checkpoint.pt" if from_pretrain_only else default_name
+        return str(Path(output_cfg["run_dir"]) / fname)
+
+    if from_pretrain_only:
+        logging.warning(
+            "[pretrain-only eval] Loading Phase 1 checkpoint; Phase 2 weights will NOT be applied."
+        )
+        if translator_type == "retrieval" and not training_cfg.get("phase1_self_retrieval", False):
+            logging.warning(
+                "[pretrain-only eval] phase1_self_retrieval=false: cross-attention blocks were "
+                "trained as pass-through during Phase 1; using them against real memory bank "
+                "context for the first time."
+            )
+
     if translator_type in ("transformer", "affine"):
         translator_cfg = _get_translator_config(config)
         yaib_runtime = _build_runtime_from_config(
@@ -1932,9 +1953,7 @@ def translate_and_eval(args):
                 temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
             )
 
-        checkpoint_path = args.translator_checkpoint
-        if not checkpoint_path:
-            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        checkpoint_path = _resolve_checkpoint_path("best_translator.pt")
         renorm_scale = None
         renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
@@ -2035,9 +2054,7 @@ def translate_and_eval(args):
             temporal_attention_window=translator_cfg.get("temporal_attention_window", 0),
         )
 
-        checkpoint_path = args.translator_checkpoint
-        if not checkpoint_path:
-            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        checkpoint_path = _resolve_checkpoint_path("best_translator.pt")
         renorm_scale = None
         renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
@@ -2135,9 +2152,7 @@ def translate_and_eval(args):
             disable_triplet_time_delta=training_cfg.get("disable_triplet_time_delta", False),
         )
 
-        checkpoint_path = args.translator_checkpoint
-        if not checkpoint_path:
-            checkpoint_path = str(Path(output_cfg["run_dir"]) / "best_translator.pt")
+        checkpoint_path = _resolve_checkpoint_path("best_translator.pt")
         renorm_scale = None
         renorm_offset = None
         if checkpoint_path and Path(checkpoint_path).exists():
@@ -2800,6 +2815,9 @@ def main():
     eval_parser.add_argument("--input_test_parquet", type=str, help="Input test parquet (optional, uses config data_dir)")
     eval_parser.add_argument("--output_parquet", type=str, required=True, help="Output path for translated parquet")
     eval_parser.add_argument("--translator_checkpoint", type=str, help="Path to translator checkpoint")
+    eval_parser.add_argument("--from-pretrain-only", dest="from_pretrain_only", action="store_true",
+        help="Load pretrain_checkpoint.pt (Phase 1 weights only) instead of best_translator.pt. "
+             "Skips Phase 2 adaptation; used for ablation measuring Phase 1 contribution.")
     eval_parser.add_argument("--export_full_sequence", default=True, action=argparse.BooleanOptionalAction, help="Export translated parquet with all non-padded timesteps (not just label mask). Default: true (use --no-export_full_sequence for label-mask only).")
     eval_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 

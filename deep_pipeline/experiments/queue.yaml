@@ -63,6 +63,168 @@ settings:
       path_mappings:
         /bigdata/omerg/Thesis: ~/Thesis
 experiments:
+- name: mort_c2_hirid_best_s2222
+  config: configs/hirid/ablation/mort_c2_hirid_best_s2222.json
+  output: experiments/results/mort_c2_hirid_best_s2222.parquet
+  status: done
+  branch: master
+  server: local
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=2222
+  gpu: 0
+  pid: 4177979
+  started: '2026-04-24 16:03:48'
+  finished: '2026-04-24 18:12:12'
+  results:
+    AUCROC: 0.0566
+    AUCPR: 0.0931
+    loss: -0.0651
+    brier: -0.087
+    ece: -0.1507
+- name: mort_c2_hirid_best_s42
+  config: configs/hirid/ablation/mort_c2_hirid_best_s42.json
+  output: experiments/results/mort_c2_hirid_best_s42.parquet
+  status: done
+  branch: master
+  server: local
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=42
+  gpu: 1
+  pid: 4177981
+  started: '2026-04-24 16:03:48'
+  finished: '2026-04-24 18:09:05'
+  results:
+    AUCROC: 0.0643
+    AUCPR: 0.0886
+    loss: -0.1098
+    brier: -0.1268
+    ece: -0.1854
+- name: mort_c2_hirid_best_s7777
+  config: configs/hirid/ablation/mort_c2_hirid_best_s7777.json
+  output: experiments/results/mort_c2_hirid_best_s7777.parquet
+  status: done
+  branch: master
+  server: local
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=7777
+  gpu: 1
+  pid: 75292
+  started: '2026-04-24 18:09:06'
+  finished: '2026-04-24 20:18:04'
+  results:
+    AUCROC: 0.0534
+    AUCPR: 0.0706
+    loss: -0.0845
+    brier: -0.1291
+    ece: -0.1991
+- name: sepsis_v5_cross3_hirid_best_s2222
+  config: configs/hirid/ablation/sepsis_v5_cross3_hirid_best_s2222.json
+  output: experiments/results/sepsis_v5_cross3_hirid_best_s2222.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=2222
+- name: sepsis_v5_cross3_hirid_best_s42
+  config: configs/hirid/ablation/sepsis_v5_cross3_hirid_best_s42.json
+  output: experiments/results/sepsis_v5_cross3_hirid_best_s42.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=42
+- name: sepsis_v5_cross3_hirid_best_s7777
+  config: configs/hirid/ablation/sepsis_v5_cross3_hirid_best_s7777.json
+  output: experiments/results/sepsis_v5_cross3_hirid_best_s7777.parquet
+  status: pending
+  branch: master
+  server: a6000
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=7777
+- name: aki_v5_cross3_hirid_best_s2222
+  config: configs/hirid/ablation/aki_v5_cross3_hirid_best_s2222.json
+  output: experiments/results/aki_v5_cross3_hirid_best_s2222.parquet
+  status: done
+  branch: master
+  server: otello
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=2222
+  gpu: 0
+  pid: 1812033
+  started: '2026-04-24 16:03:55'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_hirid_best_s2222.json
+  finished: '2026-04-24 17:59:41'
+  results:
+    AUCROC: 0.0732
+    AUCPR: 0.1126
+    loss: -0.1854
+    brier: -0.0229
+    ece: 0.0101
+- name: aki_v5_cross3_hirid_best_s42
+  config: configs/hirid/ablation/aki_v5_cross3_hirid_best_s42.json
+  output: experiments/results/aki_v5_cross3_hirid_best_s42.parquet
+  status: done
+  branch: master
+  server: otello
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=42
+  gpu: 1
+  pid: 1812378
+  started: '2026-04-24 16:04:01'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_hirid_best_s42.json
+  finished: '2026-04-24 18:04:55'
+  results:
+    AUCROC: 0.0785
+    AUCPR: 0.1395
+    loss: -0.1856
+    brier: -0.0379
+    ece: -0.0205
+- name: aki_v5_cross3_hirid_best_s7777
+  config: configs/hirid/ablation/aki_v5_cross3_hirid_best_s7777.json
+  output: experiments/results/aki_v5_cross3_hirid_best_s7777.parquet
+  status: done
+  branch: master
+  server: otello
+  notes: HiRID port of best-eICU ablation cell (bootstrap CI 2026-04-24); split_seed=2222 fixed, training_seed=7777
+  gpu: 2
+  pid: 1812812
+  started: '2026-04-24 16:04:07'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_hirid_best_s7777.json
+  finished: '2026-04-24 18:05:58'
+  results:
+    AUCROC: 0.0743
+    AUCPR: 0.115
+    loss: -0.1828
+    brier: -0.0136
+    ece: 0.0215
+- name: aki_retrMax_mr1_w25_s2222
+  config: experiments/configs/aki_retrMax_mr1_w25_s2222.json
+  output: experiments/results/aki_retrMax_mr1_w25_s2222.parquet
+  status: running
+  branch: master
+  server: a6000
+  notes: 'retrieval-max for AKI: memory_refresh=1 + retrieval_window=25 on v5_cross3 C0 base; testing if fresh bank + wider
+    window can beat C1 no-retrieval (+0.0514)'
+  gpu: 1
+  pid: 2997582
+  started: '2026-04-24 11:42:56'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_retrMax_mr1_w25_s2222.json
+- name: aki_retrMax_mr1_w25_s42_v2
+  config: experiments/configs/aki_retrMax_mr1_w25_s42_v2.json
+  output: experiments/results/aki_retrMax_mr1_w25_s42_v2.parquet
+  status: running
+  branch: master
+  server: a6000
+  notes: 'retrieval-max for AKI: memory_refresh=1 + retrieval_window=25 on v5_cross3 C0 base; testing if fresh bank + wider
+    window can beat C1 no-retrieval (+0.0514)'
+  gpu: 3
+  pid: 2997866
+  started: '2026-04-24 11:43:02'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_retrMax_mr1_w25_s42_v2.json
+- name: aki_retrMax_mr1_w25_s7777_v2
+  config: experiments/configs/aki_retrMax_mr1_w25_s7777_v2.json
+  output: experiments/results/aki_retrMax_mr1_w25_s7777_v2.parquet
+  status: running
+  branch: master
+  server: a6000
+  notes: 'retrieval-max for AKI: memory_refresh=1 + retrieval_window=25 on v5_cross3 C0 base; testing if fresh bank + wider
+    window can beat C1 no-retrieval (+0.0514)'
+  gpu: 0
+  pid: 3178082
+  started: '2026-04-24 14:17:30'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_retrMax_mr1_w25_s7777_v2.json
 - name: sepsis_cap_S_s42
   config: configs/ablation/capacity/sepsis_cap_S_s42.json
   output: experiments/results/sepsis_cap_S_s42.parquet
@@ -10204,11 +10366,18 @@ experiments:
     pretrain reuse]'
   output: runs/seeds_v2/aki_v5_cross3_C1_no_retrieval_s42_v2/eval_aki.parquet
   server: a6000
-  status: running
+  status: done
   gpu: 0
   pid: 2133924
   started: '2026-04-22 16:38:12'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C1_no_retrieval_s42_v2.json
+  finished: '2026-04-23 04:00:53'
+  results:
+    AUCROC: 0.0516
+    AUCPR: 0.1452
+    loss: -0.1034
+    brier: -0.0266
+    ece: -0.0143
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C1_no_retrieval_s42.json
   name: sepsis_v5_cross2_C1_no_retrieval_s42_v2
@@ -10224,10 +10393,17 @@ experiments:
     no pretrain reuse]'
   output: runs/seeds_v2/sepsis_v5_cross2_C1_no_retrieval_s7777_v2/eval_sepsis.parquet
   server: local
-  status: running
+  status: done
   gpu: 0
   pid: 2463889
   started: '2026-04-22 16:38:12'
+  finished: '2026-04-23 04:06:10'
+  results:
+    AUCROC: 0.0488
+    AUCPR: 0.0178
+    loss: -0.1112
+    brier: -0.066
+    ece: -0.0681
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_s7777.json
   name: sepsis_v5_cross3_C1_no_retrieval_s7777_v2
@@ -10235,10 +10411,17 @@ experiments:
     no pretrain reuse]'
   output: runs/seeds_v2/sepsis_v5_cross3_C1_no_retrieval_s7777_v2/eval_sepsis.parquet
   server: local
-  status: running
+  status: done
   gpu: 1
   pid: 2463891
   started: '2026-04-22 16:38:12'
+  finished: '2026-04-23 05:08:17'
+  results:
+    AUCROC: 0.0442
+    AUCPR: 0.0153
+    loss: -0.1015
+    brier: -0.0567
+    ece: -0.0615
 - branch: master
   config: configs/seeds/mort_c2_C0_control_s42_clean.json
   name: mort_c2_C0_control_s42_clean
@@ -10247,11 +10430,18 @@ experiments:
     integrity fix now prevents future collisions.
   output: runs/seeds_v2/mort_c2_C0_control_s42_clean/eval_mortality.parquet
   server: a6000
-  status: running
+  status: done
   gpu: 1
   pid: 2134264
   started: '2026-04-22 16:38:18'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/mort_c2_C0_control_s42_clean.json
+  finished: '2026-04-22 20:38:27'
+  results:
+    AUCROC: 0.0458
+    AUCPR: 0.0475
+    loss: -0.0561
+    brier: -0.0076
+    ece: -0.0147
 - branch: master
   config: configs/seeds/kf_v5_cross3_C0_control_s7777_clean.json
   name: kf_v5_cross3_C0_control_s7777_clean
@@ -10395,18 +10585,36 @@ experiments:
   notes: sepsis_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C4_no_target_task_s42_v2/eval_sepsis.parquet
   server: '3090'
-  status: running
+  status: done
   gpu: 0
   pid: 2789528
   started: '2026-04-22 17:06:24'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_C4_no_target_task_s42_v2.json
+  finished: '2026-04-23 05:14:30'
+  results:
+    AUCROC: 0.0475
+    AUCPR: 0.0216
+    loss: -0.1104
+    brier: -0.0602
+    ece: -0.0526
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C5_no_fidelity_s42.json
   name: sepsis_v5_cross3_C5_no_fidelity_s42_v2
   notes: sepsis_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C5_no_fidelity_s42_v2/eval_sepsis.parquet
-  server: '3090'
-  status: pending
+  server: otello
+  status: done
+  gpu: 2
+  pid: 2386985
+  started: '2026-04-22 22:05:36'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_C5_no_fidelity_s42_v2.json
+  finished: '2026-04-23 03:49:29'
+  results:
+    AUCROC: -0.072
+    AUCPR: -0.0095
+    loss: -0.0368
+    brier: -0.0658
+    ece: -0.0272
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C6_no_pretrain_s42.json
   name: sepsis_v5_cross3_C6_no_pretrain_s42_v2
@@ -10427,7 +10635,18 @@ experiments:
   notes: sepsis_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross3_C8_residual_s42_v2/eval_sepsis.parquet
   server: '3090'
-  status: pending
+  status: done
+  gpu: 0
+  pid: 2819515
+  started: '2026-04-23 05:14:39'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_C8_residual_s42_v2.json
+  finished: '2026-04-23 17:49:04'
+  results:
+    AUCROC: 0.0442
+    AUCPR: 0.0172
+    loss: -0.1103
+    brier: -0.0604
+    ece: -0.0473
 - branch: master
   config: configs/seeds/sepsis_v5_cross3_C9_no_time_delta_s42.json
   name: sepsis_v5_cross3_C9_no_time_delta_s42_v2
@@ -10441,7 +10660,17 @@ experiments:
   notes: sepsis_v5_cross2 C0 (control) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C0_control_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: done
+  gpu: 0
+  pid: 3125310
+  started: '2026-04-23 04:06:10'
+  finished: '2026-04-23 21:48:11'
+  results:
+    AUCROC: 0.0507
+    AUCPR: 0.018
+    loss: -0.113
+    brier: -0.0678
+    ece: -0.0639
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C2_no_feature_gate_s7777.json
   name: sepsis_v5_cross2_C2_no_feature_gate_s7777_v2
@@ -10454,22 +10683,55 @@ experiments:
   name: sepsis_v5_cross2_C3_no_mmd_s7777_v2
   notes: sepsis_v5_cross2 C3 (no_mmd) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C3_no_mmd_s7777_v2/eval_sepsis.parquet
-  server: local
-  status: pending
+  server: otello
+  status: done
+  gpu: 3
+  pid: 2387318
+  started: '2026-04-22 22:05:42'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross2_C3_no_mmd_s7777_v2.json
+  finished: '2026-04-23 05:41:33'
+  results:
+    AUCROC: 0.0492
+    AUCPR: 0.0145
+    loss: -0.107
+    brier: -0.0451
+    ece: -0.0319
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C4_no_target_task_s7777.json
   name: sepsis_v5_cross2_C4_no_target_task_s7777_v2
-  notes: sepsis_v5_cross2 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix]
+  notes: sepsis_v5_cross2 C4 (no_target_task) seed=7777 [requeued post split_seed+drop_last fix] [reassigned local Apr 23
+    — never submitted to 3090]
   output: runs/seeds_v2/sepsis_v5_cross2_C4_no_target_task_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: done
+  gpu: 0
+  pid: 3576239
+  started: '2026-04-23 21:48:11'
+  finished: '2026-04-24 10:50:43'
+  results:
+    AUCROC: 0.0376
+    AUCPR: 0.0156
+    loss: -0.1063
+    brier: -0.0618
+    ece: -0.0399
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C5_no_fidelity_s7777.json
   name: sepsis_v5_cross2_C5_no_fidelity_s7777_v2
   notes: sepsis_v5_cross2 C5 (no_fidelity) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C5_no_fidelity_s7777_v2/eval_sepsis.parquet
-  server: local
-  status: pending
+  server: otello
+  status: done
+  gpu: 1
+  pid: 2542386
+  started: '2026-04-23 00:19:28'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross2_C5_no_fidelity_s7777_v2.json
+  finished: '2026-04-23 08:40:35'
+  results:
+    AUCROC: -0.0545
+    AUCPR: -0.0081
+    loss: -0.0484
+    brier: -0.0654
+    ece: -0.0184
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C6_no_pretrain_s7777.json
   name: sepsis_v5_cross2_C6_no_pretrain_s7777_v2
@@ -10490,7 +10752,17 @@ experiments:
   notes: sepsis_v5_cross2 C8 (residual) seed=7777 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/sepsis_v5_cross2_C8_residual_s7777_v2/eval_sepsis.parquet
   server: local
-  status: pending
+  status: done
+  gpu: 1
+  pid: 3143144
+  started: '2026-04-23 05:08:18'
+  finished: '2026-04-24 00:35:25'
+  results:
+    AUCROC: 0.0372
+    AUCPR: 0.0189
+    loss: -0.1093
+    brier: -0.0764
+    ece: -0.0659
 - branch: master
   config: configs/seeds/sepsis_v5_cross2_C9_no_time_delta_s7777.json
   name: sepsis_v5_cross2_C9_no_time_delta_s7777_v2
@@ -10703,7 +10975,18 @@ experiments:
   notes: aki_v5_cross3 C0 (control) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C0_control_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: done
+  gpu: 1
+  pid: 2525285
+  started: '2026-04-22 20:38:34'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C0_control_s42_v2.json
+  finished: '2026-04-23 12:39:31'
+  results:
+    AUCROC: 0.0426
+    AUCPR: 0.1301
+    loss: -0.0846
+    brier: -0.0231
+    ece: -0.0193
 - branch: master
   config: configs/seeds/aki_v5_cross3_C2_no_feature_gate_s42.json
   name: aki_v5_cross3_C2_no_feature_gate_s42_v2
@@ -10717,24 +11000,53 @@ experiments:
   notes: aki_v5_cross3 C3 (no_mmd) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C3_no_mmd_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: done
+  gpu: 3
+  pid: 2586783
+  started: '2026-04-22 23:19:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C3_no_mmd_s42_v2.json
+  finished: '2026-04-23 12:39:32'
+  results:
+    AUCROC: 0.0484
+    AUCPR: 0.1374
+    loss: -0.0966
+    brier: -0.0228
+    ece: -0.0108
 - branch: master
   config: configs/seeds/aki_v5_cross3_C4_no_target_task_s42.json
   name: aki_v5_cross3_C4_no_target_task_s42_v2
   notes: aki_v5_cross3 C4 (no_target_task) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C4_no_target_task_s42_v2/eval_aki.parquet
   server: a6000
-  status: running
+  status: done
   pid: 1569725
   gpu: 3
   started: '2026-04-22 06:14:00'
+  finished: '2026-04-22 23:19:13'
+  results:
+    AUCROC: 0.0413
+    AUCPR: 0.1247
+    loss: -0.0839
+    brier: -0.014
+    ece: 0.0042
 - branch: master
   config: configs/seeds/aki_v5_cross3_C5_no_fidelity_s42.json
   name: aki_v5_cross3_C5_no_fidelity_s42_v2
   notes: aki_v5_cross3 C5 (no_fidelity) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C5_no_fidelity_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: done
+  gpu: 0
+  pid: 2627197
+  started: '2026-04-23 04:01:00'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C5_no_fidelity_s42_v2.json
+  finished: '2026-04-23 21:10:48'
+  results:
+    AUCROC: 0.0384
+    AUCPR: 0.1154
+    loss: -0.0779
+    brier: -0.0124
+    ece: 0.0055
 - branch: master
   config: configs/seeds/aki_v5_cross3_C6_no_pretrain_s42.json
   name: aki_v5_cross3_C6_no_pretrain_s42_v2
@@ -10755,7 +11067,18 @@ experiments:
   notes: aki_v5_cross3 C8 (residual) seed=42 [requeued post split_seed+drop_last fix]
   output: runs/seeds_v2/aki_v5_cross3_C8_residual_s42_v2/eval_aki.parquet
   server: a6000
-  status: pending
+  status: done
+  gpu: 1
+  pid: 2707256
+  started: '2026-04-23 12:39:38'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C8_residual_s42_v2.json
+  finished: '2026-04-24 05:44:03'
+  results:
+    AUCROC: 0.0322
+    AUCPR: 0.0973
+    loss: -0.0663
+    brier: -0.0113
+    ece: 0.006
 - branch: master
   config: configs/seeds/aki_v5_cross3_C9_no_time_delta_s42.json
   name: aki_v5_cross3_C9_no_time_delta_s42_v2
@@ -10775,10 +11098,11 @@ experiments:
 - branch: master
   config: configs/seeds/kf_v5_cross3_C1_no_retrieval_s7777.json
   name: kf_v5_cross3_C1_no_retrieval_s7777_v2
-  notes: kf_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  notes: kf_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix] | DONE on Athena 2026-04-19 (slurm
+    72337); ΔMAE=-0.0069, ΔR2=+0.0833; output at runs/kf_v5_cross3_C1_no_retrieval_s7777_v2/
   output: runs/seeds_v2/kf_v5_cross3_C1_no_retrieval_s7777_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: done
 - branch: master
   config: configs/seeds/kf_v5_cross3_C2_no_feature_gate_s7777.json
   name: kf_v5_cross3_C2_no_feature_gate_s7777_v2
@@ -10845,10 +11169,11 @@ experiments:
 - branch: master
   config: configs/seeds/kf_v5_cross3_C1_no_retrieval_s42.json
   name: kf_v5_cross3_C1_no_retrieval_s42_v2
-  notes: kf_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  notes: kf_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix] | DONE on Athena 2026-04-19 (slurm
+    72347); ΔMAE=-0.0063, ΔR2=+0.0782; output at runs/kf_v5_cross3_C1_no_retrieval_s42_v2/
   output: runs/seeds_v2/kf_v5_cross3_C1_no_retrieval_s42_v2/eval_kf.parquet
   server: athena
-  status: athena_running
+  status: done
 - branch: master
   config: configs/seeds/kf_v5_cross3_C2_no_feature_gate_s42.json
   name: kf_v5_cross3_C2_no_feature_gate_s42_v2
@@ -10917,10 +11242,11 @@ experiments:
 - branch: master
   config: configs/seeds/los_v5_cross3_C1_no_retrieval_s7777.json
   name: los_v5_cross3_C1_no_retrieval_s7777_v2
-  notes: los_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  notes: los_v5_cross3 C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix] | DONE on Athena 2026-04-20 (slurm
+    72363); ΔMAE=-0.0264, ΔR2=-0.0089; output at runs/los_v5_cross3_C1_no_retrieval_s7777_v2/
   output: runs/seeds_v2/los_v5_cross3_C1_no_retrieval_s7777_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: done
 - branch: master
   config: configs/seeds/los_v5_cross3_C2_no_feature_gate_s7777.json
   name: los_v5_cross3_C2_no_feature_gate_s7777_v2
@@ -10987,10 +11313,11 @@ experiments:
 - branch: master
   config: configs/seeds/los_v5_cross3_C1_no_retrieval_s42.json
   name: los_v5_cross3_C1_no_retrieval_s42_v2
-  notes: los_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]
+  notes: los_v5_cross3 C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix] | DONE on Athena 2026-04-21 (slurm
+    72374); ΔMAE=-0.0267, ΔR2=+0.0048; output at runs/los_v5_cross3_C1_no_retrieval_s42_v2/
   output: runs/seeds_v2/los_v5_cross3_C1_no_retrieval_s42_v2/eval_los.parquet
   server: athena
-  status: athena_running
+  status: done
 - branch: master
   config: configs/seeds/los_v5_cross3_C2_no_feature_gate_s42.json
   name: los_v5_cross3_C2_no_feature_gate_s42_v2
@@ -11634,7 +11961,7 @@ experiments:
 - name: los_cap_T_s2222
   config: configs/ablation/capacity/los_cap_T_s2222.json
   output: experiments/results/los_cap_T_s2222.parquet
-  status: running
+  status: done
   branch: master
   server: otello
   notes: A6 Phase C Goal B (1x target). LoS Tiny ~1.42M = 1.06x predictor. no-fidelity family shrunk to parity.
@@ -11642,10 +11969,17 @@ experiments:
   pid: 1534687
   started: '2026-04-22 08:20:49'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/los_cap_T_s2222.json
+  finished: '2026-04-22 21:26:11'
+  results:
+    MAE: -0.0307
+    MSE: -0.0019
+    RMSE: -0.0031
+    R2: 0.0175
+    loss: -0.0049
 - name: los_cap_T_s42
   config: configs/ablation/capacity/los_cap_T_s42.json
   output: experiments/results/los_cap_T_s42.parquet
-  status: running
+  status: done
   branch: master
   server: otello
   notes: A6 Phase C Goal B (1x target). LoS Tiny ~1.42M = 1.06x predictor. no-fidelity family shrunk to parity.
@@ -11653,10 +11987,17 @@ experiments:
   pid: 1679194
   started: '2026-04-22 10:44:33'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/los_cap_T_s42.json
+  finished: '2026-04-23 00:19:21'
+  results:
+    MAE: -0.0301
+    MSE: -0.0009
+    RMSE: -0.0014
+    R2: 0.008
+    loss: -0.0041
 - name: los_cap_T_s7777
   config: configs/ablation/capacity/los_cap_T_s7777.json
   output: experiments/results/los_cap_T_s7777.parquet
-  status: running
+  status: done
   branch: master
   server: otello
   notes: A6 Phase C Goal B (1x target). LoS Tiny ~1.42M = 1.06x predictor. no-fidelity family shrunk to parity.
@@ -11664,6 +12005,13 @@ experiments:
   pid: 1749578
   started: '2026-04-22 11:58:16'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/los_cap_T_s7777.json
+  finished: '2026-04-23 01:52:33'
+  results:
+    MAE: -0.0307
+    MSE: -0.001
+    RMSE: -0.0015
+    R2: 0.0087
+    loss: -0.0042
 - name: kf_cap_T_s2222
   config: configs/ablation/capacity/kf_cap_T_s2222.json
   output: experiments/results/kf_cap_T_s2222.parquet
@@ -11768,3 +12116,246 @@ experiments:
   server: athena
   branch: master
   notes: kf_lr3e5_nfnm extra seed (training_seed=456, split_seed=2222) for n=5 pool on KF winning config
+- name: kf_nfnm_C1_no_retrieval_s42_v2
+  config: configs/seeds/kf_nfnm_C1_no_retrieval_s42.json
+  output: runs/seeds_v2/kf_nfnm_C1_no_retrieval_s42_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_nfnm C1 (no_retrieval) seed=42 [requeued post split_seed+drop_last fix]; pairs with kf_nfnm_C1_no_retrieval_s2222
+    (pre-fix, poolable)
+  slurm_job_id: '73259'
+  submitted: '2026-04-22 20:26:25'
+- name: kf_nfnm_C1_no_retrieval_s7777_v2
+  config: configs/seeds/kf_nfnm_C1_no_retrieval_s7777.json
+  output: runs/seeds_v2/kf_nfnm_C1_no_retrieval_s7777_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_nfnm C1 (no_retrieval) seed=7777 [requeued post split_seed+drop_last fix]
+  slurm_job_id: '73260'
+  submitted: '2026-04-22 20:26:35'
+- name: kf_nfnm_C7_no_target_norm_s42_v2
+  config: configs/seeds/kf_nfnm_C7_no_target_norm_s42.json
+  output: runs/seeds_v2/kf_nfnm_C7_no_target_norm_s42_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_nfnm C7 (no_target_norm) seed=42 [requeued post split_seed+drop_last fix]; pairs with kf_nfnm_C7_no_target_norm_s2222
+    (pre-fix, poolable)
+  slurm_job_id: '73261'
+  submitted: '2026-04-22 20:26:45'
+- name: kf_nfnm_C7_no_target_norm_s7777_v2
+  config: configs/seeds/kf_nfnm_C7_no_target_norm_s7777.json
+  output: runs/seeds_v2/kf_nfnm_C7_no_target_norm_s7777_v2/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: master
+  notes: kf_nfnm C7 (no_target_norm) seed=7777 [requeued post split_seed+drop_last fix]
+  slurm_job_id: '73262'
+  submitted: '2026-04-22 20:26:54'
+- name: sepsis_v5_cross2_C0_control_s2222_v2
+  config: configs/seeds/sepsis_v5_cross2_C0_control_s2222.json
+  output: runs/seeds_v2/sepsis_v5_cross2_C0_control_s2222_v2/eval_sepsis.parquet
+  status: done
+  server: local
+  branch: master
+  notes: sepsis_v5_cross2 C0 (control) seed=2222 — requeue on local V100S-32GB after 3090 OOM Apr 19; needed to promote C0
+    cross2 from n=1 to n=3
+  gpu: 1
+  pid: 3661865
+  started: '2026-04-24 00:35:26'
+  finished: '2026-04-24 15:06:26'
+  results:
+    AUCROC: 0.0453
+    AUCPR: 0.0176
+    loss: -0.1094
+    brier: -0.063
+    ece: -0.0571
+- name: aki_v5_cross3_C4_no_target_task_s2222_v2
+  config: configs/seeds/aki_v5_cross3_C4_no_target_task_s2222.json
+  output: runs/seeds_v2/aki_v5_cross3_C4_no_target_task_s2222_v2/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: aki_v5_cross3 C4 (no_target_task) seed=2222 — never existed; creating to promote cell to n=3 (paired with s42_v2
+    pending, s7777_v2 done +0.0489)
+  gpu: 3
+  pid: 2707525
+  started: '2026-04-23 12:39:44'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C4_no_target_task_s2222_v2.json
+  finished: '2026-04-24 03:25:49'
+  results:
+    AUCROC: 0.0448
+    AUCPR: 0.1339
+    loss: -0.0894
+    brier: -0.0104
+    ece: 0.0173
+- name: aki_v5_cross3_C5_no_fidelity_s2222_v2
+  config: configs/seeds/aki_v5_cross3_C5_no_fidelity_s2222.json
+  output: runs/seeds_v2/aki_v5_cross3_C5_no_fidelity_s2222_v2/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: master
+  notes: aki_v5_cross3 C5 (no_fidelity) seed=2222 — never existed; creating to promote cell to n=3 (paired with s42_v2 running
+    a6000, s7777_v2 done +0.0489)
+  gpu: 0
+  pid: 2769857
+  started: '2026-04-23 21:10:55'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C5_no_fidelity_s2222_v2.json
+  finished: '2026-04-24 14:17:21'
+  results:
+    AUCROC: 0.0576
+    AUCPR: 0.1734
+    loss: -0.1149
+    brier: -0.0193
+    ece: -0.0069
+- name: sepsis_retrMax_mr1_k8_s2222
+  config: experiments/configs/sepsis_retrMax_mr1_k8_s2222.json
+  output: runs/sepsis_retrMax_mr1_k8_s2222/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: 'retrieval-max for Sepsis: memory_refresh=1 + k_neighbors=8 on v5_cross2 C0 base'
+  submitted: '2026-04-24 11:45:17'
+  slurm_job_id: '73722'
+- name: sepsis_retrMax_mr1_k8_s42_v2
+  config: experiments/configs/sepsis_retrMax_mr1_k8_s42_v2.json
+  output: runs/sepsis_retrMax_mr1_k8_s42_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: 'retrieval-max for Sepsis: memory_refresh=1 + k_neighbors=8 on v5_cross2 C0 base'
+  submitted: '2026-04-24 11:45:24'
+  slurm_job_id: '73723'
+- name: sepsis_retrMax_mr1_k8_s7777_v2
+  config: experiments/configs/sepsis_retrMax_mr1_k8_s7777_v2.json
+  output: runs/sepsis_retrMax_mr1_k8_s7777_v2/eval_sepsis.parquet
+  status: athena_pending
+  server: athena
+  notes: 'retrieval-max for Sepsis: memory_refresh=1 + k_neighbors=8 on v5_cross2 C0 base'
+  submitted: '2026-04-24 11:45:30'
+  slurm_job_id: '73724'
+- name: los_v5_cross3_hirid_best_s2222
+  config: configs/hirid/ablation/los_v5_cross3_hirid_best_s2222.json
+  output: runs/los_v5_cross3_hirid_best_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=2222
+  submitted: '2026-04-24 16:04:30'
+  slurm_job_id: '73781'
+- name: los_v5_cross3_hirid_best_s42
+  config: configs/hirid/ablation/los_v5_cross3_hirid_best_s42.json
+  output: runs/los_v5_cross3_hirid_best_s42/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=42
+  submitted: '2026-04-24 16:04:37'
+  slurm_job_id: '73782'
+- name: los_v5_cross3_hirid_best_s7777
+  config: configs/hirid/ablation/los_v5_cross3_hirid_best_s7777.json
+  output: runs/los_v5_cross3_hirid_best_s7777/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=7777
+  submitted: '2026-04-24 16:04:43'
+  slurm_job_id: '73783'
+- name: kf_v5_cross3_hirid_best_s2222
+  config: configs/hirid/ablation/kf_v5_cross3_hirid_best_s2222.json
+  output: runs/kf_v5_cross3_hirid_best_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=2222
+  submitted: '2026-04-24 16:04:49'
+  slurm_job_id: '73784'
+- name: kf_v5_cross3_hirid_best_s42
+  config: configs/hirid/ablation/kf_v5_cross3_hirid_best_s42.json
+  output: runs/kf_v5_cross3_hirid_best_s42/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=42
+  submitted: '2026-04-24 16:04:56'
+  slurm_job_id: '73785'
+- name: kf_v5_cross3_hirid_best_s7777
+  config: configs/hirid/ablation/kf_v5_cross3_hirid_best_s7777.json
+  output: runs/kf_v5_cross3_hirid_best_s7777/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: HiRID port of best-eICU ablation cell; split_seed=2222 fixed; training_seed=7777
+  submitted: '2026-04-24 16:05:02'
+  slurm_job_id: '73786'
+- name: mort_c2_C0_control_pretrain_only_s2222
+  config: configs/pretrain_only/mort_c2_C0_control_pretrain_only_s2222.json
+  output: experiments/results/mort_c2_C0_control_pretrain_only_s2222.parquet
+  status: running
+  server: local
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+  gpu: 0
+  pid: 332976
+  started: '2026-04-25 00:58:27'
+- name: mort_c2_C0_control_pretrain_only_s42
+  config: configs/pretrain_only/mort_c2_C0_control_pretrain_only_s42.json
+  output: experiments/results/mort_c2_C0_control_pretrain_only_s42.parquet
+  status: running
+  server: local
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+  gpu: 1
+  pid: 332977
+  started: '2026-04-25 00:58:27'
+- name: mort_c2_C0_control_pretrain_only_s7777
+  config: configs/pretrain_only/mort_c2_C0_control_pretrain_only_s7777.json
+  output: experiments/results/mort_c2_C0_control_pretrain_only_s7777.parquet
+  status: pending
+  server: local
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+- name: aki_v5_cross3_C0_control_pretrain_only_s2222
+  config: configs/pretrain_only/aki_v5_cross3_C0_control_pretrain_only_s2222.json
+  output: experiments/results/aki_v5_cross3_C0_control_pretrain_only_s2222.parquet
+  status: pending
+  server: a6000
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+- name: aki_v5_cross3_C0_control_pretrain_only_s42
+  config: configs/pretrain_only/aki_v5_cross3_C0_control_pretrain_only_s42.json
+  output: experiments/results/aki_v5_cross3_C0_control_pretrain_only_s42.parquet
+  status: pending
+  server: a6000
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+- name: aki_v5_cross3_C0_control_pretrain_only_s7777
+  config: configs/pretrain_only/aki_v5_cross3_C0_control_pretrain_only_s7777.json
+  output: experiments/results/aki_v5_cross3_C0_control_pretrain_only_s7777.parquet
+  status: pending
+  server: a6000
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+- name: sepsis_v5_cross2_C0_control_pretrain_only_s2222
+  config: configs/pretrain_only/sepsis_v5_cross2_C0_control_pretrain_only_s2222.json
+  output: experiments/results/sepsis_v5_cross2_C0_control_pretrain_only_s2222.parquet
+  status: running
+  server: otello
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+  gpu: 0
+  pid: 2398185
+  started: '2026-04-25 00:58:32'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross2_C0_control_pretrain_only_s2222.json
+- name: sepsis_v5_cross2_C0_control_pretrain_only_s42
+  config: configs/pretrain_only/sepsis_v5_cross2_C0_control_pretrain_only_s42.json
+  output: experiments/results/sepsis_v5_cross2_C0_control_pretrain_only_s42.parquet
+  status: running
+  server: otello
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)
+  gpu: 1
+  pid: 2398490
+  started: '2026-04-25 00:58:37'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross2_C0_control_pretrain_only_s42.json
+- name: sepsis_v5_cross2_C0_control_pretrain_only_s7777
+  config: configs/pretrain_only/sepsis_v5_cross2_C0_control_pretrain_only_s7777.json
+  output: experiments/results/sepsis_v5_cross2_C0_control_pretrain_only_s7777.parquet
+  status: pending
+  server: otello
+  command: translate_and_eval
+  notes: pretrain-only eval (Apr 25 sweep)

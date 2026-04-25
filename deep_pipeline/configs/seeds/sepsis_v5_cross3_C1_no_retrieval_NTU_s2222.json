@@ -114,7 +114,7 @@
     "training_seed": 2222
   },
   "output": {
-    "run_dir": "runs/seeds/sepsis_v5_cross3_C1_no_retrieval_s2222",
+    "run_dir": "runs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s2222",
     "log_file": "runs/seeds/sepsis_v5_cross3_C1_no_retrieval_s2222/run.log"
   }
 }

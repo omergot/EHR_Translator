@@ -114,7 +114,7 @@
     "training_seed": 2222
   },
   "output": {
-    "run_dir": "runs/seeds/mort_c2_C5_no_fidelity_s2222",
+    "run_dir": "runs/seeds/mort_c2_C5_no_fidelity_NTU_s2222",
     "log_file": "runs/seeds/mort_c2_C5_no_fidelity_s2222/run.log"
   }
 }

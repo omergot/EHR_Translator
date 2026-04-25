@@ -114,7 +114,7 @@
     "training_seed": 7777
   },
   "output": {
-    "run_dir": "runs/seeds/mort_c2_C5_no_fidelity_s7777",
+    "run_dir": "runs/seeds/mort_c2_C5_no_fidelity_NTU_s7777",
     "log_file": "runs/seeds/mort_c2_C5_no_fidelity_s7777/run.log"
   }
 }

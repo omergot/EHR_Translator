@@ -116,7 +116,7 @@
     "training_seed": 42
   },
   "output": {
-    "run_dir": "runs/seeds/kf_v5_cross3_C3_no_mmd_s42",
+    "run_dir": "runs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s42",
     "log_file": "runs/seeds/kf_v5_cross3_C3_no_mmd_s42/run.log"
   }
 }

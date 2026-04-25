@@ -966,20 +966,25 @@ def explain_leaf(
     )
     if leaf.regime == "adatime":
         lines.append(
-            "  rule (Apr 26): AdaTime -> residual universal. Wins or ties at every "
-            "measured pretrain_epochs x lambda_fidelity cell (HAR cap_T_p10 RES "
-            "+24.86 MF1; WISDM v4_lr67_fid05 p=10 RES +13.41 MF1; HHAR v4_base "
-            "p=10 2-seed within-sigma tie). Mechanism: frozen 1D-CNN + raw "
-            "low-dim time-series. The previously-documented `p > 0 -> absolute` "
+            "  rule (Apr 26): AdaTime -> residual wins-or-ties at every measured "
+            "cell (7 strict-toggle pairs; 6 single-seed + 1 within-sigma 2-seed "
+            "tie at HHAR v4_base p=10). Headline cells: HAR cap_T_p10 RES "
+            "+24.86 MF1; WISDM v4_lr67_fid05 p=10 RES +13.41 MF1. The "
+            "cross-benchmark mechanism co-varies with three axes (predictor "
+            "architecture, feature dimensionality + type, lambda_fidelity "
+            "regime) and is not separately isolated by a controlled "
+            "backbone-swap. The previously-documented `p > 0 -> absolute` "
             "bridge is deprecated -- see output_mode_multivariable_audit.md "
             "Phase 6."
         )
     else:
         lines.append(
-            "  rule (Apr 26): EHR -> absolute universal. 5/5 tasks at n=3 via C8 "
-            "strict toggle. Mechanism: frozen LSTM + tabular ICU features regime "
-            "(predictor-architecture-keyed; not `p > 0`-keyed). Boundary case: "
-            "aki_nf_C8 (residual + lambda_recon=0) ~+0.0002 single-seed; R7 hard "
+            "  rule (Apr 26): EHR -> absolute wins on 5/5 tasks at n=3 via C8 "
+            "strict toggle. Mechanism (hypothesised; not isolated by ablation): "
+            "frozen LSTM + tabular ICU features regime; the predictor-"
+            "architecture-keyed reading is one of three co-varying explanations "
+            "(predictor, feature dim, lambda_fid). Boundary case: aki_nf_C8 "
+            "(residual + lambda_recon=0) ~+0.0002 single-seed; R7 hard "
             "guardrail prevents that combination."
         )
     lines.append(f"Template candidates (first existing wins):")

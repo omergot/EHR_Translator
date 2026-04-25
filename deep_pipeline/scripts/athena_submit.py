@@ -243,6 +243,46 @@ def select_qos(config_path: str, name: str = "", chain: int = 1) -> tuple[str, s
 # SLURM script generation
 # ---------------------------------------------------------------------------
 
+ADATIME_DATASETS = {"HAR", "HHAR", "WISDM", "SSC", "MFD"}
+
+
+def _is_adatime_config(config_path: str) -> bool:
+    """Detect AdaTime configs by top-level `dataset` key in {HAR,HHAR,WISDM,SSC,MFD}.
+    EHR configs have `data_dir`/`vars`/`task_config` instead — disjoint schema."""
+    try:
+        with open(config_path) as f:
+            cfg = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return False
+    return cfg.get("dataset") in ADATIME_DATASETS
+
+
+def _adatime_invocation(name: str, config_path_athena: str, config_path_local: str) -> str:
+    """Build the `python scripts/run_adatime.py ...` line for an AdaTime config.
+    Mirrors the working hand-written `adatime_har_best_s*` scripts."""
+    with open(config_path_local) as f:
+        cfg = json.load(f)
+    dataset = cfg["dataset"]
+    epochs = cfg.get("training", {}).get("epochs", 40)
+    data_path = cfg.get("data_path", "/home/omer.gotfrid/Thesis/AdaTime/data")
+    # Variant: strip the `adatime_<dataset_lower>` prefix so each experiment writes to its own run_dir.
+    prefix = f"adatime_{dataset.lower()}"
+    variant_suffix = name[len(prefix):] if name.lower().startswith(prefix) else f"_{name}"
+    if not variant_suffix.startswith("_"):
+        variant_suffix = "_" + variant_suffix
+    return (
+        "python scripts/run_adatime.py \\\n"
+        f"  --dataset {dataset} \\\n"
+        "  --all-scenarios \\\n"
+        "  --use-cnn --last-epoch --patience 0 \\\n"
+        f"  --epochs {epochs} \\\n"
+        f"  --config {config_path_athena} \\\n"
+        f"  --data-path {data_path} \\\n"
+        "  --device cuda:0 \\\n"
+        f"  --variant {variant_suffix}"
+    )
+
+
 def generate_sbatch_script(
     name: str,
     config_path_athena: str,
@@ -252,10 +292,24 @@ def generate_sbatch_script(
     account: str = "",
     partitions: str = "",
     command: str = "train_and_eval",
+    config_path_local: str | None = None,
 ) -> str:
-    """Generate an sbatch script from the template."""
-    template = TEMPLATE_PATH.read_text()
-    script = template
+    """Generate an sbatch script from the template.
+    AdaTime configs are auto-routed to scripts/run_adatime.py (detected by top-level `dataset` key)."""
+    script = TEMPLATE_PATH.read_text()
+
+    # Dispatch: AdaTime configs use run_adatime.py instead of run.py
+    # (Done on raw template so we match `__CONFIGPATH__`/`__OUTPUTPATH__` placeholders
+    # before they are substituted below.)
+    if config_path_local and _is_adatime_config(config_path_local):
+        adatime_cmd = _adatime_invocation(name, config_path_athena, config_path_local)
+        ehr_block = (
+            "python run.py __COMMAND__ \\\n"
+            "  --config __CONFIGPATH__ \\\n"
+            "  --output_parquet __OUTPUTPATH__"
+        )
+        if ehr_block in script:
+            script = script.replace(ehr_block, adatime_cmd)
     script = script.replace("__EXPNAME__", name)
     script = script.replace("__WALLTIME__", wall_time)
     script = script.replace("__QOS__", qos)
@@ -423,7 +477,8 @@ def submit_experiment(
 
     # Generate sbatch script
     script = generate_sbatch_script(name, athena_config, athena_output, qos, wall_time,
-                                    account=account, partitions=partitions_str, command=command)
+                                    account=account, partitions=partitions_str, command=command,
+                                    config_path_local=str(local_config))
     ATHENA_SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     local_script = ATHENA_SCRIPTS_DIR / f"{name}.sh"
     local_script.write_text(script)

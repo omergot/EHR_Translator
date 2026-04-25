@@ -215,6 +215,9 @@ def _get_training_config(config: dict) -> dict:
         # V6: Self-retrieval Phase 1
         "phase1_self_retrieval": training.get("phase1_self_retrieval", False),
         "phase1_memory_refresh_epochs": training.get("phase1_memory_refresh_epochs", None),
+        # NTU ablation: which domain feeds Phase 1 autoencoder pretraining
+        # ("target"=MIMIC, default; "source"=eICU/HiRID for "no target usage" experiments)
+        "phase1_pretrain_domain": training.get("phase1_pretrain_domain", "target"),
         # V6: Gradient accumulation
         "accumulate_grad_batches": training.get("accumulate_grad_batches", 1),
         # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline

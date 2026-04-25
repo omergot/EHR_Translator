@@ -1305,6 +1305,13 @@ class LatentTranslatorTrainer:
         self.grad_clip_norm = _tc.get("grad_clip_norm", 0.0)
         self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
 
+        # NTU: which domain feeds Phase 1 pretrain ("target"=MIMIC default; "source"=eICU/HiRID)
+        self.phase1_pretrain_domain = _tc.get("phase1_pretrain_domain", "target")
+        if self.phase1_pretrain_domain not in ("target", "source"):
+            raise ValueError(
+                f"phase1_pretrain_domain must be 'target' or 'source', got {self.phase1_pretrain_domain!r}"
+            )
+
         if self.lambda_target_task > 0:
             logging.info("Target task loss enabled: lambda_target_task=%.4f", self.lambda_target_task)
         if self.lambda_label_pred > 0:
@@ -1833,9 +1840,18 @@ class LatentTranslatorTrainer:
             self.translator.load_state_dict(ckpt["translator_state_dict"])
             logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
         elif self.pretrain_epochs > 0:
-            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs) ===", self.pretrain_epochs)
+            pt_loader = (
+                self.target_train_loader
+                if self.phase1_pretrain_domain == "target"
+                else train_loader
+            )
+            logging.info(
+                "=== Phase 1: Autoencoder pretraining on %s (%d epochs) ===",
+                self.phase1_pretrain_domain.upper(),
+                self.pretrain_epochs,
+            )
             for ep in range(self.pretrain_epochs):
-                metrics = self._pretrain_epoch(self.target_train_loader)
+                metrics = self._pretrain_epoch(pt_loader)
                 lp_str = ""
             if self.lambda_label_pred > 0:
                 lp_str = " label_pred=%.4f" % metrics.get("pretrain_label_pred", 0.0)
@@ -2016,6 +2032,19 @@ class RetrievalTranslatorTrainer:
             "phase1_memory_refresh_epochs", self.memory_refresh_epochs
         )
         self.accumulate_grad_batches = max(1, _tc.get("accumulate_grad_batches", 1))
+
+        # NTU: which domain feeds Phase 1 pretrain ("target"=MIMIC default; "source"=eICU/HiRID)
+        self.phase1_pretrain_domain = _tc.get("phase1_pretrain_domain", "target")
+        if self.phase1_pretrain_domain not in ("target", "source"):
+            raise ValueError(
+                f"phase1_pretrain_domain must be 'target' or 'source', got {self.phase1_pretrain_domain!r}"
+            )
+        if self.phase1_pretrain_domain == "source" and self.phase1_self_retrieval:
+            raise ValueError(
+                "phase1_pretrain_domain='source' is incompatible with phase1_self_retrieval=true: "
+                "the memory bank in self-retrieval is built from target latents and would be "
+                "incoherent with source-domain Phase 1. Disable one of these."
+            )
 
         # V7 (NeurIPS): TCR — target context reconstruction through full retrieval pipeline
         self.lambda_tcr = _tc.get("lambda_tcr", 0.0)
@@ -2934,15 +2963,24 @@ class RetrievalTranslatorTrainer:
             logging.info("Loaded pretrain checkpoint from %s — skipping Phase 1", pretrain_path)
         elif self.pretrain_epochs > 0:
             sr_label = " with self-retrieval" if self.phase1_self_retrieval else ""
-            logging.info("=== Phase 1: Autoencoder pretraining on MIMIC (%d epochs%s) ===",
-                         self.pretrain_epochs, sr_label)
+            pt_loader = (
+                self.target_train_loader
+                if self.phase1_pretrain_domain == "target"
+                else train_loader
+            )
+            logging.info(
+                "=== Phase 1: Autoencoder pretraining on %s (%d epochs%s) ===",
+                self.phase1_pretrain_domain.upper(),
+                self.pretrain_epochs,
+                sr_label,
+            )
             for ep in range(self.pretrain_epochs):
                 # Build/refresh memory bank for self-retrieval
                 if self.phase1_self_retrieval:
                     if self.memory_bank is None or (ep % self.phase1_memory_refresh_epochs == 0):
                         self._build_memory_bank()
 
-                metrics = self._pretrain_epoch(self.target_train_loader)
+                metrics = self._pretrain_epoch(pt_loader)
                 lp_str = ""
                 if self.lambda_label_pred > 0:
                     lp_str = " label_pred=%.4f" % metrics.get("pretrain_label_pred", 0.0)

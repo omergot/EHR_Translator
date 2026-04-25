@@ -55,13 +55,15 @@ class PretrainFingerprint:
     pretrain_epochs: int
     seed: int
     phase1_self_retrieval: bool = False
+    phase1_pretrain_domain: str = "target"
 
     def __str__(self):
         sr_str = " SR" if self.phase1_self_retrieval else ""
+        dom_str = "" if self.phase1_pretrain_domain == "target" else f" dom={self.phase1_pretrain_domain}"
         return (f"task={self.task} d_latent={self.d_latent} d_model={self.d_model} "
                 f"enc={self.n_enc_layers} dec={self.n_dec_layers} "
                 f"cross={self.n_cross_layers} "
-                f"pretrain_ep={self.pretrain_epochs} seed={self.seed}{sr_str}")
+                f"pretrain_ep={self.pretrain_epochs} seed={self.seed}{sr_str}{dom_str}")
 
 
 def infer_task(name: str) -> str:
@@ -108,6 +110,7 @@ def fingerprint_from_config(config: dict, config_name: str = "") -> Optional[Pre
                                    translator.get("n_cross_layers", 2))
 
     phase1_self_retrieval = training.get("phase1_self_retrieval", False)
+    phase1_pretrain_domain = training.get("phase1_pretrain_domain", "target")
 
     return PretrainFingerprint(
         task=task,
@@ -119,6 +122,7 @@ def fingerprint_from_config(config: dict, config_name: str = "") -> Optional[Pre
         pretrain_epochs=pretrain_epochs,
         seed=config.get("seed", 2222),
         phase1_self_retrieval=phase1_self_retrieval,
+        phase1_pretrain_domain=phase1_pretrain_domain,
     )
 
 

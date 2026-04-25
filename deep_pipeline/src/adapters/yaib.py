@@ -201,10 +201,68 @@ class YAIBRuntime:
         with _pushd(yaib_root):
             gin.parse_config_file(config_path)
         
+    def _repair_outcome_sequence_column(self) -> None:
+        """Add a per-stay row-index SEQUENCE column to outc.parquet if missing.
+
+        YAIB's check_sanitize_data() dedupes the outcome by (GROUP, SEQUENCE)
+        when SEQUENCE is present, otherwise by GROUP alone (collapsing
+        per-timestep labels to one row per stay). HiRID LoS shipped without a
+        SEQUENCE column even though it has per-timestep labels, which silently
+        collapses LoS to per-stay during preprocessing. Mirror the eICU LoS
+        convention (time = 0..N-1 per stay, in row order) so YAIB treats the
+        outcome as dynamic. Safe no-op for per-stay tasks (rows == stays) and
+        for outcomes that already have the SEQUENCE column.
+        """
+        seq_col = self.vars.get("SEQUENCE")
+        group_col = self.vars.get("GROUP")
+        if not seq_col or not group_col:
+            return
+        outc_name = self.file_names.get("OUTCOME")
+        if not outc_name:
+            return
+        outc_path = self.data_dir / outc_name
+        if not outc_path.exists():
+            return
+        try:
+            outc = pl.read_parquet(outc_path)
+        except Exception as exc:
+            logging.info("[yaib] outcome repair: read failed (%s) — skipping", exc)
+            return
+        if seq_col in outc.columns or group_col not in outc.columns:
+            return
+        n_rows = len(outc)
+        n_stays = outc[group_col].n_unique()
+        if n_rows == n_stays:
+            # Per-stay outcome (KF-style); SEQUENCE legitimately absent.
+            return
+        backup = outc_path.with_suffix(outc_path.suffix + ".bak_no_time")
+        if not backup.exists():
+            import shutil
+            shutil.copy2(outc_path, backup)
+        repaired = outc.with_columns(
+            (pl.col(group_col).cum_count().over(group_col) - 1)
+            .cast(pl.Float64)
+            .alias(seq_col)
+        )
+        tmp = outc_path.with_suffix(outc_path.suffix + ".tmp")
+        repaired.write_parquet(tmp)
+        os.replace(tmp, outc_path)
+        logging.warning(
+            "[yaib] Repaired outcome at %s: added '%s' column "
+            "(rows=%d, stays=%d). Backup saved to %s.",
+            outc_path, seq_col, n_rows, n_stays, backup,
+        )
+
     def load_data(self, scaling_override: Optional[bool] = None, load_cache: bool = True) -> Dict[str, Dict[str, pl.DataFrame]]:
         if self._data is not None:
             return self._data
-            
+
+        # HiRID LoS outc.parquet ships without a SEQUENCE column, which causes
+        # YAIB's check_sanitize_data() to dedupe by stay_id only, collapsing the
+        # per-timestep LoS labels to one-per-stay (KF-style). Detect and repair
+        # in place. Idempotent; only triggers when outc has multiple rows per
+        # stay AND the SEQUENCE column is missing.
+        self._repair_outcome_sequence_column()
         logging.info("Loading and preprocessing data using YAIB...")
         prev_scaling = None
         prev_reg_scaling = None

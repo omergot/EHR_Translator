@@ -1,0 +1,56 @@
+{
+  "dataset": "WISDM",
+  "data_path": "/home/omer.gotfrid/Thesis/AdaTime/data",
+  "device": "cuda:0",
+  "seed": 1,
+  "batch_size": 32,
+  "val_fraction": 0.0,
+  "source_cnn": {
+    "mid_channels": 64,
+    "final_out_channels": 128,
+    "kernel_size": 5,
+    "stride": 1,
+    "dropout": 0.5,
+    "features_len": 64,
+    "epochs": 40,
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "patience": 0
+  },
+  "translator": {
+    "type": "retrieval",
+    "d_latent": 64,
+    "d_model": 64,
+    "d_time": 16,
+    "n_enc_layers": 2,
+    "n_dec_layers": 1,
+    "n_cross_layers": 2,
+    "n_heads": 4,
+    "d_ff": 256,
+    "dropout": 0.1,
+    "out_dropout": 0.1,
+    "temporal_attention_mode": "bidirectional",
+    "output_mode": "absolute"
+  },
+  "training": {
+    "epochs": 30,
+    "lr": 0.00067,
+    "pretrain_epochs": 10,
+    "lambda_recon": 0.1,
+    "lambda_range": 0.1,
+    "lambda_smooth": 0.0,
+    "lambda_importance_reg": 0.01,
+    "lambda_fidelity": 0.5,
+    "k_neighbors": 8,
+    "retrieval_window": 4,
+    "memory_refresh_epochs": 5,
+    "early_stopping_patience": 0,
+    "use_last_epoch": true,
+    "optimizer_type": "adam",
+    "optimizer_betas": [
+      0.5,
+      0.99
+    ],
+    "weight_decay": 0.0001
+  }
+}

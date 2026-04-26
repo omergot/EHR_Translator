@@ -142,3 +142,18 @@ The deprecated `p`-keyed rule is preserved as evidence-history in `output_mode_m
 ### Honest seed-count flag
 
 6 of the 7 new strict-toggle pairs are n=1 single-seed. The HHAR `v4_base` p=10 pair is now n=2. The claim "residual wins or ties at every measured AdaTime cell" is calibrated at this seed count; the >3σ harder claim would require ≈ 6 additional second-seed jobs.
+
+### Phase 5 — Actual outcomes (file map + cross-links)
+
+All 8 strict-toggle results have been documented across the canonical AdaTime knowledge base:
+
+| Doc | What landed |
+|---|---|
+| `docs/adatime_experiments_summary.md` §"Residual vs Absolute Strict-Toggle Run — Apr 26 update" | Master per-job table (job IDs, hyperparameters, MF1, Δ vs source-only, strict-toggle pair, submit/complete timestamps), paired Wilcoxon summary, predicted-vs-actual matrix |
+| `docs/neurips/adatime_input_adapter_playbook.md` §1 (A3) and §6 (`output_mode` rule) | Rewritten rule: AdaTime universal-residual; `pretrain_epochs > 0 → absolute` refuted; cross-benchmark split keyed on predictor + feature regime |
+| `docs/neurips/playbook_drafts/output_mode_multivariable_audit.md` Phase 5 | Per-scenario breakdown (n=10), paired Wilcoxon (HAR p≈0.009, WISDM-fid05 p≈0.093, HHAR p≈0.88), Cohen's d, catastrophic-collapse outliers |
+| `docs/neurips/playbook_drafts/adatime_claim_audit.md` | Claim-strength audit (rule-statement source) |
+| `docs/neurips/RESULTS_LEDGER.md` | (See Apr 26 entry for AdaTime A3 refutation) |
+| Per-cell result JSONs | `experiments/results/adatime_cnn_*_p10_*`, `*_p0_abs_*`, `*_fid05_*` |
+
+Code/landing commits: `347db3c` (rewrite of A3/A6), `e9c5b27` (multi-variable audit Phase 5 deep analysis).

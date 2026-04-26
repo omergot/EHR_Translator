@@ -66,7 +66,7 @@ experiments:
 - name: aki_v5_cross3_C0_cos_pilot_s2222
   config: configs/seeds/aki_v5_cross3_C0_cos_pilot_s2222.json
   output: experiments/results/aki_v5_cross3_C0_cos_pilot_s2222.parquet
-  status: running
+  status: done
   branch: ntu_ablation
   server: otello
   notes: 'AKI cos pilot: 5 epochs, retrieval V5 cross3 control, training_seed=2222. Logs [grad-diag] cos(task, fidelity) under
@@ -75,6 +75,13 @@ experiments:
   pid: 704561
   started: '2026-04-26 10:13:29'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_v5_cross3_C0_cos_pilot_s2222.json
+  finished: '2026-04-26 12:43:25'
+  results:
+    AUCROC: 0.035
+    AUCPR: 0.1048
+    loss: -0.0723
+    brier: -0.0149
+    ece: 0.0078
 - name: sepsis_v5_cross3_hirid_C5_no_fidelity_s2222
   config: configs/seeds/sepsis_v5_cross3_hirid_C5_no_fidelity_s2222.json
   output: experiments/results/sepsis_v5_cross3_hirid_C5_no_fidelity_s2222.parquet
@@ -131,7 +138,7 @@ experiments:
 - name: sepsis_v5_cross3_hirid_pureC5_s42_v2
   config: configs/hirid/ablation/sepsis_v5_cross3_hirid_pureC5_s42_v2.json
   output: experiments/results/sepsis_v5_cross3_hirid_pureC5_s42_v2.parquet
-  status: running
+  status: done
   branch: ntu_ablation
   server: a6000
   notes: HiRID Sepsis pure C5 n=3 (s42_v2). Replaces cancelled C5∩C1 leakage entry. Local-only (Athena sepsis eval segfault).
@@ -139,10 +146,17 @@ experiments:
   pid: 499815
   started: '2026-04-26 10:24:10'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_hirid_pureC5_s42_v2.json
+  finished: '2026-04-26 15:15:17'
+  results:
+    AUCROC: -0.0287
+    AUCPR: 0.0073
+    loss: -0.1422
+    brier: -0.1585
+    ece: -0.126
 - name: sepsis_v5_cross3_hirid_pureC5_s7777_v2
   config: configs/hirid/ablation/sepsis_v5_cross3_hirid_pureC5_s7777_v2.json
   output: experiments/results/sepsis_v5_cross3_hirid_pureC5_s7777_v2.parquet
-  status: running
+  status: done
   branch: ntu_ablation
   server: a6000
   notes: HiRID Sepsis pure C5 n=3 (s7777_v2). Replaces cancelled C5∩C1 leakage entry. Local-only (Athena sepsis eval segfault).
@@ -150,6 +164,13 @@ experiments:
   pid: 500085
   started: '2026-04-26 10:24:16'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/sepsis_v5_cross3_hirid_pureC5_s7777_v2.json
+  finished: '2026-04-26 15:16:19'
+  results:
+    AUCROC: -0.0266
+    AUCPR: 0.0073
+    loss: -0.1436
+    brier: -0.181
+    ece: -0.1624
 - name: mort_c2_hirid_best_s2222
   config: configs/hirid/ablation/mort_c2_hirid_best_s2222.json
   output: experiments/results/mort_c2_hirid_best_s2222.parquet
@@ -1783,7 +1804,7 @@ experiments:
 - name: aki_NTU_s7777
   config: configs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s7777.json
   output: experiments/results/aki_NTU_s7777.predictions.npz
-  status: running
+  status: done
   command: train_and_eval
   server: a6000
   branch: ntu_ablation
@@ -1792,6 +1813,13 @@ experiments:
   pid: 442033
   started: '2026-04-26 06:48:41'
   remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/aki_NTU_s7777.json
+  finished: '2026-04-26 17:51:09'
+  results:
+    AUCROC: 0.0495
+    AUCPR: 0.1384
+    loss: -0.0984
+    brier: -0.0182
+    ece: -0.0019
 - name: sepsis_NTU_s2222
   config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s2222.json
   output: experiments/results/sepsis_NTU_s2222.predictions.npz
@@ -2078,23 +2106,33 @@ experiments:
 - name: kf_lr3e5_fid05_s2222
   config: configs/seeds/kf_lr3e5_fid05_s2222.json
   output: runs/kf_lr3e5_fid05_s2222/eval_kf.parquet
-  status: athena_pending
+  status: done
   server: athena
-  notes: 'Branch C of kf_root_cause_diagnosis: lambda_recon 0->0.05 to tighten n=3 sigma'
+  notes: 'Branch C of kf_root_cause_diagnosis: lambda_recon 0->0.05. Result: MAE Δ=−0.0072 z (0.0258 z translated). See multiseed_ablation_tables.md
+    Table K, comprehensive_results_summary.md §24.15a.'
   submitted: '2026-04-26 01:58:49'
   slurm_job_id: '74162'
 - name: kf_lr3e5_fid05_s42
   config: configs/seeds/kf_lr3e5_fid05_s42.json
   output: runs/kf_lr3e5_fid05_s42/eval_kf.parquet
-  status: athena_pending
+  status: done
   server: athena
-  notes: 'Branch C of kf_root_cause_diagnosis: lambda_recon 0->0.05 to tighten n=3 sigma'
+  notes: 'Branch C of kf_root_cause_diagnosis: lambda_recon 0->0.05. Result: MAE Δ=−0.0073 z (0.0257 z translated).'
   submitted: '2026-04-26 01:59:02'
   slurm_job_id: '74163'
+- name: kf_lr3e5_fid05_s7777
+  config: configs/seeds/kf_lr3e5_fid05_s7777.json
+  output: runs/kf_lr3e5_fid05_s7777/eval_kf.parquet
+  status: done
+  server: athena
+  notes: 'Branch C of kf_root_cause_diagnosis: lambda_recon 0->0.05. Result: MAE Δ=−0.0081 z (0.0249 z translated). n=3 mean
+    −0.0075 ± 0.0005 — pre-reg fix REJECTED (σ ✓ but mean drops 0.0011 z vs nfnm n=3).'
+  submitted: '2026-04-26 01:59:07'
+  slurm_job_id: '74164'
 - name: adatime_har_cap_T_p10_res_s1
   config: experiments/.athena_configs/adatime_har_cap_T_p10_res_s1.json
   output: runs/adatime_har_cap_T_p10_res_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:10:33'
@@ -2102,7 +2140,7 @@ experiments:
 - name: adatime_har_cap_T_p10_res_s2
   config: experiments/.athena_configs/adatime_har_cap_T_p10_res_s2.json
   output: runs/adatime_har_cap_T_p10_res_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:10:48'
@@ -2110,7 +2148,7 @@ experiments:
 - name: adatime_har_cap_T_p10_abs_s1
   config: experiments/.athena_configs/adatime_har_cap_T_p10_abs_s1.json
   output: runs/adatime_har_cap_T_p10_abs_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:10:53'
@@ -2118,7 +2156,7 @@ experiments:
 - name: adatime_har_cap_T_p10_abs_s2
   config: experiments/.athena_configs/adatime_har_cap_T_p10_abs_s2.json
   output: runs/adatime_har_cap_T_p10_abs_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:10:58'
@@ -2126,7 +2164,7 @@ experiments:
 - name: adatime_wisdm_cap_T_p0_abs_s1
   config: experiments/.athena_configs/adatime_wisdm_cap_T_p0_abs_s1.json
   output: runs/adatime_wisdm_cap_T_p0_abs_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:03'
@@ -2134,7 +2172,7 @@ experiments:
 - name: adatime_wisdm_cap_T_p0_abs_s2
   config: experiments/.athena_configs/adatime_wisdm_cap_T_p0_abs_s2.json
   output: runs/adatime_wisdm_cap_T_p0_abs_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:08'
@@ -2142,7 +2180,7 @@ experiments:
 - name: adatime_hhar_cap_T_p0_abs_s1
   config: experiments/.athena_configs/adatime_hhar_cap_T_p0_abs_s1.json
   output: runs/adatime_hhar_cap_T_p0_abs_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:13'
@@ -2150,7 +2188,7 @@ experiments:
 - name: adatime_hhar_cap_T_p0_abs_s2
   config: experiments/.athena_configs/adatime_hhar_cap_T_p0_abs_s2.json
   output: runs/adatime_hhar_cap_T_p0_abs_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:18'
@@ -2158,7 +2196,7 @@ experiments:
 - name: adatime_wisdm_v4_lr67_fid05_abs_s1
   config: experiments/.athena_configs/adatime_wisdm_v4_lr67_fid05_abs_s1.json
   output: runs/adatime_wisdm_v4_lr67_fid05_abs_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:23'
@@ -2166,7 +2204,7 @@ experiments:
 - name: adatime_wisdm_v4_lr67_fid05_abs_s2
   config: experiments/.athena_configs/adatime_wisdm_v4_lr67_fid05_abs_s2.json
   output: runs/adatime_wisdm_v4_lr67_fid05_abs_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:28'
@@ -2174,7 +2212,7 @@ experiments:
 - name: adatime_wisdm_v4_lr67_fid05_res_s1
   config: experiments/.athena_configs/adatime_wisdm_v4_lr67_fid05_res_s1.json
   output: runs/adatime_wisdm_v4_lr67_fid05_res_s1/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:33'
@@ -2182,7 +2220,7 @@ experiments:
 - name: adatime_wisdm_v4_lr67_fid05_res_s2
   config: experiments/.athena_configs/adatime_wisdm_v4_lr67_fid05_res_s2.json
   output: runs/adatime_wisdm_v4_lr67_fid05_res_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:37'
@@ -2190,7 +2228,7 @@ experiments:
 - name: adatime_hhar_v4_base_abs_s2
   config: experiments/.athena_configs/adatime_hhar_v4_base_abs_s2.json
   output: runs/adatime_hhar_v4_base_abs_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:42'
@@ -2198,7 +2236,7 @@ experiments:
 - name: adatime_hhar_v4_base_res_s2
   config: experiments/.athena_configs/adatime_hhar_v4_base_res_s2.json
   output: runs/adatime_hhar_v4_base_res_s2/eval_unknown.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 24h_1g, chain=1
   submitted: '2026-04-26 10:11:47'
@@ -2206,7 +2244,7 @@ experiments:
 - name: los_v5_cross3_C0_cos_pilot_s2222
   config: experiments/.athena_configs/los_v5_cross3_C0_cos_pilot_s2222.json
   output: runs/los_v5_cross3_C0_cos_pilot_s2222/eval_los.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-26 10:11:57'
@@ -2214,7 +2252,7 @@ experiments:
 - name: kf_v5_cross3_C0_cos_pilot_s2222
   config: experiments/.athena_configs/kf_v5_cross3_C0_cos_pilot_s2222.json
   output: runs/kf_v5_cross3_C0_cos_pilot_s2222/eval_kf.parquet
-  status: athena_pending
+  status: done
   server: athena
   notes: Athena 12h_4g, chain=1
   submitted: '2026-04-26 10:12:02'
@@ -2239,3 +2277,410 @@ experiments:
   gpu: 0
   pid: 2042119
   started: '2026-04-26 10:18:53'
+- name: E1b_stats_only_mortality24_s2222
+  config: configs/baselines/stats_only_mortality24.json
+  output: runs/E1b_stats_only_mortality24/eval_mortality.parquet
+  status: done
+  server: local
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: E1-b cross-norm standalone (affine only, no adapter), task=mortality24, stats_only translator type — single seed
+    (deterministic given split_seed=2222)
+  gpu: 1
+  pid: 2620685
+  started: '2026-04-26 18:16:27'
+  finished: '2026-04-26 18:22:08'
+  results:
+    AUCROC: 0.0015
+    AUCPR: 0.0069
+    loss: 0.0017
+    brier: 0.0067
+    ece: 0.0093
+- name: E1b_stats_only_aki_s2222
+  config: configs/baselines/stats_only_aki_E1b.json
+  output: runs/E1b_stats_only_aki/eval_aki.parquet
+  status: done
+  server: a6000
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: E1-b cross-norm standalone (affine only, no adapter), task=aki, stats_only translator type — single seed (deterministic
+    given split_seed=2222)
+  gpu: 0
+  pid: 864353
+  started: '2026-04-26 18:16:34'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1b_stats_only_aki_s2222.json
+  finished: '2026-04-26 18:32:22'
+  results:
+    AUCROC: -0.0054
+    AUCPR: -0.027
+    loss: 0.0131
+    brier: 0.0162
+    ece: 0.0228
+- name: E1b_stats_only_sepsis_s2222
+  config: configs/baselines/stats_only_sepsis_E1b.json
+  output: runs/E1b_stats_only_sepsis/eval_sepsis.parquet
+  status: done
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: E1-b cross-norm standalone (affine only, no adapter), task=sepsis, stats_only translator type — single seed (deterministic
+    given split_seed=2222)
+  gpu: 0
+  pid: 1133432
+  started: '2026-04-26 18:16:40'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1b_stats_only_sepsis_s2222.json
+  finished: '2026-04-26 18:29:13'
+  results:
+    AUCROC: 0.0014
+    AUCPR: 0.0007
+    loss: -0.0006
+    brier: 0.007
+    ece: 0.0112
+- name: E1b_stats_only_los_s2222
+  config: configs/baselines/stats_only_los_E1b.json
+  output: runs/E1b_stats_only_los/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: E1-b cross-norm standalone (affine only, no adapter), task=los, stats_only translator type — single seed (deterministic
+    given split_seed=2222)
+  slurm_job_id: '74502'
+  submitted: '2026-04-26 21:27:58'
+- name: E1b_stats_only_kf_s2222
+  config: configs/baselines/stats_only_kf_E1b.json
+  output: runs/E1b_stats_only_kf/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: E1-b cross-norm standalone (affine only, no adapter), task=kf, stats_only translator type — single seed (deterministic
+    given split_seed=2222)
+  slurm_job_id: '74503'
+  submitted: '2026-04-26 21:28:03'
+- name: E1c_mort_c2_C5_no_fidelity_NTU_s2222
+  config: configs/seeds/mort_c2_C5_no_fidelity_NTU_s2222.json
+  output: runs/seeds/mort_c2_C5_no_fidelity_NTU_s2222/eval_mortality.parquet
+  status: running
+  server: local
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 1
+  pid: 2645364
+  started: '2026-04-26 18:22:08'
+- name: E1c_mort_c2_C5_no_fidelity_NTU_s42
+  config: configs/seeds/mort_c2_C5_no_fidelity_NTU_s42.json
+  output: runs/seeds/mort_c2_C5_no_fidelity_NTU_s42/eval_mortality.parquet
+  status: pending
+  server: local
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+- name: E1c_mort_c2_C5_no_fidelity_NTU_s7777
+  config: configs/seeds/mort_c2_C5_no_fidelity_NTU_s7777.json
+  output: runs/seeds/mort_c2_C5_no_fidelity_NTU_s7777/eval_mortality.parquet
+  status: pending
+  server: local
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+- name: E1c_aki_v5_cross3_C1_no_retrieval_NTU_s2222
+  config: configs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s2222.json
+  output: runs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s2222/eval_aki.parquet
+  status: running
+  server: a6000
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 1
+  pid: 864772
+  started: '2026-04-26 18:16:46'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_aki_v5_cross3_C1_no_retrieval_NTU_s2222.json
+- name: E1c_aki_v5_cross3_C1_no_retrieval_NTU_s42
+  config: configs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s42.json
+  output: runs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s42/eval_aki.parquet
+  status: running
+  server: a6000
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 3
+  pid: 865110
+  started: '2026-04-26 18:16:52'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_aki_v5_cross3_C1_no_retrieval_NTU_s42.json
+- name: E1c_aki_v5_cross3_C1_no_retrieval_NTU_s7777
+  config: configs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s7777.json
+  output: runs/seeds/aki_v5_cross3_C1_no_retrieval_NTU_s7777/eval_aki.parquet
+  status: running
+  server: a6000
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 0
+  pid: 882089
+  started: '2026-04-26 18:32:29'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_aki_v5_cross3_C1_no_retrieval_NTU_s7777.json
+- name: E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s2222
+  config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s2222.json
+  output: runs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s2222/eval_sepsis.parquet
+  status: running
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 2
+  pid: 1133909
+  started: '2026-04-26 18:16:58'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s2222.json
+- name: E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s42
+  config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s42.json
+  output: runs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s42/eval_sepsis.parquet
+  status: running
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 3
+  pid: 1134247
+  started: '2026-04-26 18:17:04'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s42.json
+- name: E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s7777
+  config: configs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s7777.json
+  output: runs/seeds/sepsis_v5_cross3_C1_no_retrieval_NTU_s7777/eval_sepsis.parquet
+  status: running
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  gpu: 0
+  pid: 1145095
+  started: '2026-04-26 18:29:20'
+  remote_config: /home/omerg/Thesis/EHR_Translator/deep_pipeline/experiments/.remote_configs/E1c_sepsis_v5_cross3_C1_no_retrieval_NTU_s7777.json
+- name: E1c_los_v5_cross3_C3_no_mmd_NTU_s2222
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_NTU_s2222.json
+  output: runs/seeds/los_v5_cross3_C3_no_mmd_NTU_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74505'
+  submitted: '2026-04-26 21:28:08'
+- name: E1c_los_v5_cross3_C3_no_mmd_NTU_s42
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_NTU_s42.json
+  output: runs/seeds/los_v5_cross3_C3_no_mmd_NTU_s42/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74506'
+  submitted: '2026-04-26 21:28:13'
+- name: E1c_los_v5_cross3_C3_no_mmd_NTU_s7777
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_NTU_s7777.json
+  output: runs/seeds/los_v5_cross3_C3_no_mmd_NTU_s7777/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74507'
+  submitted: '2026-04-26 21:28:18'
+- name: E1c_kf_v5_cross3_C3_no_mmd_NTU_s2222
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s2222.json
+  output: runs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74508'
+  submitted: '2026-04-26 21:28:24'
+- name: E1c_kf_v5_cross3_C3_no_mmd_NTU_s42
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s42.json
+  output: runs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s42/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74509'
+  submitted: '2026-04-26 21:28:28'
+- name: E1c_kf_v5_cross3_C3_no_mmd_NTU_s7777
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s7777.json
+  output: runs/seeds/kf_v5_cross3_C3_no_mmd_NTU_s7777/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E1-c: winning recipe with use_target_normalization=false (NTU); reuses existing seeded NTU config'
+  slurm_job_id: '74510'
+  submitted: '2026-04-26 21:28:33'
+- name: mort_c2_E3_C5_no_fidelity_fid05_s2222
+  config: configs/seeds/E3/mort_c2_E3_C5_no_fidelity_fid05_s2222.json
+  output: runs/E3/mort_c2_E3_C5_no_fidelity_fid05_s2222/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.05 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74493'
+  submitted: '2026-04-26 21:20:53'
+- name: mort_c2_E3_C5_no_fidelity_fid50_s2222
+  config: configs/seeds/E3/mort_c2_E3_C5_no_fidelity_fid50_s2222.json
+  output: runs/E3/mort_c2_E3_C5_no_fidelity_fid50_s2222/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.5 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74494'
+  submitted: '2026-04-26 21:21:02'
+- name: mort_c2_E3_C5_no_fidelity_fid100_s2222
+  config: configs/seeds/E3/mort_c2_E3_C5_no_fidelity_fid100_s2222.json
+  output: runs/E3/mort_c2_E3_C5_no_fidelity_fid100_s2222/eval_mortality.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=1.0 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74495'
+  submitted: '2026-04-26 21:21:07'
+- name: aki_v5_cross3_E3_C1_no_retrieval_fid05_s2222
+  config: configs/seeds/E3/aki_v5_cross3_E3_C1_no_retrieval_fid05_s2222.json
+  output: runs/E3/aki_v5_cross3_E3_C1_no_retrieval_fid05_s2222/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.05 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74496'
+  submitted: '2026-04-26 21:21:16'
+- name: aki_v5_cross3_E3_C1_no_retrieval_fid50_s2222
+  config: configs/seeds/E3/aki_v5_cross3_E3_C1_no_retrieval_fid50_s2222.json
+  output: runs/E3/aki_v5_cross3_E3_C1_no_retrieval_fid50_s2222/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.5 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74497'
+  submitted: '2026-04-26 21:21:21'
+- name: aki_v5_cross3_E3_C1_no_retrieval_fid100_s2222
+  config: configs/seeds/E3/aki_v5_cross3_E3_C1_no_retrieval_fid100_s2222.json
+  output: runs/E3/aki_v5_cross3_E3_C1_no_retrieval_fid100_s2222/eval_aki.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=1.0 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74498'
+  submitted: '2026-04-26 21:21:26'
+- name: sepsis_v5_cross3_E3_C1_no_retrieval_fid05_s2222
+  config: configs/seeds/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid05_s2222.json
+  output: runs/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid05_s2222/eval_sepsis.parquet
+  status: pending
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.05 (winning recipe with overridden lambda_recon)'
+- name: sepsis_v5_cross3_E3_C1_no_retrieval_fid50_s2222
+  config: configs/seeds/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid50_s2222.json
+  output: runs/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid50_s2222/eval_sepsis.parquet
+  status: pending
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.5 (winning recipe with overridden lambda_recon)'
+- name: sepsis_v5_cross3_E3_C1_no_retrieval_fid100_s2222
+  config: configs/seeds/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid100_s2222.json
+  output: runs/E3/sepsis_v5_cross3_E3_C1_no_retrieval_fid100_s2222/eval_sepsis.parquet
+  status: pending
+  server: otello
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=1.0 (winning recipe with overridden lambda_recon)'
+- name: los_v5_cross3_E3_C3_no_mmd_fid05_s2222
+  config: configs/seeds/E3/los_v5_cross3_E3_C3_no_mmd_fid05_s2222.json
+  output: runs/E3/los_v5_cross3_E3_C3_no_mmd_fid05_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.05 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74511'
+  submitted: '2026-04-26 21:28:38'
+- name: los_v5_cross3_E3_C3_no_mmd_fid50_s2222
+  config: configs/seeds/E3/los_v5_cross3_E3_C3_no_mmd_fid50_s2222.json
+  output: runs/E3/los_v5_cross3_E3_C3_no_mmd_fid50_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.5 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74512'
+  submitted: '2026-04-26 21:28:43'
+- name: los_v5_cross3_E3_C3_no_mmd_fid100_s2222
+  config: configs/seeds/E3/los_v5_cross3_E3_C3_no_mmd_fid100_s2222.json
+  output: runs/E3/los_v5_cross3_E3_C3_no_mmd_fid100_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  slurm_job_id: 74513
+  notes: 'E3 lambda_recon sweep: lam=1.0 (winning recipe with overridden lambda_recon)'
+- name: kf_v5_cross3_E3_C3_no_mmd_NTU_fid05_s2222
+  config: configs/seeds/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid05_s2222.json
+  output: runs/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid05_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.05 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74514'
+  submitted: '2026-04-26 21:28:53'
+- name: kf_v5_cross3_E3_C3_no_mmd_NTU_fid50_s2222
+  config: configs/seeds/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid50_s2222.json
+  output: runs/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid50_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=0.5 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74515'
+  submitted: '2026-04-26 21:28:58'
+- name: kf_v5_cross3_E3_C3_no_mmd_NTU_fid100_s2222
+  config: configs/seeds/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid100_s2222.json
+  output: runs/E3/kf_v5_cross3_E3_C3_no_mmd_NTU_fid100_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  branch: ntu_ablation
+  command: train_and_eval
+  notes: 'E3 lambda_recon sweep: lam=1.0 (winning recipe with overridden lambda_recon)'
+  slurm_job_id: '74516'
+  submitted: '2026-04-26 21:29:04'
+- name: los_v5_cross3_C3_no_mmd_s2222
+  config: configs/seeds/los_v5_cross3_C3_no_mmd_s2222.json
+  output: runs/los_v5_cross3_C3_no_mmd_s2222/eval_los.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-26 21:24:16'
+  slurm_job_id: '74499'
+- name: kf_v5_cross3_C3_no_mmd_s2222
+  config: configs/seeds/kf_v5_cross3_C3_no_mmd_s2222.json
+  output: runs/kf_v5_cross3_C3_no_mmd_s2222/eval_kf.parquet
+  status: athena_pending
+  server: athena
+  notes: Athena 24h_1g, chain=1
+  submitted: '2026-04-26 21:24:24'
+  slurm_job_id: '74500'
+- name: mas_sepsis_v5_cross3_C1_no_retrieval_s2222_gru
+  config: configs/mas/sepsis_v5_cross3_C1_no_retrieval_s2222_gru.json
+  output: experiments/results/mas/sepsis_v5_cross3_C1_no_retrieval_s2222_gru.parquet
+  command: translate_and_eval
+  status: pending
+  server: local
+  branch: ntu_ablation
+  notes: MAS sanity check — sepsis s2222 GRU eval before queuing remaining 47 entries

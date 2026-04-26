@@ -675,7 +675,14 @@ def collect_results(name: str):
             capture_output=True, text=True, timeout=60,
         )
 
-    # Try to run collect_result.py
+    # Try to run collect_result.py — infer task from experiment name
+    # (handles e.g. "los_NTU_s2222" → "los", "mortality_retr_v4_mmd_local" → "mortality")
+    task = "unknown"
+    name_lc = name.lower()
+    for cand in ("mortality", "mortality24", "mort", "aki", "sepsis", "kidney_function", "kf", "los"):
+        if cand in name_lc.split("_") or name_lc.startswith(cand + "_"):
+            task = "mortality" if cand in ("mortality24", "mort") else ("kf" if cand == "kidney_function" else cand)
+            break
     if task != "unknown":
         try:
             subprocess.run(
@@ -693,6 +700,8 @@ def collect_results(name: str):
                     logging.info(f"Results: {diff}")
         except Exception as e:
             logging.warning(f"collect_result.py failed: {e}")
+    else:
+        logging.warning(f"Could not infer task from name '{name}'; skipping result parse")
 
 
 # ---------------------------------------------------------------------------

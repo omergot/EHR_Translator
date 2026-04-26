@@ -7,10 +7,10 @@
 
 \subsection{Setup}
 \label{sec:setup}
-% Datasets: eICU (source), MIMIC-IV (target), HiRID (2nd source)
+% Datasets: MIMIC-IV (source), eICU (target), HiRID (2nd target)
 % Tasks: Mortality24 (per-stay), AKI (per-timestep), Sepsis (per-timestep),
 %        LoS (per-timestep, regression), KidneyFunction (per-stay, regression)
-% Frozen model: LSTM trained on MIMIC-IV via YAIB benchmark
+% Frozen model: LSTM trained on MIMIC-IV (source) via YAIB benchmark
 % Baselines: 8 DA methods (DANN, CORAL, CoDATS, CDAN, RAINCOAT, CLUDA, fine-tuning, statistics-only)
 % Metrics: AUROC, AUCPR for classification; MAE, MSE for regression
 % Implementation: PyTorch, batch_size=16, early stopping, seeds
@@ -23,14 +23,14 @@
 %   - AKI: surpasses MIMIC-native (+0.056 AUROC)
 %   - Outperforms all 8 DA baselines by 2-4x
 
-\subsection{Multi-Source Generalization}
+\subsection{Multi-Target Generalization}
 \label{sec:multi_source}
-% Table 2: HiRID -> MIMIC results
+% Table 2: HiRID (target) -> MIMIC (source) adaptor results
 % Even larger gains: AKI +0.078, Sepsis +0.078, Mortality +0.047
 
 \subsection{Architecture-Agnostic Transfer}
 \label{sec:mas}
-% Table 3: LSTM-trained translator evaluated on frozen GRU, TCN
+% Table 3: LSTM-trained adaptor evaluated on frozen GRU, TCN
 % No retraining needed; 47-86% of LSTM gain preserved
 
 \subsection{Ablation Studies}
@@ -38,6 +38,59 @@
 % Table 4: Component ablation (one variable at a time)
 % Key ablations: fidelity loss, cross-attention layers, memory bank, feature gate
 % n_cross_layers analysis: 3 for dense labels, 2 for sparse
+
+\subsection{Does the adapter need source-domain training signal?}
+\label{sec:no_source_training}
+% NTU = "no target usage" (code convention) = "no source-domain training signal" (paper convention)
+% Claims: C-69 (classification), C-70 (regression), C-71 (section claim)
+% Result files: experiments/results/{mort,aki,sepsis,los,kf}_NTU_s{2222,42,7777}_*.json
+
+A natural concern with our setup is whether the adapter has implicitly come to depend on source-domain (MIMIC) signal that would not be available outside our experimental protocol. The frozen predictor was source-trained externally---a deployment-scenario fixture we do not modify---but the adapter's \emph{own} training in our protocol additionally has access to MIMIC inputs (for MMD alignment, autoencoder pretraining, source-stat normalisation, and a target-task regulariser that pushes MIMIC inputs through the frozen predictor with their MIMIC labels). We test how much of that access is actually load-bearing.
+
+For each task we layer onto its best ablation cell six removals simultaneously: the Phase~1 autoencoder is moved from MIMIC to eICU; $\lambda_{\text{tgt-task}} = \lambda_{\text{label-pred}} = \lambda_{\text{align}} = \lambda_{\text{recon}} = 0$; and source-stat normalisation is disabled. After this, the adapter's training objective contains no source-domain term, the encoder/decoder never reconstruct or normalise to source, and Phase~1 sees no source data. For AKI and Sepsis (whose best cell uses no retrieval), the adapter's training touches no source sample at all. For Mortality, LoS, and KF (whose best cells use retrieval), source samples enter only through the memory bank as detached context with no gradient flow. Three seeds per task; split seed fixed.
+
+Table~\ref{tab:no_source_training} reports the result.
+
+\begin{table}[t]
+\centering\small
+\caption{Adapter performance with all source-domain training signal removed (NTU). $\Delta$ relative to the frozen MIMIC LSTM. C0 column reports the full-pipeline n=3 mean with all source-domain channels active.}
+\label{tab:no_source_training}
+\begin{tabular}{l c c c c}
+\toprule
+Task & Metric & NTU $\Delta$ (n=3 mean $\pm$ std) & C0 $\Delta$ (n=3 mean) & NTU $-$ C0 \\
+\midrule
+Mortality24 & AUROC & $+0.0381 \pm 0.0053$ & $+0.0453 \pm 0.0021$ & $-0.0072$ (1.3$\sigma$) \\
+AKI         & AUROC & $+0.0456 \pm 0.0064$\footnotemark[1] & $+0.0497 \pm 0.0052$ & $-0.0041$ \\
+Sepsis      & AUROC & $+0.0469 \pm 0.0102$ & $+0.0469 \pm 0.0037$ & $\pm0.0000$ \\
+LoS         & MAE (z) & $\mathbf{-0.0320 \pm 0.0009}$ & $-0.0241 \pm 0.0029$ & $\mathbf{-0.0079}$ (improves) \\
+KF          & MAE (z) & $\mathbf{-0.0095 \pm 0.0001}$ & $-0.0030 \pm 0.0025$ & $\mathbf{-0.0065}$ (improves) \\
+\bottomrule
+\end{tabular}
+\footnotetext[1]{AKI NTU n=2 at submission; n=3 update pending one in-flight seed (no expected change in conclusion).}
+\end{table}
+
+On all three classification tasks NTU lands within multi-seed noise of the full pipeline; on Sepsis the means agree to four decimals. On both regression tasks NTU \emph{exceeds} the full pipeline---consistent with the partial-removal ablation in Table~\ref{tab:component_ablation} that already showed adding $\lambda_{\text{tgt-task}}$ \emph{worsens} LoS---and the seed-to-seed standard deviation collapses to $\sigma_{\text{LoS}}=0.0009$ and $\sigma_{\text{KF}}=0.0001$, the lowest variance we have measured for these tasks. In absolute terms, NTU still beats or ties the YAIB eICU-native baseline on AKI (0.902 vs 0.902), Sepsis (0.763 vs 0.740), LoS (37.1\,h vs 39.2\,h MAE), and KF (0.287 vs 0.28\,mg/dL).
+
+We read this as evidence that the adapter does not require source-domain training signal beyond what the frozen predictor already encodes. The deployment-relevant artifact---a source-trained, immutable predictor---is preserved; the experimentally-convenient artifact---training-time access to source samples and labels---is not. Per-seed numbers and the full ablation matrix are in Appendix~\ref{app:no_source_training} (claims C-69--C-71).
+
+\subsection{Calibration}
+\label{sec:calibration}
+% TODO: refresh after ablations (C-14 / C-15). Headline configs for AKI and
+% sepsis may move to multi-seed winners; Brier and ECE deltas must be re-pulled
+% from the new best result JSONs at that point.
+In our 6 classification experiments (MIMIC$\to$eICU and MIMIC$\to$HiRID on
+Mortality, AKI, and Sepsis), input-space adaptation reduces both Brier score
+and Expected Calibration Error (ECE) in every case, despite our objective
+containing no explicit calibration loss; we interpret this as a structural
+property of input-space (rather than output-space) adaptation (claim~C-42).
+The effect is largest where baseline miscalibration is worst: on HiRID
+sepsis, ECE drops from 0.458 to 0.263 ($\Delta=-0.195$); on HiRID mortality,
+from 0.351 to 0.266 ($\Delta=-0.085$). On the MIMIC $\to$ eICU protocol,
+sepsis ECE drops from 0.322 to 0.248 ($\Delta=-0.073$). In contrast,
+frozen-backbone DA baselines trade off calibration for discrimination: DANN
+and CoDATS \emph{worsen} AKI calibration (ECE~$+0.010$ in both cases) while
+improving AUROC. Full per-task Brier and ECE deltas, including DA-baseline
+comparisons, appear in Appendix~\ref{app:calibration_table}.
 
 % \subsection{Analysis}
 % \label{sec:analysis}
